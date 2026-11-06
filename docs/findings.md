@@ -176,3 +176,8 @@ or `0x08` (ROM as the CPU sees it).
 
 - All screen fades are loops of BLDY (0x04000054) steps with two vblank waits (0x0802A398) per step: 0x0803D354, 0x0803D4B2, 0x0803E07C, 0x0803E15C, 0x0803E1E0, 0x0803E348, 0x0803E388, 0x0803E414, 0x0803E658. Loading a save measured 28 frames fade out, about 36 frames of black (state 1 init 0x08031634 doing real work, one vblank wait), 32 frames fade in (0x0803E148, called at 0x08031DBA).
 - `tools/fastloads.py` drops the second wait (fades take 16 frames) and sets EWRAM 0x0203FFF1 during state 1 setup (set at 0x0803163E, cleared at 0x08031DBA). The Play Room fast-forwards while it is set. mGBA keeps IWRAM directly after EWRAM, so in the emulator heap EWRAM = IWRAM base - 0x40000 (confirmed in the browser).
+
+## Link play (2 players)
+
+- `tools/link2.c` runs two GBAs in one process with a small multiplayer-mode (SIO_MULTI) link driver: the master's SIOCNT start latches both SIOMLT_SEND words, and after the transfer time each GBA gets SIOMULTI0-3, its ID and the SIO interrupt. Cores take turns by scanline. Build: `gcc -O2 -o tools/link2 tools/link2.c -lmgba`.
+- Verified 2026-11-06: both GBAs pick Multiplayer, load a save, see the same "Choose your path" screen (the master chooses), and enter the same level with both heroes on screen (about 3.7 transfers per frame).
