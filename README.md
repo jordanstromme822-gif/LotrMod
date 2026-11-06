@@ -1,28 +1,49 @@
-# Realm of Shadows
+# LotrMod
 
-An original fantasy dungeon crawler that runs in the browser on phones and PCs.
-The goal is Diablo II style online play: pick a saved character, enter a lobby,
-and host or drop into anyone's game, up to 8 players.
+Tools and notes for modding **The Lord of the Rings: The Return of the King** (Game Boy Advance,
+USA/Europe, game code `BLRE`) and playing it together online.
 
-## Play
+The game itself is **not** in this repository and never should be. Mods are shared as patch
+files (`.ips`) that each player applies to their own copy.
 
-- **Online:** once GitHub Pages is turned on, the game is at
-  https://jordanstromme822-gif.github.io/LotrMod/
-- **On your computer:** install [Node.js](https://nodejs.org) 20 or newer, then run `npm start`
-  in this folder and open http://localhost:8080
+## What works so far
 
-Controls: WASD or arrows to move, mouse to aim, left click / 1 / Space to Slash,
-2 Whirlwind, right click / 3 Firebolt, 4 Mend. On a phone, drag the left side of the
-screen to move and tap the buttons; attacks aim at the nearest enemy.
+- Run the game headless in an emulator with scripted button presses, screenshots,
+  RAM dumps, save states and write-watchpoints (`tools/run.c`).
+- Dump all in-game text in all 5 languages (`tools/text.py`).
+- Change a hero's starting attributes (`tools/stats.py`).
+- Make and apply IPS patches (`tools/ips.py`).
 
-## Roadmap
+See [docs/findings.md](docs/findings.md) for what we know about how the game is built.
 
-1. **Playable prototype** (done): one hero, four abilities, three enemy types, one dungeon.
-2. **Online lobby and saves:** saved characters, a lobby, host or join games up to 8 players.
-3. **Moddable content:** more heroes and abilities, random dungeon generator.
-4. **Test with friends** on phones and PCs.
+## Setup (Linux, or WSL on Windows)
 
-## Modding
+```sh
+sudo apt-get install libmgba-dev python3 python3-pil
+gcc -O2 -o tools/run tools/run.c -lmgba
+```
 
-Heroes, abilities, enemies and dungeons are plain data files in `client/data/`.
-See [MODDING.md](MODDING.md).
+## Examples
+
+```sh
+# Give Aragorn 50 Courage and make a patch you can share
+python3 tools/stats.py rotk.gba modded.gba aragorn courage 50
+python3 tools/ips.py make rotk.gba modded.gba aragorn-courage.ips
+
+# Apply someone's patch to your own copy
+python3 tools/ips.py apply rotk.gba aragorn-courage.ips rotk-modded.gba
+
+# Dump the English text
+python3 tools/text.py rotk.gba 0 > text-en.txt
+```
+
+Patches can also be applied with any IPS tool, such as Floating IPS on Windows or the
+"Rom Patcher JS" web page, and the result plays in any GBA emulator (mGBA recommended).
+
+## Plan
+
+1. **Map the game file** (this step): text, hero stats, player 2, tooling.
+2. **First mods:** stats, abilities, text and graphics as patch files.
+3. **Bigger mods:** new characters and abilities by changing the game's code.
+4. **Online multiplayer:** link-cable play over the internet with an emulator, and
+   a look at whether 4 players is possible.

@@ -1,3 +1,7 @@
 node_modules/
 .DS_Store
 *.gba
+__pycache__/
+*.state
+*.ppm
+tools/run
