@@ -148,6 +148,7 @@ or `0x08` (ROM as the CPU sees it).
 
 - 0x9E400-0x9E46F: story-cutscene hook (tools/nocutscenes.py).
 - 0x9E880-0x9E8D5 dialogue allow hooks, 0x9E900-0x9E90F allow bitmap (tools/sidequestdialogue.py).
+- 0x9E940-0x9E963: level-setup flag hooks (tools/fastloads.py).
 - 0x9E600-0x9E68B: hero stats routine, 0x9E6E0 marker, 0x9E700-0x9E77F hero table (tools/heroes.py).
   The hero hook used to live in the 32 MB expansion; it moved here so the modded game stays 16 MB
   (half the memory on phones, and saves use the normal EEPROM address on any emulator).
@@ -170,3 +171,8 @@ or `0x08` (ROM as the CPU sees it).
 ## Side-quest dialogue
 
 `tools/sidequestdialogue.py` replaces `tools/nodialogue.py`: story dialogue stays skipped, but dialogue ids 21, 28-30, 33-35, 37, 41 and 48-53 (table 0x08050CE0, the side quests that give a reward) still open their box. Hook 1 (bl at 0x0801AD9E inside 0x0801AD9C) returns to the caller for any id not in the bitmap; hook 2 (bl at 0x0801846E in script command 0x08018454) sends multiplayer and non-allowed ids down the existing skip path at 0x08018484. Checked in a Unicorn harness: allowed ids reach setState(0x11), others reach the follow-up action 0x0800C4AC, multiplayer always skips, stack balanced.
+
+## Fades and level loads
+
+- All screen fades are loops of BLDY (0x04000054) steps with two vblank waits (0x0802A398) per step: 0x0803D354, 0x0803D4B2, 0x0803E07C, 0x0803E15C, 0x0803E1E0, 0x0803E348, 0x0803E388, 0x0803E414, 0x0803E658. Loading a save measured 28 frames fade out, about 36 frames of black (state 1 init 0x08031634 doing real work, one vblank wait), 32 frames fade in (0x0803E148, called at 0x08031DBA).
+- `tools/fastloads.py` drops the second wait (fades take 16 frames) and sets EWRAM 0x0203FFF1 during state 1 setup (set at 0x0803163E, cleared at 0x08031DBA). The Play Room fast-forwards while it is set. mGBA keeps IWRAM directly after EWRAM, so in the emulator heap EWRAM = IWRAM base - 0x40000 (confirmed in the browser).
