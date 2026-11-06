@@ -147,6 +147,7 @@ or `0x08` (ROM as the CPU sees it).
 ## Free space map (Spanish text bank, English only)
 
 - 0x9E400-0x9E46F: story-cutscene hook (tools/nocutscenes.py).
+- 0x9E880-0x9E8D5 dialogue allow hooks, 0x9E900-0x9E90F allow bitmap (tools/sidequestdialogue.py).
 - 0x9E600-0x9E68B: hero stats routine, 0x9E6E0 marker, 0x9E700-0x9E77F hero table (tools/heroes.py).
   The hero hook used to live in the 32 MB expansion; it moved here so the modded game stays 16 MB
   (half the memory on phones, and saves use the normal EEPROM address on any emulator).
@@ -165,3 +166,7 @@ or `0x08` (ROM as the CPU sees it).
 - Working copy of the settings is 0x03002080 (+0 music, +1 sfx, +2 quick skill, +3 auto heal, ...). The saved copy is the bit field at 0x03005820 (0x030057F0 + 0x30): bit 3 quick skill, bit 4 auto heal. Leaving Options calls 0x080265C0, which copies them into each hero's flags at player + 0x19A (bit 1 quick skill, bit 0 auto heal).
 - Quick Skill Select: with it on, the Skills page (state 0xF) shows A, B and R badges on three skills, and in play holding L and pressing A, B or R uses that skill (player + 0x191.. holds the slot map). Verified in the core: L+A fires the A skill.
 - `tools/nolanguage.py` removes Language Select: 7 rows, Credits in row 6, label helper at 0x0809E800.
+
+## Side-quest dialogue
+
+`tools/sidequestdialogue.py` replaces `tools/nodialogue.py`: story dialogue stays skipped, but dialogue ids 21, 28-30, 33-35, 37, 41 and 48-53 (table 0x08050CE0, the side quests that give a reward) still open their box. Hook 1 (bl at 0x0801AD9E inside 0x0801AD9C) returns to the caller for any id not in the bitmap; hook 2 (bl at 0x0801846E in script command 0x08018454) sends multiplayer and non-allowed ids down the existing skip path at 0x08018484. Checked in a Unicorn harness: allowed ids reach setState(0x11), others reach the follow-up action 0x0800C4AC, multiplayer always skips, stack balanced.
