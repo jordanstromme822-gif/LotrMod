@@ -109,3 +109,8 @@ or `0x08` (ROM as the CPU sees it).
 - Game state byte at 0x030041B0 is 0x0A in the in-game Backpack/Skills/Stats menu, 5 on the title menu, 1 in gameplay.
 - Menus move the cursor one step per fresh d-pad press (a 1-frame press is enough, holding does not repeat). With two directions held, the horizontal one wins.
 - Boot copies code from ROM 0xCD5C to IWRAM 0x03002D30 (0x4DC bytes) and from ROM 0xE208 to 0x03002C30; the Play Room uses these to find IWRAM inside the emulator's memory.
+
+## Reflections (flicker)
+
+- Each OAM buffer (0x03004340, 0x03004B80) is two 1 KB images. Image 0 has every sprite plus the reflections (vflip, priority 3, drawn under BG2 water, which alpha-blends over OBJ: BLDCNT 0x1044, BLDALPHA 0x0808). Image 1 is image 0 minus the reflections.
+- The vblank handler flips 0x03001F18 each frame and DMAs image (toggle), so reflections show on every other frame. `tools/noflicker.py` always picks image 0. In a 60-sample random walk of level 1, image 1 never had a sprite that image 0 lacked.
