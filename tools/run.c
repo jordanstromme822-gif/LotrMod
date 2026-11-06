@@ -11,7 +11,7 @@
 #include <mgba/debugger/debugger.h>
 #include <mgba/internal/arm/arm.h>
 static struct mCore* gcore; static struct mDebugger* dbg; static int hits;
-static void entered(struct mDebugger* d, enum mDebuggerEntryReason r, struct mDebuggerEntryInfo* info){struct ARMCore* cpu=gcore->cpu; if(hits<60) printf("WATCH addr=%08x pc=%08x lr=%08x new=%x r0=%08x r1=%08x r2=%08x r3=%08x r4=%08x r5=%08x r6=%08x r7=%08x\n",info?info->address:0,cpu->gprs[15],cpu->gprs[14],info?info->type.wp.newValue:0,cpu->gprs[0],cpu->gprs[1],cpu->gprs[2],cpu->gprs[3],cpu->gprs[4],cpu->gprs[5],cpu->gprs[6],cpu->gprs[7]); hits++; d->state=DEBUGGER_RUNNING;}
+static void entered(struct mDebugger* d, enum mDebuggerEntryReason r, struct mDebuggerEntryInfo* info){struct ARMCore* cpu=gcore->cpu; if(hits<4000) printf("WATCH addr=%08x pc=%08x lr=%08x new=%x r0=%08x r1=%08x r2=%08x r3=%08x r4=%08x r5=%08x r6=%08x r7=%08x\n",info?info->address:0,cpu->gprs[15],cpu->gprs[14],info?info->type.wp.newValue:0,cpu->gprs[0],cpu->gprs[1],cpu->gprs[2],cpu->gprs[3],cpu->gprs[4],cpu->gprs[5],cpu->gprs[6],cpu->gprs[7]); hits++; d->state=DEBUGGER_RUNNING;}
 static void nolog(struct mLogger* l,int c,enum mLogLevel lv,const char* f,va_list a){(void)l;(void)c;(void)lv;(void)f;(void)a;}
 static struct mLogger L={.log=nolog};
 #include <stdlib.h>
@@ -38,6 +38,8 @@ int main(int argc,char**argv){
    for(unsigned i=0;i<w*h;i++){uint32_t c=buf[i];unsigned char px[3]={c&0xff,(c>>8)&0xff,(c>>16)&0xff};fwrite(px,1,3,f);}fclose(f);continue;}
   if(!strcmp(a,"watch")){ if(!dbg){dbg=calloc(1,sizeof(struct mDebugger)); dbg->type=DEBUGGER_CUSTOM; dbg->entered=entered; mDebuggerAttach(dbg,core); dbg->state=DEBUGGER_RUNNING;} char c[64]; int span=1; sscanf(line,"%*s %*s %d",&span); if(span<1)span=1; uint32_t ad=strtoul(b,0,16); for(int k=0;k<span;k++){struct mWatchpoint wp={0}; wp.address=ad+k; wp.segment=-1; wp.type=WATCHPOINT_WRITE; dbg->platform->setWatchpoint(dbg->platform,&wp);} (void)c; continue;}
   if(!strcmp(a,"stack")){struct ARMCore* cpu=core->cpu; uint32_t sp=cpu->gprs[13]; printf("STACK %s pc=%08x lr=%08x sp=%08x:",b,cpu->gprs[15],cpu->gprs[14],sp); for(uint32_t ad=sp;ad<0x03007F00;ad+=4){uint32_t v=core->busRead32(core,ad); if(v>=0x08000000&&v<0x08400000&&(v&1)) printf(" %08x",v);} printf("\n"); continue;}
+  if(!strcmp(a,"peek")){uint32_t ad=strtoul(b,0,16); printf("PEEK %08x:",ad); for(int k=0;k<16;k++) printf(" %04x",core->busRead16(core,ad+2*k)); printf("\n"); continue;}
+  if(!strcmp(a,"dump")){uint32_t ad,n; sscanf(line,"%*s %x %x",&ad,&n); char p[512];snprintf(p,512,"%s/%s.bin",argv[3],"dump");FILE*f=fopen(p,"ab"); for(uint32_t k=0;k<n;k++){unsigned char v=core->busRead8(core,ad+k);fwrite(&v,1,1,f);} fclose(f); continue;}
   if(!strcmp(a,"save")){size_t n=core->stateSize(core);void*st=malloc(n);core->saveState(core,st);char p[512];snprintf(p,512,"%s/%s.state",argv[3],b);FILE*f=fopen(p,"wb");fwrite(st,1,n,f);fclose(f);free(st);continue;}
   if(!strcmp(a,"load")){size_t n=core->stateSize(core);void*st=malloc(n);char p[512];snprintf(p,512,"%s/%s.state",argv[3],b);FILE*f=fopen(p,"rb");if(!f){printf("no state %s\n",p);return 1;}fread(st,1,n,f);fclose(f);core->loadState(core,st);free(st);continue;}
   if(!strcmp(a,"ram")){char p[512];snprintf(p,512,"%s/%s.ram",argv[3],b);FILE*f=fopen(p,"wb");
