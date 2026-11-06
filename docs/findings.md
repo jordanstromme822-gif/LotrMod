@@ -122,3 +122,16 @@ or `0x08` (ROM as the CPU sees it).
 - Heroes: the select screen is a fixed ring of 6 (Frodo, Legolas, Aragorn, Gandalf, Eowyn, Gimli), all open from a fresh save. Sam (6) and Smeagol (7) have stats and skills but no select entry or description text.
 - Bonus Maps: main menu item 5 goes to the slot screen in mode 4, then "Choose your path" (state 0x18). Path table 0x08050634 (0x1C bytes, unlock mask at +0x18: 0x10000000, 4, 8, 2) is checked against save progress bits at 0x0300581C (header template in ROM at 0x0806E0C4). `tools/unlockpaths.py` removes the four checks.
 - Sam and Smeagol are the game's own unlockable heroes: a save slot's "Select Hero" picker (0x080308F4, used for Bonus Maps) cycles heroes 0-7 and skips Sam unless progress bit 0x1 and Smeagol unless bit 0x4000 is set. `tools/unlockheroes.py` removes both checks. Tested: Smeagol plays Moria from Bonus Maps.
+
+## Save slot screen (Load Game / Save)
+
+- Game state 9. State table at `0x0806C828` holds (init, update, draw) per state; state 9 is
+  init `0x080305C4`, update `0x080306EC`, draw `0x08031368`. Substate at `0x030041C0`
+  (0 list, 1/2 prompts, 3 result message), slot cursor at `0x030041BC`.
+- New presses come from `0x03004094` (written by the input routine at `0x08029D00` from KEYINPUT).
+  The update checks d-pad, then A (`0x08030970`), then R (`0x080313B8`, opens
+  "Delete this saved game?"), then B/Select (`0x08030C00`).
+- The prompt cursor starts on No; Yes erases the slot through `0x08030F08`.
+- `tools/nodelete.py` removes the R call at `0x080307F0`, skips drawing the "Delete" word
+  (bl at `0x08030CFA`) and moves the R button sprite (x set at `0x08031108`) off screen.
+- `tools/run`: in this libmgba build key bit 8 is L and bit 9 is R (the script names now match).
