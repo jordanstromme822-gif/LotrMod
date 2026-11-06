@@ -1,0 +1,43 @@
+{
+  "ghoul": {
+    "name": "Ghoul",
+    "behavior": "melee",
+    "color": "#7c9a5a",
+    "radius": 13,
+    "hp": 32,
+    "speed": 95,
+    "damage": 8,
+    "attackRange": 8,
+    "attackCooldown": 1.0,
+    "aggroRange": 260,
+    "xp": 10
+  },
+  "brute": {
+    "name": "Brute",
+    "behavior": "melee",
+    "color": "#8a4b3a",
+    "radius": 18,
+    "hp": 95,
+    "speed": 62,
+    "damage": 20,
+    "attackRange": 10,
+    "attackCooldown": 1.6,
+    "aggroRange": 240,
+    "xp": 30
+  },
+  "archer": {
+    "name": "Bone Archer",
+    "behavior": "ranged",
+    "color": "#cfc6a8",
+    "radius": 12,
+    "hp": 26,
+    "speed": 80,
+    "damage": 10,
+    "range": 300,
+    "keepDistance": 150,
+    "projectileSpeed": 260,
+    "attackCooldown": 1.8,
+    "aggroRange": 320,
+    "xp": 15
+  }
+}

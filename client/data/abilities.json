@@ -1,0 +1,40 @@
+{
+  "slash": {
+    "name": "Slash",
+    "type": "melee",
+    "damage": 14,
+    "range": 46,
+    "arc": 110,
+    "cooldown": 0.4,
+    "mana": 0,
+    "color": "#e8e2d0"
+  },
+  "whirlwind": {
+    "name": "Whirlwind",
+    "type": "nova",
+    "damage": 22,
+    "radius": 80,
+    "cooldown": 4,
+    "mana": 15,
+    "color": "#d9b45a"
+  },
+  "firebolt": {
+    "name": "Firebolt",
+    "type": "projectile",
+    "damage": 26,
+    "speed": 420,
+    "size": 6,
+    "range": 520,
+    "cooldown": 0.8,
+    "mana": 10,
+    "color": "#ff7a2f"
+  },
+  "mend": {
+    "name": "Mend",
+    "type": "heal",
+    "amount": 40,
+    "cooldown": 8,
+    "mana": 20,
+    "color": "#6ee07a"
+  }
+}

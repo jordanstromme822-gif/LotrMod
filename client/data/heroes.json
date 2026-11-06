@@ -1,0 +1,14 @@
+[
+  {
+    "id": "warden",
+    "name": "Warden",
+    "description": "A sword-and-shield fighter who also knows a little fire magic.",
+    "color": "#4a90d9",
+    "radius": 12,
+    "maxHp": 120,
+    "maxMana": 60,
+    "manaRegen": 4,
+    "speed": 150,
+    "abilities": ["slash", "whirlwind", "firebolt", "mend"]
+  }
+]

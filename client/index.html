@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <meta name="theme-color" content="#0d0b10">
+  <title>Realm of Shadows</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <canvas id="game"></canvas>
+
+  <div id="hud" hidden>
+    <div class="status">
+      <div class="bar hp"><i></i><span></span></div>
+      <div class="bar mana"><i></i><span></span></div>
+      <div class="bar xp"><i></i><span></span></div>
+    </div>
+    <div id="abilities"></div>
+  </div>
+
+  <section id="menu" class="panel">
+    <h1>Realm of Shadows</h1>
+    <p class="tagline">Choose your hero</p>
+    <div id="heroes"></div>
+    <p class="help">PC: move with WASD or arrows, aim with the mouse, abilities on left click, 1 to 4, or Space.<br>
+      Phone: drag the left side to move, tap the buttons to use abilities. Attacks aim at the nearest enemy.</p>
+  </section>
+
+  <section id="overlay" class="panel" hidden>
+    <h2></h2>
+    <p></p>
+    <button type="button">Play again</button>
+  </section>
+
+  <script type="module" src="src/main.js"></script>
+</body>
+</html>
