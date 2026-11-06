@@ -21,7 +21,7 @@ static int keymask(const char* s){int m=0;
  for(char* t=strtok(buf,"+");t;t=strtok(NULL,"+")){
   if(!strcmp(t,"A"))m|=1;else if(!strcmp(t,"B"))m|=2;else if(!strcmp(t,"SEL"))m|=4;else if(!strcmp(t,"START"))m|=8;
   else if(!strcmp(t,"RT"))m|=16;else if(!strcmp(t,"LT"))m|=32;else if(!strcmp(t,"U"))m|=64;else if(!strcmp(t,"D"))m|=128;
-  else if(!strcmp(t,"R"))m|=512;else if(!strcmp(t,"L"))m|=256;} // libmgba core: bit 8 = L, bit 9 = R
+  else if(!strcmp(t,"R"))m|=256;else if(!strcmp(t,"L"))m|=512;} // GBA key bits (mgba/internal/gba/input.h): bit 8 = R, bit 9 = L
  return m;}
 int main(int argc,char**argv){
  if(!getenv("MLOG")) mLogSetDefaultLogger(&L);

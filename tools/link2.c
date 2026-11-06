@@ -36,6 +36,8 @@ static struct mCore* cores[2];
 static color_t* bufs[2];
 
 static void runFrame(void) {
+	// Keep SIOCNT.SD (everyone connected) current: the game polls it before starting a transfer.
+	for (int i = 0; i < 2; ++i) if (gbas[i]->sio.mode == SIO_MULTI) gbas[i]->sio.siocnt = ready(i, gbas[i]->sio.siocnt);
 	uint32_t f0 = cores[0]->frameCounter(cores[0]), f1 = cores[1]->frameCounter(cores[1]);
 	// Alternate by scanline until both have finished a frame.
 	while (cores[0]->frameCounter(cores[0]) == f0 || cores[1]->frameCounter(cores[1]) == f1) {

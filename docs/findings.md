@@ -103,6 +103,13 @@ or `0x08` (ROM as the CPU sees it).
   Verified: Aragorn King's Command set to 1 shows "(level 1)" on the skill screen at level 1.
 - Skill levels live in the player struct at +0x16A (signed byte per skill); hero id at +0x19F.
 - Skill description text id = u16 table 0x082874A4[hero] + skill; passives = 0x1E3 + id.
+- Skills page (state 0x0F, key handler 0x080416B4): A buys (0x08041F78), SELECT sets the B skill, GBA L (0x200) goes to the Backpack, R (0x100) to Stats, B/START close. Panel 0x030041C0 (1 actives, 2 passives), cursor 0x030041B8, passive id per cursor at 0x03006A10.
+- Skill points: player + 0x19E. Hero level - 1: player + 0x19C. Each skill level costs 1 point.
+- Actives: bought level + 0x16A + i, level in use + 0x170 + i (0x08045138 adds to both). New heroes get Herbal Healing (i = 5) at 1 for free; its unlock row is all 255, so it never goes higher.
+- Passives: the hero's 9 ids at [player + 0x18]; bought level + 0x158 + slot, level in use + 0x161 + slot. Passive table 0x0806E3D4, 40 bytes per id: up to 3 bonuses of (type byte + 5 u16 per level), max level at +0x26. 0x0804539C(p, slot, +1/-1) adds or removes one level's bonuses. Loading a game copies bought -> in use and reapplies all bonuses (0x08042B6C).
+- Keys per player (updated each game tick): new presses 0x03004080, held 0x03004088, new presses for menus 0x03004094 (+2 per player).
+- `tools/skillrefund.py`: L + SELECT on the Skills page takes one bought level back and returns its point (passive bonuses removed, Herbal Healing's free level kept). In link play it sends the game's own skill message (0x21 / 0x22) with bit 7 set in the first byte and wraps those two cases, so both GBAs apply it. Tested single player (stats restored byte for byte, save and load) and with tools/link2 (both players refunding, both GBAs agree).
+- Unmodified-game quirk seen while testing: after buying an active skill, saving and loading adds 1 melee and missile armor (Sweep 1: armor 2 -> 3). Not caused by the refund patch.
 
 ## Menus and input
 
@@ -154,10 +161,11 @@ or `0x08` (ROM as the CPU sees it).
   (half the memory on phones, and saves use the normal EEPROM address on any emulator).
 - 0x9E800-0x9E80B: Options label helper (tools/nolanguage.py).
 - 0x9E820-0x9E877: save slot lock (tools/nodupe.py).
+- 0x9EA00-0x9EC47: skill point refund (tools/skillrefund.py).
 
 ## Testing
 
-- `tools/run` script commands: frames + keys, `shot`, `peek`, `poke <addr> <u32>`, `watch`, `break`, `save`/`load` states.
+- `tools/run` script commands: frames + keys (L and R now match the GBA's own bits: L = 0x200, R = 0x100; they were swapped before), `shot`, `peek`, `poke <addr> <u32>`, `watch`, `break`, `save`/`load` states.
 - Story-slide test: from gameplay, poke the pending state block 0x030041F0 = {0x87, 0, slide, level}
   (what script command 0x1B, 0x08018670, does) and check the game ends in state 1, or 0x19 then 9 for endings.
 
@@ -179,6 +187,7 @@ or `0x08` (ROM as the CPU sees it).
 
 ## Link play (2 players)
 
+- `tools/link2.c` keeps the SD (all connected) bit of SIOCNT up to date every frame; with libmgba 0.10.2 the master never saw it and no transfers happened.
 - `tools/link2.c` runs two GBAs in one process with a small multiplayer-mode (SIO_MULTI) link driver: the master's SIOCNT start latches both SIOMLT_SEND words, and after the transfer time each GBA gets SIOMULTI0-3, its ID and the SIO interrupt. Cores take turns by scanline. Build: `gcc -O2 -o tools/link2 tools/link2.c -lmgba`.
 - Verified 2026-11-06: both GBAs pick Multiplayer, load a save, see the same "Choose your path" screen (the master chooses), and enter the same level with both heroes on screen (about 3.7 transfers per frame).
 - Browser build (2026-11-06): libmgba 0.10.5 for wasm with emscripten 3.1.6 from apt (`emcmake cmake` with SDL/Qt/zlib/png/etc. off, then in CMakeCache.txt clear the HAVE_* checks emscripten fakes, keeping HAVE_STRDUP/STRNDUP/LOCALTIME_R/*LOCALE/STRTOF_L, and add `-DDISABLE_THREADING -D_GNU_SOURCE`). `tools/link/build.sh` links `tools/link/web.c` into link.js + link.wasm (~600 KB). Both GBAs run in about 4 ms a frame on a desktop, and runs are deterministic (same RAM hash every run).
