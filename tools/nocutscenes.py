@@ -17,6 +17,12 @@ Two special cases, matching what the game does after showing them:
   plus 0x46). After one of them the game goes to the credits (state 0x19,
   0x08045B0A), so the hook calls setState(0x19) instead of returning to a level.
 
+For level transitions the hook also skips the rest of the slide screen's setup
+(it returns to the end of the enter function, 0x08045A1C) and sets the state's
+type to 4, so the exit code (0x08045E44) skips the matching cleanup and its
+second fade. The old level fades out and the next one fades in, with no slide
+picture flashing in between.
+
 The hook code goes in the Spanish text bank (0x9E330), which is unused because
 every language entry is pointed at English (Jordan chose English only).
 
@@ -72,8 +78,12 @@ found:
     movs r0, #1
     ldr r3, =0x08033171
     bl callr3
-    ldr r0, [r4, #8]
-    b done
+    movs r0, #4
+    str r0, [r4, #4]
+    pop {r1, r2, r3, r6}
+    pop {r0}
+    ldr r0, =0x08045A1D
+    bx r0
 ending:
     movs r0, #0x19
     ldr r3, =0x08033155
