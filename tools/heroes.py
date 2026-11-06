@@ -8,12 +8,12 @@
 The original game sets starting attributes with numbers baked into its code (one block per
 hero, function 0x08025D6C). The first edit replaces that function with a short routine that
 reads from a table, so each hero and attribute can be changed on its own. The routine and
-table live in the expanded part of the ROM, so the output is always 32 MB (see expand.py).
+table live in the Spanish text bank, which is free because every language is pointed at
+English (Jordan chose English only), so the ROM stays 16 MB and saves work on any emulator.
 """
 import struct
 import sys
 
-from expand import expand
 
 HEROES = ["frodo", "legolas", "aragorn", "gandalf", "eowyn", "gimli", "sam", "smeagol"]
 # attribute -> offset in the player block (0x03003C00 + 0x1AC * player)
@@ -22,10 +22,11 @@ ATTRS = {"courage": 0x2A, "defense": 0x2C, "health": 0x2E, "accuracy": 0x30, "st
 FUNC = 0x25D6C          # original "set starting attributes" function (ROM offset)
 JUMP_TABLE = 0x25D8C    # its 8-entry switch table, one case per hero
 RESUME = 0x08025EB3     # where every original case ends up (Thumb address)
-HOOK = 0x1000000        # our routine, ROM offset (CPU 0x09000000)
-TABLE = 0x1000100       # hero table: 8 heroes x 16 bytes, u16 values in ATTRS order
+HOOK = 0x9E600          # our routine, ROM offset (CPU 0x0809E600), in the Spanish text bank
+TABLE = 0x9E700         # hero table: 8 heroes x 16 bytes, u16 values in ATTRS order
 MAGIC = b"LOTRMOD-HEROES\0\0"
-MAGIC_AT = 0x10000E0
+MAGIC_AT = 0x9E6E0
+LANG_TABLE, ENGLISH = 0x289A10, 0x0807500C
 
 
 def original_stats(rom):
@@ -54,7 +55,7 @@ def original_stats(rom):
 def hook_code():
     import keystone
     ks = keystone.Ks(keystone.KS_ARCH_ARM, keystone.KS_MODE_THUMB)
-    base = 0x09000000
+    base = 0x08000000 + HOOK
     lit = base + 0x80
     lines = [
         "push {r4, lr}",
@@ -94,10 +95,12 @@ def hook_code():
 
 
 def install(rom):
-    rom = bytearray(expand(bytes(rom)))
+    rom = bytearray(rom)
     if rom[MAGIC_AT:MAGIC_AT + len(MAGIC)] == MAGIC:
         return rom
     stats = original_stats(rom)
+    for i in range(1, 5):  # English only: frees the other text banks
+        struct.pack_into("<I", rom, LANG_TABLE + 4 * i, ENGLISH)
     blob = hook_code()
     rom[HOOK:HOOK + len(blob)] = blob
     rom[MAGIC_AT:MAGIC_AT + len(MAGIC)] = MAGIC
@@ -105,7 +108,7 @@ def install(rom):
         for i, name in enumerate(ATTRS):
             struct.pack_into("<H", rom, TABLE + 16 * hid + 2 * i, s[name])
     # Trampoline at the start of the old function: ldr r3,[pc,#0]; bx r3; .word hook|1
-    rom[FUNC:FUNC + 8] = bytes([0x00, 0x4B, 0x18, 0x47]) + struct.pack("<I", 0x09000001)
+    rom[FUNC:FUNC + 8] = bytes([0x00, 0x4B, 0x18, 0x47]) + struct.pack("<I", 0x08000000 + HOOK + 1)
     return rom
 
 

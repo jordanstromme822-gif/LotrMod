@@ -117,7 +117,7 @@ or `0x08` (ROM as the CPU sees it).
 
 ## Story cutscenes, dialogue, unlocks
 
-- Story slides: table 0x0806F68C, 0x2C bytes per slide (+0x22 text id, +0x24 level arg, +0x25 type 4 first / 5 middle / 6 last, +0x26 next slide). Each slide is game state 7; after the last one the sequencer (0x08045E78) calls setState2(1, last.+0x24, [0x030041BC]). `tools/nocutscenes.py` hooks state 7's enter (0x0804587E) and queues that call straight away. Hook code lives in the freed Spanish text bank (0x9E400), so the patch also points every language at English.
+- Story slides: table 0x0806F68C, 0x2C bytes per slide (+0x22 text id, +0x24 level arg, +0x25 type 4 first / 5 middle / 6 last, +0x26 next slide). Each slide is game state 7; after the last one the sequencer (0x08045E78) calls setState2(1, last.+0x24, [0x030041BC]). `tools/nocutscenes.py` hooks state 7's enter (0x0804587E) and queues that call straight away. Hook code lives in the freed Spanish text bank (0x9E400), so the patch also points every language at English. Special cases: slides 0x14 and 0x19 are single mid-level slides (the update at 0x08045C30 marks them last), and slides above 0x39 are the endings (0x3A is swapped per hero for 0x3C-0x44, plus 0x46); after an ending the game goes to the credits (setState(0x19), 0x08045B0A) and then the save screen, so the hook does the same. An earlier version sent endings back into a level.
 - In-level dialogue: everything opens through 0x0801AD9C(textId), which switches to game state 0x11 until A. Script command 0x08018454 has a multiplayer path that skips the box and runs the follow-up (0x0800C4AC). `tools/nodialogue.py` makes 0x0801AD9C return and always takes the multiplayer path.
 - Heroes: the select screen is a fixed ring of 6 (Frodo, Legolas, Aragorn, Gandalf, Eowyn, Gimli), all open from a fresh save. Sam (6) and Smeagol (7) have stats and skills but no select entry or description text.
 - Bonus Maps: main menu item 5 goes to the slot screen in mode 4, then "Choose your path" (state 0x18). Path table 0x08050634 (0x1C bytes, unlock mask at +0x18: 0x10000000, 4, 8, 2) is checked against save progress bits at 0x0300581C (header template in ROM at 0x0806E0C4). `tools/unlockpaths.py` removes the four checks.
@@ -135,3 +135,16 @@ or `0x08` (ROM as the CPU sees it).
 - `tools/nodelete.py` removes the R call at `0x080307F0`, skips drawing the "Delete" word
   (bl at `0x08030CFA`) and moves the R button sprite (x set at `0x08031108`) off screen.
 - `tools/run`: in this libmgba build key bit 8 is L and bit 9 is R (the script names now match).
+
+## Free space map (Spanish text bank, English only)
+
+- 0x9E400-0x9E46F: story-cutscene hook (tools/nocutscenes.py).
+- 0x9E600-0x9E68B: hero stats routine, 0x9E6E0 marker, 0x9E700-0x9E77F hero table (tools/heroes.py).
+  The hero hook used to live in the 32 MB expansion; it moved here so the modded game stays 16 MB
+  (half the memory on phones, and saves use the normal EEPROM address on any emulator).
+
+## Testing
+
+- `tools/run` script commands: frames + keys, `shot`, `peek`, `poke <addr> <u32>`, `watch`, `break`, `save`/`load` states.
+- Story-slide test: from gameplay, poke the pending state block 0x030041F0 = {0x87, 0, slide, level}
+  (what script command 0x1B, 0x08018670, does) and check the game ends in state 1, or 0x19 then 9 for endings.

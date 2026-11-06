@@ -10,6 +10,13 @@ This patch hooks state 7's enter code (0x0804587E): it follows the chain to the
 last slide and queues that same setState2(1, ...) right away, so the level
 starts without showing any slides. Slides of other types (0-3) are left alone.
 
+Two special cases, matching what the game does after showing them:
+- 0x14 and 0x19 are single mid-level slides the update code (0x08045C30) marks
+  as last, so they also go straight to setState2(1, ...).
+- Slides above 0x39 are the endings (0x3A is swapped per hero for 0x3C-0x44,
+  plus 0x46). After one of them the game goes to the credits (state 0x19,
+  0x08045B0A), so the hook calls setState(0x19) instead of returning to a level.
+
 The hook code goes in the Spanish text bank (0x9E330), which is unused because
 every language entry is pointed at English (Jordan chose English only).
 
@@ -29,7 +36,13 @@ ASM = """
     push {r1, r2, r3, r6, lr}
     ldr r5, =0x0806F68C
     ldr r0, [r4, #8]
+    cmp r0, #0x39
+    bhi ending
     movs r1, r0
+    cmp r0, #0x14
+    beq single
+    cmp r0, #0x19
+    beq single
     movs r6, #64
 walk:
     movs r2, #0x2c
@@ -47,12 +60,23 @@ walk:
     subs r6, #1
     bne walk
     b done
+single:
+    movs r2, #0x2c
+    muls r2, r1
+    adds r2, r2, r5
+    adds r2, #0x24
 found:
     str r1, [r4, #8]
     ldrb r1, [r2, #0]
     ldr r2, [r4, #0xc]
     movs r0, #1
     ldr r3, =0x08033171
+    bl callr3
+    ldr r0, [r4, #8]
+    b done
+ending:
+    movs r0, #0x19
+    ldr r3, =0x08033155
     bl callr3
     ldr r0, [r4, #8]
 done:
