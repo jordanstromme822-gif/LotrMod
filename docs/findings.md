@@ -114,3 +114,10 @@ or `0x08` (ROM as the CPU sees it).
 
 - Each OAM buffer (0x03004340, 0x03004B80) is two 1 KB images. Image 0 has every sprite plus the reflections (vflip, priority 3, drawn under BG2 water, which alpha-blends over OBJ: BLDCNT 0x1044, BLDALPHA 0x0808). Image 1 is image 0 minus the reflections.
 - The vblank handler flips 0x03001F18 each frame and DMAs image (toggle), so reflections show on every other frame. `tools/noflicker.py` always picks image 0. In a 60-sample random walk of level 1, image 1 never had a sprite that image 0 lacked.
+
+## Story cutscenes, dialogue, unlocks
+
+- Story slides: table 0x0806F68C, 0x2C bytes per slide (+0x22 text id, +0x24 level arg, +0x25 type 4 first / 5 middle / 6 last, +0x26 next slide). Each slide is game state 7; after the last one the sequencer (0x08045E78) calls setState2(1, last.+0x24, [0x030041BC]). `tools/nocutscenes.py` hooks state 7's enter (0x0804587E) and queues that call straight away. Hook code lives in the freed Spanish text bank (0x9E400), so the patch also points every language at English.
+- In-level dialogue: everything opens through 0x0801AD9C(textId), which switches to game state 0x11 until A. Script command 0x08018454 has a multiplayer path that skips the box and runs the follow-up (0x0800C4AC). `tools/nodialogue.py` makes 0x0801AD9C return and always takes the multiplayer path.
+- Heroes: the select screen is a fixed ring of 6 (Frodo, Legolas, Aragorn, Gandalf, Eowyn, Gimli), all open from a fresh save. Sam (6) and Smeagol (7) have stats and skills but no select entry or description text.
+- Bonus Maps: main menu item 5 goes to the slot screen in mode 4, then "Choose your path" (state 0x18). Path table 0x08050634 (0x1C bytes, unlock mask at +0x18: 0x10000000, 4, 8, 2) is checked against save progress bits at 0x0300581C (header template in ROM at 0x0806E0C4). `tools/unlockpaths.py` removes the four checks.
