@@ -94,3 +94,12 @@ or `0x08` (ROM as the CPU sees it).
 - Frame rate: the main loop at 0x080315F6 runs one game tick every 2 vblanks (30 fps,
   movs r0,#2 at 0x080315EE). Changing it to 1 runs game logic twice as fast (text and
   movement speed up), so true 60 fps would need every speed and timer halved.
+
+## Skills
+
+- Active skills: per-hero tables of 6 skills x 6 bytes (hero order Frodo, Legolas, Aragorn,
+  Gandalf, Eowyn, Gimli, Sam, Smeagol at 0x28758E, 0x2875FA, 0x28761E, 0x287642, 0x287666,
+  0x28768A, 0x2875B2, 0x2875D6). Byte n = hero level needed for skill level n+1, 255 = never.
+  Verified: Aragorn King's Command set to 1 shows "(level 1)" on the skill screen at level 1.
+- Skill levels live in the player struct at +0x16A (signed byte per skill); hero id at +0x19F.
+- Skill description text id = u16 table 0x082874A4[hero] + skill; passives = 0x1E3 + id.
