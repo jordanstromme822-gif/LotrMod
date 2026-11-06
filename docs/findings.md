@@ -138,6 +138,12 @@ or `0x08` (ROM as the CPU sees it).
 - `tools/nodupe.py` blocks the Ranger Hollow dupe (save one game into several slots, empty each copy into the shared Hollow): a lock byte at 0x0203FFF0 (unused EWRAM) holds the session's slot, set on load or save, cleared by the title screen, and A on any other slot in save mode only plays the cancel sound.
 - `tools/run`: in this libmgba build key bit 8 is L and bit 9 is R (the script names now match).
 
+## Items and equipment
+
+- Hero inventory is 32-bit item words: bits 0-3 category (0xF = empty), bits 8-15 index, upper bits prefix/suffix. Equipment slots at hero + 0x3C (armor), + 0x40 (weapon), + 0x44 (shield), ... + 0x58; the backpack grid starts at hero + 0x5C.
+- Category table at 0x08068F50, 0x28 bytes each (+0x20 pointer list, +0x24 count): 0 knives, 1 swords, 2 two-handed swords, 3 axes, 4 clubs, 5 staves, 6 bows, 7 arrows, 8 armor, 9 shields, 10 amulets, 11 capes, 12 gloves, 13 wrappings, 14 uniques. Base item entries are 12 bytes (name text id, then (stat, value) pairs, 0x5A = none).
+- Equip/unequip apply stat deltas through 0x0802DDC4(category, stat, hero, delta); max melee damage is hero + 0xA4. `tools/nostack.py` fixes the half-delta special case for two-handed swords that let damage stack.
+
 ## Free space map (Spanish text bank, English only)
 
 - 0x9E400-0x9E46F: story-cutscene hook (tools/nocutscenes.py).

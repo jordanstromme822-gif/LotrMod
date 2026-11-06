@@ -30,6 +30,7 @@ int main(int argc,char**argv){
  unsigned w,h; core->desiredVideoDimensions(core,&w,&h);
  color_t* buf=malloc(w*h*sizeof(color_t)); core->setVideoBuffer(core,buf,w);
  if(!mCoreLoadFile(core,argv[1])){puts("load fail");return 1;}
+ if(getenv("SAVE")) mCoreAutoloadSave(core);
  core->reset(core);
  FILE* sc=fopen(argv[2],"r"); char line[256]; long frame=0;
  while(fgets(line,sizeof line,sc)){
