@@ -11,7 +11,7 @@ files (`.bps`) that each player applies to their own copy.
 - Run the game headless in an emulator with scripted button presses, screenshots,
   RAM dumps, save states and write-watchpoints (`tools/run.c`).
 - Dump all in-game text in all 5 languages (`tools/text.py`).
-- Change a hero's starting attributes (`tools/stats.py`).
+- Change any hero's starting attributes, all 8 heroes (`tools/heroes.py`).
 - Grow the game file from 16 MB to 32 MB for extra room (`tools/expand.py`).
 - Make and apply patches: BPS for any size (`tools/bps.py`), IPS for the original 16 MB size (`tools/ips.py`).
 
@@ -29,7 +29,8 @@ gcc -O2 -o tools/run tools/run.c -lmgba
 ```sh
 # Grow the game to 32 MB, give Aragorn 50 Courage, and make a patch you can share
 python3 tools/expand.py rotk.gba work.gba
-python3 tools/stats.py work.gba modded.gba aragorn courage 50
+python3 tools/heroes.py work.gba modded.gba gimli strength 40 legolas accuracy 45
+python3 tools/heroes.py work.gba modded.gba --all +10
 python3 tools/bps.py make rotk.gba modded.gba aragorn-courage.bps
 
 # Apply someone's patch to your own copy

@@ -71,6 +71,13 @@ or `0x08` (ROM as the CPU sees it).
   `save`, `load`, `watch <addr> [span]` (prints the code address of every write).
 - `tools/text.py`: text dumper.
 - `tools/stats.py`: starting attribute editor (only verified entries).
+- `tools/heroes.py`: all-heroes stat editor. 0x08025D6C(heroId, player) sets starting
+  attributes via a jump table at 0x25D8C (ids 0 Frodo, 1 Legolas, 2 Aragorn, 3 Gandalf,
+  4 Eowyn, 5 Gimli, 6 Sam, 7 Smeagol); every case resumes at 0x08025EB2. The tool expands
+  to 32 MB, replaces the function start with a jump to a hook at 0x09000000, and the hook
+  reads a table at ROM 0x1000100 (8 heroes x 16 bytes, u16 courage, defense, health,
+  accuracy, strength). Struct offsets: courage +0x2A, defense +0x2C, health +0x2E,
+  accuracy +0x30, strength +0x32. Verified in game for Aragorn and Legolas.
 - `tools/ips.py`: make and apply IPS patches (16 MB only).
 - `tools/bps.py`: make and apply BPS patches (any size).
 - `tools/expand.py`: grow the ROM to 32 MB.
