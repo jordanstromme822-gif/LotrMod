@@ -144,6 +144,12 @@ or `0x08` (ROM as the CPU sees it).
 - Category table at 0x08068F50, 0x28 bytes each (+0x20 pointer list, +0x24 count): 0 knives, 1 swords, 2 two-handed swords, 3 axes, 4 clubs, 5 staves, 6 bows, 7 arrows, 8 armor, 9 shields, 10 amulets, 11 capes, 12 gloves, 13 wrappings, 14 uniques. Base item entries are 12 bytes (name text id, then (stat, value) pairs, 0x5A = none).
 - Equip/unequip apply stat deltas through 0x0802DDC4(category, stat, hero, delta); max melee damage is hero + 0xA4. `tools/nostack.py` fixes the half-delta special case for two-handed swords that let damage stack.
 
+## Ground pickups (gems)
+
+- Items on the ground are entities with update 0x0802F130 (+0x14) and touch callback 0x0802F580 (+0x18). Item type byte at +0x60 (name = text 568 + type: 13 A Gem, 14 A Pile of Gems, 15 Fruit, 16 Mushrooms, 17/18 Kingsfoil, ...), item word at +0x88, state +0x63 (1 = taken), lifetime +0x84 (1800 ticks), spawn delay +0xF0.
+- The update sets item + 0x8C + player when that player's hero is within 15 pixels and no other item holds the player's HUD label (0x03003F70 + 0x7C * player + 0x70). The IWRAM collision loop calls the touch callback while hero and item overlap (r0 = item, r1 = hero); it picks up only on a fresh R press (0x03004080 + 2 * player, bit 0x100) with that flag set. Gems add byte1 + byte2 + byte3 of the item word to player + 0x184 (u16).
+- `tools/autogems.py` (Jordan, 2026-11-06): gems are taken on touch, no R. Hook at 0x0802F59E calls 0x0809EC80, which for types 13/14 only checks that the toucher is the player's own hero ([0x03003C00 + 0x1AC * player]); other items keep the R + label rule. Tested: walking onto a gem and a pile (1 + 7) gave 8 gems with no buttons; the unpatched game gave 0 until R; herbs still need R.
+
 ## Free space map (Spanish text bank, English only)
 
 - 0x9E400-0x9E46F: story-cutscene hook (tools/nocutscenes.py).
@@ -153,6 +159,7 @@ or `0x08` (ROM as the CPU sees it).
   The hero hook used to live in the 32 MB expansion; it moved here so the modded game stays 16 MB
   (half the memory on phones, and saves use the normal EEPROM address on any emulator).
 - 0x9E800-0x9E80B: Options label helper (tools/nolanguage.py).
+- 0x9EC80-0x9ECCF: gem auto pickup (tools/autogems.py).
 - 0x9E820-0x9E877: save slot lock (tools/nodupe.py).
 
 ## Testing
