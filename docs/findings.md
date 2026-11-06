@@ -148,3 +148,10 @@ or `0x08` (ROM as the CPU sees it).
 - `tools/run` script commands: frames + keys, `shot`, `peek`, `poke <addr> <u32>`, `watch`, `break`, `save`/`load` states.
 - Story-slide test: from gameplay, poke the pending state block 0x030041F0 = {0x87, 0, slide, level}
   (what script command 0x1B, 0x08018670, does) and check the game ends in state 1, or 0x19 then 9 for endings.
+
+## Options menu (game state 6)
+
+- Rows: Music Volume, SFX Volume, Quick Skill Select, Auto Healing, Fast Discard, Difficulty, Language Select, Credits. Cursor is [0x030041B8]; row i is drawn by 0x08036AE8 with text 0x39 + i at y = 0x20 + 16*i. Difficulty (row 5) is skipped when Options is opened from the title screen.
+- Working copy of the settings is 0x03002080 (+0 music, +1 sfx, +2 quick skill, +3 auto heal, ...). The saved copy is the bit field at 0x03005820 (0x030057F0 + 0x30): bit 3 quick skill, bit 4 auto heal. Leaving Options calls 0x080265C0, which copies them into each hero's flags at player + 0x19A (bit 1 quick skill, bit 0 auto heal).
+- Quick Skill Select: with it on, the Skills page (state 0xF) shows A, B and R badges on three skills, and in play holding L and pressing A, B or R uses that skill (player + 0x191.. holds the slot map). Verified in the core: L+A fires the A skill.
+- `tools/nolanguage.py` removes Language Select: 7 rows, Credits in row 6, label helper at 0x0809E800.
