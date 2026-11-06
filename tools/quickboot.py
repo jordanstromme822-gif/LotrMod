@@ -5,18 +5,19 @@ The game's state machine (setState at 0x08033154) normally goes
 language select (0x12) -> copyright (2) -> logos (3) -> title (5).
 Both places that start state 2 (boot with a save at 0x0803312C, and
 leaving the language screen at 0x0802FC52) are changed to start state 5.
-The language screen still appears once on a brand-new save.
+A brand-new save also skips the language screen (0x08033114, state 0x12
+-> 5) and lands on the title's "Press START"; English is the default.
 
   python3 tools/quickboot.py in.gba out.gba
 """
 import sys
 
-SITES = (0x2FC52, 0x3312C)  # movs r0, #2  ->  movs r0, #5
+SITES = {0x2FC52: 2, 0x3312C: 2, 0x33114: 0x12}  # movs r0, #n  ->  movs r0, #5
 
 
 def patch(rom: bytearray) -> bytearray:
-    for at in SITES:
-        if rom[at:at + 2] not in (b"\x02\x20", b"\x05\x20"):
+    for at, old in SITES.items():
+        if rom[at:at + 2] not in (bytes([old, 0x20]), b"\x05\x20"):
             raise SystemExit(f"unexpected bytes at {at:#x}; is this the BLRE ROM?")
         rom[at] = 5
     return rom
