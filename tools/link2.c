@@ -75,6 +75,11 @@ int main(int argc, char** argv) {
 		int n = sscanf(line, "%63s %63s %63s", a, b, c3);
 		if (n < 1) continue;
 		if (!strcmp(a, "shot")) { shot(argv[4], b, 0); shot(argv[4], b, 1); continue; }
+		if (!strcmp(a, "ram")) {
+			for (int i = 0; i < 2; ++i) { char pth[512]; snprintf(pth, sizeof(pth), "%s/%s_%c.ram", argv[4], b, 'a' + i); FILE* f = fopen(pth, "wb");
+				fwrite(gbas[i]->memory.wram, 1, 0x40000, f); fwrite(gbas[i]->memory.iwram, 1, 0x8000, f); fclose(f); }
+			continue;
+		}
 		if (!strcmp(a, "log")) { logXfer = !strcmp(b, "on"); continue; }
 		if (!strcmp(a, "peek")) {
 			uint32_t ad = strtoul(b, 0, 16);
