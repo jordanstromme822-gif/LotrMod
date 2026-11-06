@@ -183,3 +183,14 @@ or `0x08` (ROM as the CPU sees it).
 - Verified 2026-11-06: both GBAs pick Multiplayer, load a save, see the same "Choose your path" screen (the master chooses), and enter the same level with both heroes on screen (about 3.7 transfers per frame).
 - Browser build (2026-11-06): libmgba 0.10.5 for wasm with emscripten 3.1.6 from apt (`emcmake cmake` with SDL/Qt/zlib/png/etc. off, then in CMakeCache.txt clear the HAVE_* checks emscripten fakes, keeping HAVE_STRDUP/STRNDUP/LOCALTIME_R/*LOCALE/STRTOF_L, and add `-DDISABLE_THREADING -D_GNU_SOURCE`). `tools/link/build.sh` links `tools/link/web.c` into link.js + link.wasm (~600 KB). Both GBAs run in about 4 ms a frame on a desktop, and runs are deterministic (same RAM hash every run).
 - Play Room "Play together": each page runs both GBAs and exchanges only buttons through the room capability's presence (latest-wins, ~30 updates/s): `{f, k: last 40 frames of buttons, hs: RAM hash every 120 frames, pi/po: ping}`. Input delay = half the measured round trip + 3 frames (4-24). Host = player 1 (link master). Guest builds the game with the host's mod/stats/skills and must match its CRC; both saves travel in presence at the start. Tested with two simulated players at 40 ms and 150 ms one-way latency: 60 fps, matching hashes, both in the same level.
+
+## Computer partner (Play Room "Play with a computer partner")
+
+Both GBAs run on one device; player 2's buttons come from the page, read from player 2's GBA memory each frame:
+
+- Game state byte `0x030041B0` (1 = gameplay). Outside gameplay the bot copies player 1's d-pad, A and B (never Start/Select), so it follows the menus into the same mode, slot and level.
+- Active object list: head pointer at `[0x03002420]`, next pointer at `obj+0`, objects 0x148 bytes, in EWRAM.
+- Player 1's object pointer at `[0x03003C00]`, player 2's at `[0x03003DAC]`.
+- Position: 16.16 fixed point x at `obj+0xAC`, y at `obj+0xB0`.
+- Enemies: u16 `0xF0` at `obj+0x8A`; hit points in the byte at `obj+0x8F` (0 = dead / not active).
+- A swings. Tested: player 2 follows player 1 across the first level and wears enemies down (25 to 10 hit points).
