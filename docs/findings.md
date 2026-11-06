@@ -24,8 +24,21 @@ or `0x08` (ROM as the CPU sees it).
   `tools/text.py`, which dumps everything.
 - Editing text: re-encode the strings (new Huffman tree if new characters are needed),
   write the new bank to free space and point the language table at it. Free space inside
-  the 16 MB ROM is small (about 13 KB at `0xFFCB89`), so bigger text changes will mean
-  growing the ROM to 32 MB, which GBA hardware and emulators support.
+  the 16 MB ROM is small (about 13 KB at `0xFFCB89`), so new text goes in the expanded area
+  (see below). We're keeping English only, so the 4 other language banks (~170 KB from
+  `0x7EE28`) are also free to reuse once every language entry points at English.
+
+## 32 MB expansion
+
+- `tools/expand.py` pads the ROM to 32 MB with `0xFF`. New space: ROM offsets
+  `0x1000000`–`0x1FFFFFF`, CPU addresses `0x09000000`–`0x09FFFFFF`.
+- Tested in mGBA: boots, saves to a slot ("Game saved successfully"), and after a reset the
+  save shows up in Load Game.
+- Caveat: the save code (`0x0804DDEC` and its callers, which build the address with
+  `movs rX, #0xD0; lsls rX, #0x14`) talks to EEPROM at `0x0D000000`. Real 32 MB carts only
+  answer at `0x0DFFFF00`+, so flash carts and some emulators may not save until those call
+  sites are patched. mGBA is fine.
+- IPS can't address past 16 MB, so expanded mods are shared as BPS (`tools/bps.py`).
 
 ## Heroes and stats
 
@@ -58,4 +71,6 @@ or `0x08` (ROM as the CPU sees it).
   `save`, `load`, `watch <addr> [span]` (prints the code address of every write).
 - `tools/text.py`: text dumper.
 - `tools/stats.py`: starting attribute editor (only verified entries).
-- `tools/ips.py`: make and apply IPS patches.
+- `tools/ips.py`: make and apply IPS patches (16 MB only).
+- `tools/bps.py`: make and apply BPS patches (any size).
+- `tools/expand.py`: grow the ROM to 32 MB.
