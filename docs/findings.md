@@ -103,3 +103,9 @@ or `0x08` (ROM as the CPU sees it).
   Verified: Aragorn King's Command set to 1 shows "(level 1)" on the skill screen at level 1.
 - Skill levels live in the player struct at +0x16A (signed byte per skill); hero id at +0x19F.
 - Skill description text id = u16 table 0x082874A4[hero] + skill; passives = 0x1E3 + id.
+
+## Menus and input
+
+- Game state byte at 0x030041B0 is 0x0A in the in-game Backpack/Skills/Stats menu, 5 on the title menu, 1 in gameplay.
+- Menus move the cursor one step per fresh d-pad press (a 1-frame press is enough, holding does not repeat). With two directions held, the horizontal one wins.
+- Boot copies code from ROM 0xCD5C to IWRAM 0x03002D30 (0x4DC bytes) and from ROM 0xE208 to 0x03002C30; the Play Room uses these to find IWRAM inside the emulator's memory.
