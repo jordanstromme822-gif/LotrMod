@@ -134,6 +134,8 @@ or `0x08` (ROM as the CPU sees it).
 - The prompt cursor starts on No; Yes erases the slot through `0x08030F08`.
 - `tools/nodelete.py` removes the R call at `0x080307F0`, skips drawing the "Delete" word
   (bl at `0x08030CFA`) and moves the R button sprite (x set at `0x08031108`) off screen.
+- Slot headers live at 0x03005630 + slot*0x70. Load is 0x08031490, save/erase is 0x08030F08(1/0); both store the slot in 0x03005834 ("last slot", used to place the cursor). Save mode is [0x030041B4] = 1 (pause menu) or 3 (after the credits).
+- `tools/nodupe.py` blocks the Ranger Hollow dupe (save one game into several slots, empty each copy into the shared Hollow): a lock byte at 0x0203FFF0 (unused EWRAM) holds the session's slot, set on load or save, cleared by the title screen, and A on any other slot in save mode only plays the cancel sound.
 - `tools/run`: in this libmgba build key bit 8 is L and bit 9 is R (the script names now match).
 
 ## Free space map (Spanish text bank, English only)
@@ -142,6 +144,8 @@ or `0x08` (ROM as the CPU sees it).
 - 0x9E600-0x9E68B: hero stats routine, 0x9E6E0 marker, 0x9E700-0x9E77F hero table (tools/heroes.py).
   The hero hook used to live in the 32 MB expansion; it moved here so the modded game stays 16 MB
   (half the memory on phones, and saves use the normal EEPROM address on any emulator).
+- 0x9E800-0x9E80B: Options label helper (tools/nolanguage.py).
+- 0x9E820-0x9E877: save slot lock (tools/nodupe.py).
 
 ## Testing
 
