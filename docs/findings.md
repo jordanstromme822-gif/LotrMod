@@ -81,3 +81,16 @@ or `0x08` (ROM as the CPU sees it).
 - `tools/ips.py`: make and apply IPS patches (16 MB only).
 - `tools/bps.py`: make and apply BPS patches (any size).
 - `tools/expand.py`: grow the ROM to 32 MB.
+
+## Game states and frame rate
+
+- State machine: setState(n) at 0x08033154 (and 0x08033170 with two args) writes n|0x80
+  to 0x030041F0; the main loop applies it next frame. Seen states: 0x12 language select,
+  2 copyright, 3 New Line/EA logos, 5 title, 8 main menu, 7 story cutscene slide, 1 gameplay.
+- Boot: 0x080330E8 starts 0x12 on a fresh save, 2 when the save already has a language.
+  `tools/quickboot.py` sends both routes to 5 (title), skipping copyright and logos.
+- Story cutscenes: sequencer at 0x08045E78 re-enters state 7 per slide, then state 1.
+  New game from the menu starts it at 0x080142BC (movs r0,#7).
+- Frame rate: the main loop at 0x080315F6 runs one game tick every 2 vblanks (30 fps,
+  movs r0,#2 at 0x080315EE). Changing it to 1 runs game logic twice as fast (text and
+  movement speed up), so true 60 fps would need every speed and timer halved.
