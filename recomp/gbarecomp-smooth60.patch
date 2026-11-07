@@ -1,9 +1,56 @@
+diff --git a/src/gba/gba_ppu.cpp b/src/gba/gba_ppu.cpp
+index d9d1604..3f50353 100644
+--- a/src/gba/gba_ppu.cpp
++++ b/src/gba/gba_ppu.cpp
+@@ -66,6 +66,9 @@ extern "C" int (*g_ws_obj_attr_x_provider)(int, std::uint16_t,
+ // still run first, so a game can re-place known-safe HUD sprites and clip the
+ // rest.
+ extern "C" int g_ws_obj_native_clip = 0;
++extern "C" const uint8_t* g_ws_render_io = nullptr;
++extern "C" int g_ws_margin_scroll_override_on = 0;
++extern "C" int g_ws_margin_scroll_override[4][2] = {};
+ extern "C" int (*g_ws_obj_attr_y_provider)(int, std::uint16_t,
+                                             std::uint16_t, std::uint16_t,
+                                             int*) = nullptr;
+@@ -2596,6 +2599,13 @@ void GbaPpu::render(uint8_t* rgb,
+                     const uint8_t* vram,
+                     const uint8_t* oam,
+                     const uint8_t* pal) const {
++    // Whole-frame re-renders (screenshots, 60 fps in-between pictures) tell
++    // margin providers which register page they are drawing with.
++    struct RenderIoScope {
++        const uint8_t* prev;
++        explicit RenderIoScope(const uint8_t* io) : prev(g_ws_render_io) { g_ws_render_io = io; }
++        ~RenderIoScope() { g_ws_render_io = prev; }
++    } render_io_scope(io);
+     if (!view_expanded()) {
+         // Faithful path â€” literally unchanged from before view expansion existed.
+         for (uint32_t y = 0; y < kScreenHeight; ++y) {
+diff --git a/src/gba/gba_ppu.h b/src/gba/gba_ppu.h
+index 69c2465..513faa3 100644
+--- a/src/gba/gba_ppu.h
++++ b/src/gba/gba_ppu.h
+@@ -358,6 +358,14 @@ extern "C" int g_ws_pillarbox_right;
+ // Optional per-game interpretation of the 9-bit OBJ X field in expanded-view
+ // rendering. Hardware-faithful signed decoding remains the default.
+ extern "C" int (*g_ws_obj_x_provider)(int raw_x, int* out_x);
++// Register page of a whole-frame GbaPpu::render() in progress (nullptr while
++// the emulated scanline renderer runs). Margin providers read scroll from it.
++extern "C" const std::uint8_t* g_ws_render_io;
++// Optional scroll for authored margins, per BG (x,y), in the coordinates of
++// the frame's own map (may leave 0..511 wrap meaning). Set by the 60 fps
++// in-between renderer while it draws; providers prefer it when on.
++extern "C" int g_ws_margin_scroll_override_on;
++extern "C" int g_ws_margin_scroll_override[4][2];
+ // Richer per-game OBJ placement hook for screen-space UI. Called only by the
+ // expanded renderer and before g_ws_obj_x_provider; receives the OAM index and
+ // raw attributes so a game can distinguish HUD sprites from world objects.
 diff --git a/src/runtime/frame_smooth.h b/src/runtime/frame_smooth.h
 new file mode 100644
-index 0000000..831ee5d
+index 0000000..28465d6
 --- /dev/null
 +++ b/src/runtime/frame_smooth.h
-@@ -0,0 +1,209 @@
+@@ -0,0 +1,219 @@
 +#pragma once
 +// 60 fps smoothing for games that draw a new picture every other VBlank.
 +//
@@ -62,10 +109,10 @@ index 0000000..831ee5d
 +    bool apply(const gba::GbaPpu& ppu, uint8_t* fb, std::size_t bytes) {
 +        if (!enabled || !fresh_ || !latest_.valid) return false;
 +        fresh_ = false;
-+        if (ppu.render_width() != gba::GbaPpu::kScreenWidth ||
-+            ppu.render_height() != gba::GbaPpu::kScreenHeight) {
++        if (bytes != last_bytes_) {  // view size changed
 +            prev_.valid = false;
-+            return false;
++            last_fb_.clear();
++            last_bytes_ = bytes;
 +        }
 +        const bool repeat = last_fb_.size() == bytes &&
 +                            std::memcmp(last_fb_.data(), fb, bytes) == 0;
@@ -83,8 +130,14 @@ index 0000000..831ee5d
 +                vram_mid_ = b.vram;
 +                mid_scroll(prev_, b);
 +                mid_sprites(prev_, b);
++                for (int bg = 0; bg < 4; ++bg) {
++                    gba::g_ws_margin_scroll_override[bg][0] = margin_[bg][0];
++                    gba::g_ws_margin_scroll_override[bg][1] = margin_[bg][1];
++                }
++                gba::g_ws_margin_scroll_override_on = 1;
 +                ppu.render(fb, b.dispcnt, io_mid_.data(), vram_mid_.data(),
 +                           oam_mid_.data(), b.pal.data());
++                gba::g_ws_margin_scroll_override_on = 0;
 +                did = true;
 +                ++mids;
 +            } else {
@@ -100,6 +153,8 @@ index 0000000..831ee5d
 +    Snap latest_, prev_;
 +    bool fresh_ = false;
 +    std::vector<uint8_t> last_fb_, check_, io_mid_, oam_mid_, vram_mid_;
++    std::size_t last_bytes_ = 0;
++    int margin_[4][2] = {};
 +
 +    static uint16_t r16(const std::vector<uint8_t>& v, std::size_t o) {
 +        return static_cast<uint16_t>(v[o] | (v[o + 1] << 8));
@@ -162,6 +217,8 @@ index 0000000..831ee5d
 +                cam_dx_ = dx; cam_dy_ = dy; cam_set = true;
 +            }
 +            int mx = bx + dx / 2, my = by + dy / 2;
++            margin_[bg][0] = mx;  // in the new frame's own map coordinates
++            margin_[bg][1] = my;
 +            const bool use_a = (cx && (mx < 0 || mx > 7)) || (cy && (my < 0 || my > 7));
 +            if (use_a) {
 +                mx = ax - (dx - dx / 2);
