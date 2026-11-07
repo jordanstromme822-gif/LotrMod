@@ -31,3 +31,16 @@ emulating it. **No ROM or BIOS is included here.**
 
 `first-level.input` presses through the menus and story into the first level
 (KEYINPUT values, active low, per frame).
+
+## 60 fps smoothing (2026-11-07)
+
+The game draws a new picture every other VBlank (30 fps). `gbarecomp-smooth60.patch`
+adds `FrameSmoother` to the runtime: when a new picture arrives it first shows an
+in-between picture (world layers scrolled halfway, world sprites shifted with the
+camera, HUD left alone), then the real one, so the camera glides at 60 fps with one
+VBlank of delay. The world layers here scroll coarsely (fine scroll 0..7, map redrawn
+a tile over), so a halfway view outside 0..7 is drawn from the previous frame's map.
+It only kicks in when re-rendering the new frame from the snapshot matches the real
+picture. `GBARECOMP_SMOOTH=0` turns it off; `GBARECOMP_SMOOTH_TEST=dir,start,count`
+dumps real (`r_`) and shown (`s_`, `m` = in-between) frames from headless runs.
+Apply with `git apply` inside the gbarecomp clone (base 351572f).
