@@ -3,6 +3,7 @@
 #include "runtime_bus_bridge.h"
 #include "gba_bus.h"
 #include "gba_ppu.h"
+#include "view_config.h"
 
 #include <cstdint>
 #include <cstdio>
@@ -147,12 +148,44 @@ int obj_x_provider(int raw_x, int* out_x) {
     return 0;
 }
 
+// 4:3 view (Jordan, 2026-11-07): 320x240, 40 px above and below the native
+// picture. The PC ROM also lets sprite pieces reach y=200 (0x08002F88), so raw
+// y 160..200 is the bottom margin and 201..255 the top one.
+constexpr int kExtraY = 40;
+int obj_y_provider(int, std::uint16_t attr0, std::uint16_t, std::uint16_t, int* out_y) {
+    if (!ready) return 0;
+    const int raw = attr0 & 0xFF;
+    *out_y = raw <= 200 ? raw : raw - 256;
+    return 1;
+}
+
+// The HUD (BG0 rows 120..159) moves down to the bottom of the taller picture.
+int hud_provider(int bg, int x, int y, int* sx, int* sy) {
+    if (bg != 0 || !ready) return 0;
+    if (y >= 160) {
+        if (x < 0 || x >= 240 || y - kExtraY < 120) return -1;
+        *sx = x; *sy = y - kExtraY;
+        return 1;
+    }
+    if (y >= 120) return -1;
+    return 0;
+}
+
+void geometry(gbarecomp::ViewGeometry* g, int, int) {
+    if (!g || g->width <= 240) return;
+    g->height = 160 + 2 * kExtraY;
+    g->extra_top = g->extra_bottom = kExtraY;
+}
+
 void install(std::uint32_t, std::uint32_t) {
     enabled = true;
     gba::g_ws_tilemap_provider = tile_provider;
     gba::g_ws_authored_margin_layers = 1;
     gba::g_ws_obj_native_clip = 0;
     gba::g_ws_obj_x_provider = obj_x_provider;
+    gba::g_ws_obj_attr_y_provider = obj_y_provider;
+    gba::g_ws_bg_xy_provider = hud_provider;
+    gba::g_ws_bg_xy_provider_layers = 1;
     gba::g_ws_pillarbox = 1;
 }
 
@@ -173,9 +206,10 @@ void frame(const gbarecomp::ExtendedViewFrameInfo* f) {
 int main(int argc, char** argv) {
     gbarecomp::RunOptions opts;
     opts.builtin_game_name = "The Lord of the Rings: The Return of the King (USA, Europe) Modded";
-    opts.builtin_rom_sha1 = "88f9075bcba049d51c693f98173c677873d7e04f";
+    opts.builtin_rom_sha1 = "dd6d504c587ce487c983968f4f01748457b30ed8";
     opts.max_view_width = 320;
     opts.extended_view_init = rotk_view::install;
     opts.extended_view_frame = rotk_view::frame;
+    opts.view_geometry = rotk_view::geometry;
     return gbarecomp::run_game(argc, argv, opts);
 }

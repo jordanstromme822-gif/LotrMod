@@ -59,3 +59,10 @@ allows up to x < 384, and raw 240..383 is decoded as the right margin. PC ROM sh
 88f9075bcba049d51c693f98173c677873d7e04f (regenerate with the same game.toml + new sha).
 The smoothing patch now also covers the wide view (`g_ws_render_io`,
 `g_ws_margin_scroll_override` in gba_ppu).
+
+## 4:3 view (2026-11-07)
+
+Levels now render 320x240 (`view_geometry` adds 40 px above and below). The HUD
+(BG0 rows 120..159) is remapped to the bottom of the canvas, and the PC ROM also
+patches 0x08002F88 (`movs r0,#0x84`) so sprite pieces reach y=200; raw y 160..200 is
+the bottom margin. PC ROM sha1 dd6d504c587ce487c983968f4f01748457b30ed8.
