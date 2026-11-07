@@ -47,10 +47,10 @@ index 69c2465..513faa3 100644
  // raw attributes so a game can distinguish HUD sprites from world objects.
 diff --git a/src/runtime/frame_smooth.h b/src/runtime/frame_smooth.h
 new file mode 100644
-index 0000000..9913a22
+index 0000000..120828b
 --- /dev/null
 +++ b/src/runtime/frame_smooth.h
-@@ -0,0 +1,291 @@
+@@ -0,0 +1,293 @@
 +#pragma once
 +// 60 fps smoothing for games that draw a new picture every other VBlank.
 +//
@@ -259,8 +259,8 @@ index 0000000..9913a22
 +
 +    // Sprites: each sprite of the new frame is matched to the nearest sprite of
 +    // the previous frame with the same shape, size and palette (the game
-+    // reorders its sprite list every frame). Pieces of one character (same
-+    // palette, touching) form a group that takes the most common matched step,
++    // reorders its sprite list every frame). Pieces of one character (all
++    // touching, any palette) form a group that takes the most common matched step,
 +    // so a character never comes apart. The group is drawn halfway between its
 +    // old and new spot: a sprite that follows the camera (the hero, the HUD)
 +    // stays put, a sprite fixed in the world moves with the halfway camera, and
@@ -310,9 +310,11 @@ index 0000000..9913a22
 +        for (int i = 0; i < 128; ++i) {
 +            if (!o[i].live) continue;
 +            for (int j = i + 1; j < 128; ++j) {
-+                if (!o[j].live || o[j].pal != o[i].pal) continue;
-+                if (o[i].x > o[j].x + o[j].w + 2 || o[j].x > o[i].x + o[i].w + 2 ||
-+                    o[i].y > o[j].y + o[j].h + 2 || o[j].y > o[i].y + o[i].h + 2) continue;
++                // Any touching pieces (any palette): a hero's weapon, shadow or effect sprites use other palettes
++                // and must move with the body, or the in-between picture tears the character apart.
++                if (!o[j].live) continue;
++                if (o[i].x > o[j].x + o[j].w + 4 || o[j].x > o[i].x + o[i].w + 4 ||
++                    o[i].y > o[j].y + o[j].h + 4 || o[j].y > o[i].y + o[i].h + 4) continue;
 +                const int ri = root(i), rj = root(j);
 +                if (ri != rj) o[rj].grp = ri;
 +            }
