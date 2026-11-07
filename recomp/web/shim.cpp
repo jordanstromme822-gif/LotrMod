@@ -15,3 +15,5 @@ extern "C" EMSCRIPTEN_KEEPALIVE const unsigned char* rotk_iwram() {
 extern "C" EMSCRIPTEN_KEEPALIVE const unsigned char* rotk_ewram() {
     auto* b = gbarecomp::active_bus(); return b ? b->ewram_ptr() : nullptr;
 }
+#include "gba_ppu.h"
+extern "C" EMSCRIPTEN_KEEPALIVE int rotk_native_view() { return gba::g_ws_pillarbox ? 1 : 0; }

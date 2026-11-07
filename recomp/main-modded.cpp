@@ -205,6 +205,35 @@ void install(std::uint32_t, std::uint32_t) {
 void frame(const gbarecomp::ExtendedViewFrameInfo* f) {
     if (!enabled || !f) return;
     prepare(f->io);
+    // Steady view (phone report 2026-11-07: shop screen kept changing size and the edges flickered). The block-map
+    // match can drop out for a frame or two over menus drawn on top of a level; keep the last good match (moved with
+    // the camera) for up to 30 frames, and only switch to the wide view after 10 good frames in a row.
+    static Layer last[4];
+    static int good = 0, bad = 0, last_cx = 0, last_cy = 0;
+    static bool shown = false;
+    const bool in_level = iwram && rd32(iwram, 0x41B0) == 1;
+    const int cx = iwram ? static_cast<int>(rd32(iwram, 0x5880)) >> 3 : 0;
+    const int cy = iwram ? static_cast<int>(rd32(iwram, 0x5884)) >> 3 : 0;
+    if (ready) {
+        ++good; bad = 0;
+        for (int i = 0; i < 4; ++i) last[i] = layers[i];
+        last_cx = cx; last_cy = cy;
+        if (!shown && good >= 10) shown = true;
+        if (!shown) ready = false;
+    } else {
+        good = 0; ++bad;
+        if (shown && in_level && bad <= 30 && last[3].ok) {
+            for (int i = 0; i < 4; ++i) {
+                layers[i] = last[i];
+                layers[i].ox += cx - last_cx;
+                layers[i].oy += cy - last_cy;
+            }
+            ++memo_gen;
+            ready = true;
+        } else {
+            shown = false;
+        }
+    }
     gba::g_ws_pillarbox = ready ? 0 : 1;
     const int status = ready ? 1 : 0;
     if (status != last_status && std::getenv("ROTK_VIEW_LOG")) {
