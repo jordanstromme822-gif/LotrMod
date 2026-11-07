@@ -83,3 +83,18 @@ The same engine runs in the Play Room page on phones (no threads or SharedArrayB
 - The page builds the PC ROM itself from the Play Room's Modded game (two cull patches at 0x2F88/0x2F90) and writes its
   SHA-1 into the config, so custom hero stats work. Save = the account copy (`save-rotk-modded`).
 - Speed on the test machine (2.1 GHz Xeon VM, headless Chromium): ~55 fps in levels, 60 on menus.
+
+### Wide view v70 (2026-11-07): sprite flicker fix and Sharp HD
+
+- **Flicker fix** (`frame_smooth.h`, in the patch): the 60 fps in-between picture used to shift every
+  sprite that changed by half the camera step. The hero follows the camera, so on frames where his
+  animation changed he jumped back and forth by a few pixels (looked like flicker). Now every sprite of
+  the new frame is matched to the nearest sprite of the previous frame with the same shape, size and
+  palette; touching pieces with the same palette form one group that takes the most common step, and the
+  group is drawn halfway between its old and new spot. Unmatched groups move with the halfway camera.
+- **Sharp HD** (`web/sharphd.js`, pasted into the Play Room page): the Classic picture chain (scene
+  pass `rotk-enhance`, then ScaleFX passes 0-4 at 3x) run with WebGL2. Shaders are the page's own
+  `SCALEFX_PRESET` / `ROTK_ENHANCE_GLSL`, compiled as `#version 300 es` with VERTEX/FRAGMENT defines.
+  PassPrev2 = output of pass 1, PassPrev5 = output of pass 0; passes 1-2 use RGBA16F when renderable.
+  If WebGL2 or a shader fails, the page draws plain pixels with a 2D canvas. If the picture rate stays
+  under 40/s for two 4-second windows, the page switches to plain pixels (still WebGL) for that session.

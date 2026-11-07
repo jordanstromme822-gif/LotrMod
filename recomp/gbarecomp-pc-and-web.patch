@@ -47,10 +47,10 @@ index 69c2465..513faa3 100644
  // raw attributes so a game can distinguish HUD sprites from world objects.
 diff --git a/src/runtime/frame_smooth.h b/src/runtime/frame_smooth.h
 new file mode 100644
-index 0000000..344ad0a
+index 0000000..9913a22
 --- /dev/null
 +++ b/src/runtime/frame_smooth.h
-@@ -0,0 +1,232 @@
+@@ -0,0 +1,291 @@
 +#pragma once
 +// 60 fps smoothing for games that draw a new picture every other VBlank.
 +//
@@ -257,27 +257,86 @@ index 0000000..344ad0a
 +        }
 +    }
 +
-+    // Sprites: the camera move is the main source of judder, so every sprite
-+    // that belongs to the world is shifted with the halfway camera. Sprites
-+    // that stayed exactly in place on screen while the camera moved (the HUD)
-+    // are left alone. Characters' own steps still change at the game's rate.
++    // Sprites: each sprite of the new frame is matched to the nearest sprite of
++    // the previous frame with the same shape, size and palette (the game
++    // reorders its sprite list every frame). Pieces of one character (same
++    // palette, touching) form a group that takes the most common matched step,
++    // so a character never comes apart. The group is drawn halfway between its
++    // old and new spot: a sprite that follows the camera (the hero, the HUD)
++    // stays put, a sprite fixed in the world moves with the halfway camera, and
++    // a walking enemy moves half its step. A group with no match moves with the
++    // halfway camera. Characters' own animation still changes at the game's rate.
++    static void obj_size(uint16_t a0, uint16_t a1, int& w, int& h) {
++        static const uint8_t W[3][4] = {{8, 16, 32, 64}, {16, 32, 32, 64}, {8, 8, 16, 32}};
++        static const uint8_t H[3][4] = {{8, 16, 32, 64}, {8, 8, 16, 32}, {16, 32, 32, 64}};
++        const int sh = (a0 >> 14) & 3, sz = (a1 >> 14) & 3;
++        if (sh == 3) { w = h = 8; return; }
++        w = W[sh][sz]; h = H[sh][sz];
++        if ((a0 & 0x0300) == 0x0300) { w *= 2; h *= 2; }  // double-size affine
++    }
++
 +    void mid_sprites(const Snap& a, const Snap& b) {
-+        const int cdx = cam_dx_, cdy = cam_dy_;
-+        // Screen shift of world sprites in the in-between picture:
-+        // pos_mid = pos_B + (scroll_B - scroll_mid) = pos_B - (d/2).
-+        const int sx = -(cdx / 2), sy = -(cdy / 2);
-+        if (sx == 0 && sy == 0) return;
++        const int csx = -(cam_dx_ / 2), csy = -(cam_dy_ / 2);
++        struct Obj { int x, y, w, h, pal, dx, dy, grp; bool live, matched; };
++        Obj o[128];
++        bool used[128] = {};
 +        for (int i = 0; i < 128; ++i) {
-+            const uint16_t a0 = r16(b.oam, i * 8), a1 = r16(b.oam, i * 8 + 2);
-+            if ((a0 & 0x0300) == 0x0200) continue;  // hidden
-+            // HUD test: identical entry somewhere in the previous frame.
-+            bool hud = false;
-+            for (int j = 0; j < 128 && !hud; ++j)
-+                hud = std::memcmp(&a.oam[j * 8], &b.oam[i * 8], 6) == 0;
-+            if (hud) continue;
-+            const int x = ((a1 & 0x1FF) + sx) & 0x1FF, y = ((a0 & 0xFF) + sy) & 0xFF;
-+            w16(oam_mid_, i * 8, static_cast<uint16_t>((a0 & ~0xFF) | y));
-+            w16(oam_mid_, i * 8 + 2, static_cast<uint16_t>((a1 & ~0x1FF) | x));
++            const uint16_t a0 = r16(b.oam, i * 8), a1 = r16(b.oam, i * 8 + 2), a2 = r16(b.oam, i * 8 + 4);
++            Obj& s = o[i];
++            s.live = (a0 & 0x0300) != 0x0200;
++            s.matched = false; s.grp = i; s.dx = s.dy = 0;
++            if (!s.live) continue;
++            s.x = a1 & 0x1FF; if (s.x >= 384) s.x -= 512;
++            s.y = a0 & 0xFF; if (s.y >= 224) s.y -= 256;
++            obj_size(a0, a1, s.w, s.h);
++            s.pal = (a0 & 0x2000) ? 16 : (a2 >> 12);
++            int bestd = 1 << 30, best = -1;
++            for (int j = 0; j < 128; ++j) {
++                if (used[j]) continue;
++                const uint16_t p0 = r16(a.oam, j * 8), p1 = r16(a.oam, j * 8 + 2), p2 = r16(a.oam, j * 8 + 4);
++                if ((p0 & 0x0300) == 0x0200) continue;
++                if ((p0 & 0xE300) != (a0 & 0xE300) || (p1 & 0xC000) != (a1 & 0xC000) ||
++                    (p2 & 0xF000) != (a2 & 0xF000)) continue;
++                const int dx = wrap_delta(p1 & 0x1FF, a1 & 0x1FF, 512), dy = wrap_delta(p0 & 0xFF, a0 & 0xFF, 256);
++                if (std::abs(dx) > 16 || std::abs(dy) > 16) continue;
++                int d = dx * dx + dy * dy;
++                if (std::memcmp(&a.oam[j * 8], &b.oam[i * 8], 6) == 0) d = -1;  // exact twin
++                if (d < bestd) { bestd = d; best = j; s.dx = dx; s.dy = dy; }
++            }
++            if (best >= 0) { used[best] = true; s.matched = true; }
++        }
++        // Group touching pieces with the same palette (union-find).
++        auto root = [&](int i) { while (o[i].grp != i) i = o[i].grp = o[o[i].grp].grp; return i; };
++        for (int i = 0; i < 128; ++i) {
++            if (!o[i].live) continue;
++            for (int j = i + 1; j < 128; ++j) {
++                if (!o[j].live || o[j].pal != o[i].pal) continue;
++                if (o[i].x > o[j].x + o[j].w + 2 || o[j].x > o[i].x + o[i].w + 2 ||
++                    o[i].y > o[j].y + o[j].h + 2 || o[j].y > o[i].y + o[i].h + 2) continue;
++                const int ri = root(i), rj = root(j);
++                if (ri != rj) o[rj].grp = ri;
++            }
++        }
++        // Most common matched step per group.
++        for (int g = 0; g < 128; ++g) {
++            if (!o[g].live || root(g) != g) continue;
++            int bx = 0, by = 0, bc = 0;
++            for (int i = 0; i < 128; ++i) {
++                if (!o[i].live || !o[i].matched || root(i) != g) continue;
++                int c = 0;
++                for (int k = 0; k < 128; ++k)
++                    if (o[k].live && o[k].matched && root(k) == g && o[k].dx == o[i].dx && o[k].dy == o[i].dy) ++c;
++                if (c > bc) { bc = c; bx = o[i].dx; by = o[i].dy; }
++            }
++            const int sx = bc ? bx / 2 : csx, sy = bc ? by / 2 : csy;
++            if (sx == 0 && sy == 0) continue;
++            for (int i = 0; i < 128; ++i) {
++                if (!o[i].live || root(i) != g) continue;
++                const uint16_t a0 = r16(b.oam, i * 8), a1 = r16(b.oam, i * 8 + 2);
++                const int x = ((a1 & 0x1FF) + sx) & 0x1FF, y = ((a0 & 0xFF) + sy) & 0xFF;
++                w16(oam_mid_, i * 8, static_cast<uint16_t>((a0 & ~0xFF) | y));
++                w16(oam_mid_, i * 8 + 2, static_cast<uint16_t>((a1 & ~0x1FF) | x));
++            }
 +        }
 +    }
 +};
