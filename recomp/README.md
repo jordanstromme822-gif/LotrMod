@@ -98,3 +98,14 @@ The same engine runs in the Play Room page on phones (no threads or SharedArrayB
   PassPrev2 = output of pass 1, PassPrev5 = output of pass 0; passes 1-2 use RGBA16F when renderable.
   If WebGL2 or a shader fails, the page draws plain pixels with a 2D canvas. If the picture rate stays
   under 40/s for two 4-second windows, the page switches to plain pixels (still WebGL) for that session.
+
+### Wide view v71 (2026-11-07): even frame timing
+
+Jordan saw stutter and shaking on iPhone. The web tick counted game frames from the wall clock at each
+display refresh, so timer jitter gave 2-0-2 patterns (two game frames on one refresh, none on the next),
+and with 60 fps in-between pictures that shows as shaking. Now, when the display runs at about 60 Hz
+(average refresh 15.6-17.8 ms), the tick runs exactly one game frame per refresh (2 only if more than 2.5
+frames behind). Otherwise it rounds the clock count, at most 2. The game then runs 0.45% fast; the page
+plays sound 1% faster while more than 0.14 s is queued. `rotk_tick_stats()` (shim) exposes counts of
+ticks with 0/1/2 frames and resets; the page writes a "wide:" line to the private save-log doc every
+30 s (pictures/s, screen Hz, 0/1/2 counts, picture mode), at most 12 per session.

@@ -17,3 +17,8 @@ extern "C" EMSCRIPTEN_KEEPALIVE const unsigned char* rotk_ewram() {
 }
 #include "gba_ppu.h"
 extern "C" EMSCRIPTEN_KEEPALIVE int rotk_native_view() { return gba::g_ws_pillarbox ? 1 : 0; }
+extern "C" EMSCRIPTEN_KEEPALIVE const unsigned char* rotk_oam() {
+    auto* b = gbarecomp::active_bus(); return b ? b->oam_ptr() : nullptr;
+}
+extern "C" int g_web_tick_stats[5];
+extern "C" EMSCRIPTEN_KEEPALIVE const int* rotk_tick_stats() { return g_web_tick_stats; }

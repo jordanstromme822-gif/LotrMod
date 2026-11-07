@@ -476,7 +476,7 @@ index 82ed5f8..3b7e886 100644
  }
 +namespace gbarecomp { bool HostWindow::saved_audio_enhanced(bool&) const { return false; } }
 diff --git a/src/runtime/runtime.cpp b/src/runtime/runtime.cpp
-index 1d17757..14f7fc1 100644
+index 1d17757..9ec71ce 100644
 --- a/src/runtime/runtime.cpp
 +++ b/src/runtime/runtime.cpp
 @@ -19,6 +19,10 @@
@@ -506,7 +506,7 @@ index 1d17757..14f7fc1 100644
  
  #ifndef GBARECOMP_DEFAULT_GAME_CONFIG
  #define GBARECOMP_DEFAULT_GAME_CONFIG "game.toml"
-@@ -1352,6 +1358,41 @@ extern "C" unsigned g_ws_extra_left  = 0;
+@@ -1352,6 +1358,67 @@ extern "C" unsigned g_ws_extra_left  = 0;
  extern "C" unsigned g_ws_extra_right = 0;
  extern "C" unsigned g_ws_view_width  = 240;
  
@@ -521,13 +521,39 @@ index 1d17757..14f7fc1 100644
 +int g_web_presented = 0;
 +extern "C" int g_web_paused;
 +int g_web_paused = 0;
++// Ticks that ran 0, 1, 2 or 3 game frames, and timing resets (read by the page for its log).
++extern "C" int g_web_tick_stats[5];
++int g_web_tick_stats[5] = {0, 0, 0, 0, 0};
++static double g_web_last = 0, g_web_avg = 0;
++// One game frame per display refresh when the display runs at about 60 Hz and the
++// phone keeps up: the picture then advances by exactly one frame every refresh, so
++// motion is even (the game runs 0.45% fast; the page soaks that up in the sound).
++// Otherwise (120 Hz display, or a phone that is falling behind) the number of
++// frames follows the clock, rounded, with at most 2 per refresh. A wall-clock count
++// alone gave 2-0 patterns from timer jitter, which showed as stutter and shaking.
 +static void web_single_tick() {
-+    if (g_web_paused) { g_web_t0 = 0; return; }
++    if (g_web_paused) { g_web_t0 = 0; g_web_last = 0; return; }
 +    const double now = emscripten_get_now();
 +    const double period = 1000.0 * 280896.0 / 16777216.0;
-+    if (g_web_t0 == 0) { g_web_t0 = now - period; g_web_frames = 0; }
-+    int64_t due = static_cast<int64_t>((now - g_web_t0) / period) - static_cast<int64_t>(g_web_frames);
-+    if (due > 3) { g_web_t0 = now - period; g_web_frames = 0; due = 1; }
++    if (g_web_t0 == 0) { g_web_t0 = now - period; g_web_frames = 0; g_web_avg = 0; }
++    if (g_web_last > 0) {
++        const double iv = now - g_web_last;
++        if (iv < 200) g_web_avg = g_web_avg > 0 ? g_web_avg * 0.95 + iv * 0.05 : iv;
++    }
++    g_web_last = now;
++    double debt = (now - g_web_t0) / period - static_cast<double>(g_web_frames);
++    if (debt > 4) { g_web_t0 = now - period; g_web_frames = 0; debt = 1; ++g_web_tick_stats[4]; }
++    int64_t due;
++    const bool locked = g_web_avg > 15.6 && g_web_avg < 17.8;
++    if (locked) {
++        due = debt > 2.5 ? 2 : 1;
++        if (debt < -1) { g_web_t0 = now - static_cast<double>(g_web_frames) * period; }
++    } else {
++        due = static_cast<int64_t>(debt + 0.5);
++        if (due < 0) due = 0;
++        if (due > 2) due = 2;
++    }
++    ++g_web_tick_stats[due];
 +    for (int64_t k = 0; k < due; ++k) {
 +        g_web_presented = 0;
 +        int guard = 0;
@@ -548,7 +574,7 @@ index 1d17757..14f7fc1 100644
  int run_game(int argc, char** argv, const RunOptions& opts) {
      // Game runners install this before entering run_game(). Clear it on every
      // return path so a later game launched in the same process cannot call a
-@@ -2690,6 +2731,41 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
+@@ -2690,6 +2757,41 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
      struct ClearVblankInputHook {
          ~ClearVblankInputHook() { runtime_set_vblank_input_hook(nullptr); }
      } clear_vblank_input_hook;
@@ -590,7 +616,7 @@ index 1d17757..14f7fc1 100644
      // Structured TCP commands shared by every TCP session: engine touch
      // commands first, then the game's own extension.
      auto tcp_extension = [&](const std::string& request, std::string& reply) -> bool {
-@@ -4283,7 +4359,11 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
+@@ -4283,7 +4385,11 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
  #if defined(GBARECOMP_WEB_HOST)
              // The page re-presents its private staging copy; publishing here
              // would count paused frames as new ones.
@@ -602,7 +628,7 @@ index 1d17757..14f7fc1 100644
  #else
              // Keep the native window (and any runtime UI drawn over the
              // game renderer) alive while the guest is held still.
-@@ -4315,7 +4395,11 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
+@@ -4315,7 +4421,11 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
      // relies on the per-frame runner loop (which present-in-place bypasses).
      const char* pip_env = std::getenv("GBARECOMP_PRESENT_IN_PLACE");
      const bool present_in_place =
@@ -615,7 +641,7 @@ index 1d17757..14f7fc1 100644
  
      // ── Diagnostic replay: capture (default for interactive play) or playback.
      // Inputs are sampled at the present-in-place VBlank hook, the one frame
-@@ -4562,8 +4646,20 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
+@@ -4562,8 +4672,20 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
                                     bus.pal_ptr());
                      }
                  }
@@ -636,7 +662,7 @@ index 1d17757..14f7fc1 100644
                  if (phase_active) fp_t2 = FramePhaseRing::now_ns();
                  drain_host_audio();
                  // Windowed present-in-place stays inside one step_once() for
-@@ -4592,6 +4688,9 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
+@@ -4592,6 +4714,9 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
                  last_presented_frame = frame;
                  if (present_frame) {
                      ++frames_presented;
@@ -646,7 +672,7 @@ index 1d17757..14f7fc1 100644
                      if (args.frames >= 0 && frames_presented >= args.frames)
                          host_quit = true;
                      if (pacer) pacer->wait_for_next_frame(banked_frames);
-@@ -4906,7 +5005,11 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
+@@ -4906,7 +5031,11 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
      // Two timestamps only: normal render/audio/present work stays inside,
      // startup/state restore and exit saves/dumps stay outside the interval.
      const auto gameplay_begin = std::chrono::steady_clock::now();
@@ -658,7 +684,7 @@ index 1d17757..14f7fc1 100644
          // Paused: hold the guest still, keep the window alive (input pump,
          // re-present, ~100 Hz idle). Applies to windowed play only.
          service_host_pause();
-@@ -5003,6 +5106,9 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
+@@ -5003,6 +5132,9 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
                                     bus.pal_ptr());
                      }
                  }
@@ -668,7 +694,7 @@ index 1d17757..14f7fc1 100644
                  if (phase_active) fp_t1 = FramePhaseRing::now_ns();
                  if (present_frame) present_live_frame();
                  // Framedump (capture runs only) is attributed to present_us.
-@@ -5032,6 +5138,9 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
+@@ -5032,6 +5164,9 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
                  last_presented_frame = frame;
                  if (present_frame) {
                      ++frames_presented;
@@ -678,7 +704,7 @@ index 1d17757..14f7fc1 100644
                      if (args.frames >= 0 && frames_presented >= args.frames) {
                          host_quit = true;
                      }
-@@ -5063,7 +5172,12 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
+@@ -5063,7 +5198,12 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
                  static_cast<uint64_t>(args.frames)) {
              break;
          }
