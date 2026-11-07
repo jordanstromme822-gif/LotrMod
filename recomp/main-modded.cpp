@@ -39,6 +39,7 @@ const std::uint8_t* ewram = nullptr;
 const std::uint8_t* iwram = nullptr;
 gba::GbaBus* bus = nullptr;
 int last_status = -1;
+std::uint64_t memo_gen = 0;  // bumped whenever the block map may have changed
 
 inline std::uint32_t rd32(const std::uint8_t* m, std::uint32_t o) {
     return m[o] | (m[o + 1] << 8) | (m[o + 2] << 16) | (std::uint32_t(m[o + 3]) << 24);
@@ -66,6 +67,7 @@ inline bool level_entry(std::uint32_t map, std::uint32_t set, int tx, int ty, st
 }
 
 void prepare(const std::uint8_t* io) {
+    ++memo_gen;
     ready = false;
     for (auto& l : layers) l.ok = false;
     bus = gbarecomp::active_bus();
@@ -136,8 +138,19 @@ int tile_provider(int bg, int x, int y, std::uint16_t* entry) {
     const int px = x + hofs, py = y + vofs;
     const int tx = layers[bg].ox + (px >= 0 ? px >> 3 : -((7 - px) >> 3));
     const int ty = layers[bg].oy + (py >= 0 ? py >> 3 : -((7 - py) >> 3));
-    return level_entry(layers[bg].map, layers[bg].set, tx, ty, entry) ? gba::kWsTilemapReplace
-                                                                      : gba::kWsTilemapUnavailable;
+    // Neighbouring pixels share a tile: remember the last answer per layer.
+    struct Memo { std::uint64_t gen = ~0ull; int tx = 0, ty = 0; std::uint32_t map = 0, set = 0; bool ok = false; std::uint16_t e = 0; };
+    static Memo memo[4];
+    Memo& m = memo[bg];
+    if (m.gen == memo_gen && m.tx == tx && m.ty == ty && m.map == layers[bg].map && m.set == layers[bg].set) {
+        if (m.ok) *entry = m.e;
+        return m.ok ? gba::kWsTilemapReplace : gba::kWsTilemapUnavailable;
+    }
+    std::uint16_t e = 0;
+    const bool ok = level_entry(layers[bg].map, layers[bg].set, tx, ty, &e);
+    m = {memo_gen, tx, ty, layers[bg].map, layers[bg].set, ok, e};
+    if (ok) *entry = e;
+    return ok ? gba::kWsTilemapReplace : gba::kWsTilemapUnavailable;
 }
 
 // The PC build lets the game place sprite pieces up to x=383 (ROM patch at

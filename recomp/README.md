@@ -66,3 +66,20 @@ Levels now render 320x240 (`view_geometry` adds 40 px above and below). The HUD
 (BG0 rows 120..159) is remapped to the bottom of the canvas, and the PC ROM also
 patches 0x08002F88 (`movs r0,#0x84`) so sprite pieces reach y=200; raw y 160..200 is
 the bottom margin. PC ROM sha1 dd6d504c587ce487c983968f4f01748457b30ed8.
+
+## Phone Play Room: "Wide 4:3, 60 fps" (2026-11-07)
+
+The same engine runs in the Play Room page on phones (no threads or SharedArrayBuffer needed).
+
+- `gbarecomp-pc-and-web.patch` (replaces the smooth60 patch; includes it): single-threaded browser build.
+  The run loop becomes an `emscripten_set_main_loop` frame callback (present-in-place off), no blocking sleeps,
+  every 8th smoothing picture verified, wide frames shown at full size.
+- `web/pc-web.toml`: game config with extra recompiled code. The game's sound mixer lives in IWRAM and patches its own
+  `ldrb ..., asr #5` to `asr #4` at boot, so the generator is run on a copy of the PC ROM with those 8 bytes already
+  patched (`modded-pc-gen.gba`, see the 0x08FFAB40.. bytes), and the mixer region is one `code_copy` 0x03000B38..0x0300115C.
+  Without this the mixer ran in the interpreter every frame (2x slower).
+- `main-modded.cpp`: tile provider now remembers the last tile per layer (big win in the wide renderer).
+- `web/build.sh`, `web/link.sh`, `web/shim.cpp`: emscripten 3.1.6 build (needs `web/compat.h` for std::bit_cast).
+- The page builds the PC ROM itself from the Play Room's Modded game (two cull patches at 0x2F88/0x2F90) and writes its
+  SHA-1 into the config, so custom hero stats work. Save = the account copy (`save-rotk-modded`).
+- Speed on the test machine (2.1 GHz Xeon VM, headless Chromium): ~55 fps in levels, 60 on menus.
