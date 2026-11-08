@@ -36,6 +36,10 @@ typedef int (*fn6)(int, int, int, int, int, int);
 
 extern const u8 orc_tiles[384];
 extern const u16 orc_pal[16];
+extern const u16 slot_pal[16];
+extern const u16 fade_pal[16];
+/* grid box entry from row 7 shown in our row: BG palette 2 -> 6 (dark red) */
+static u16 red(u16 v) { return (v >> 12) == 2 ? (v & 0x0FFF) | 0x6000 : v; }
 
 static u32 *inv(int p) { return (u32 *)(HERO + p * HERO_SZ + 0x3C); }
 static int is_orc(u32 it) { return (it & 0xFF0F) == 0x170E; }
@@ -141,7 +145,7 @@ void frame_hook(void)
 {
     u16 *bg0 = (u16 *)0x0600F800;
     int sub = SUBSTATE;
-    if (bg0[10 * 32 + 15] != bg0[7 * 32 + 15])          /* freshly drawn by the game: keep a copy */
+    if (bg0[10 * 32 + 15] != red(bg0[7 * 32 + 15]))          /* freshly drawn by the game: keep a copy */
         for (int r = 0; r < 3; r++)
             for (int x = 15; x < 30; x++) BG0_SAVE[r * 15 + x - 15] = bg0[(10 + r) * 32 + x];
     if (sub == 4 || sub == 5) {                          /* Carve Rune uses the space under the grid */
@@ -151,9 +155,12 @@ void frame_hook(void)
         OAMFINISH();
         return;
     }
-    /* BG0: copy the second grid row's boxes (tile rows 7-9) to rows 10-12 */
+    /* BG0: copy the second grid row's boxes (tile rows 7-9) to rows 10-12, in dark red */
     for (int r = 0; r < 3; r++)
-        for (int x = 15; x < 30; x++) bg0[(10 + r) * 32 + x] = bg0[(7 + r) * 32 + x];
+        for (int x = 15; x < 30; x++) bg0[(10 + r) * 32 + x] = red(bg0[(7 + r) * 32 + x]);
+    u32 *bp = (u32 *)(0x05000000 + 6 * 32);
+    const u32 *bs = (const u32 *)slot_pal;
+    for (int i = 0; i < 8; i++) bp[i] = bs[i];
 
     /* BG1 (text): show a copy with text rows 10.. moved down to 13..18 */
     const u16 *src = (const u16 *)0x0600F000;
@@ -188,13 +195,16 @@ void frame_hook(void)
     u32 *pv = (u32 *)(0x05000200 + 7 * 32);
     const u32 *ps = (const u32 *)orc_pal;
     for (int i = 0; i < 8; i++) pv[i] = ps[i];
+    pv = (u32 *)(0x05000200 + 11 * 32);
+    ps = (const u32 *)fade_pal;
+    for (int i = 0; i < 8; i++) pv[i] = ps[i];
     int p = LOCAL_P, c = cnt(p);
-    for (int k = 0; k < c; k++) {
+    for (int k = 0; k < 4; k++) {               /* full head in a filled slot, faded head in an empty one */
         u16 a[4];
-        int x = 120 + 30 * k;
-        a[0] = 80 | (1 << 14); a[1] = x | (1 << 14); a[2] = 1000 | (1 << 10) | (7 << 12); a[3] = 0;
+        int x = 120 + 30 * k, pal = k < c ? 7 : 11;
+        a[0] = 80 | (1 << 14); a[1] = x | (1 << 14); a[2] = 1000 | (1 << 10) | (pal << 12); a[3] = 0;
         OAMADD(OAM_COUNT, a);
-        a[0] = 88 | (1 << 14); a[1] = x | (2 << 14); a[2] = 1004 | (1 << 10) | (7 << 12);
+        a[0] = 88 | (1 << 14); a[1] = x | (2 << 14); a[2] = 1004 | (1 << 10) | (pal << 12);
         OAMADD(OAM_COUNT, a);
     }
     OAMFINISH();
