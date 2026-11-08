@@ -146,3 +146,12 @@ the helpers, so no regeneration is needed: in `recompiled_007.cpp` `_blt_08036A2
 The helpers are not recompiled; they run in the interpreter (bridged) and call back into recompiled code.
 Only those three shards were rebuilt; the page loads the engines with `?v=110` so a cached old `.js`
 is never paired with the new `.wasm`.
+
+### Simpler setup, online from Multiplayer, walk speed (Play Room v111, 2026-11-08)
+
+The setup screen is only the game file, Download game (owner) and Play game: always the modded game, Wide,
+Smooth 60. The hero/skill/mod editors are gone (saved stats and skills still apply). Host/Join moved into
+the game's Multiplayer menu (`playroom/online-menu.js`); online games still run in the Classic picture.
+Speed boosts now also speed up the walk cycle (`playroom/walk-speed.js`): measured walk speed is 3.0 px/tick,
++25 speed 3.75, +100 about 5.06 (cap), and with the page's extra steps px per walk step stays ~3.0.
+Engines unchanged from v110.
