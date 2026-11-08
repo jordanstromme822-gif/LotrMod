@@ -167,7 +167,7 @@ or `0x08` (ROM as the CPU sees it).
 - Text is on BG1 (screenblock 0x1E, written straight to VRAM): drawText 0x0801D6D0(tile, x, y, width, string, 0) returns the next free tile, 0x08012660(1, 15, 10, 15, 10, 0) clears the description box, 0x0801D5C0(0, color, 0) sets the color. Strings are plain bytes. Item box frames are BG0 (screenblock 0x1F) tiles; the grid rows are tile rows 4-6 and 7-9, columns 15-29.
 - Keepsakes ("Keep in backpack to use", list word bit 16) add their stats from the backpack through 0x0802DB90(item, slot, player, remove); its keepsake path (0x0802DBE0) skips heroes whose id byte (+0x19F) is 7 (Smeagol) and checks the hero mask and level. 0x0802ACE8 (pick up) and 0x0802C08C (drop) call it. Loading a game and levelling up reset the attributes (0x08025F74) and add every item again (0x0802AC24, called at 0x08026014).
 - Save slot header (0x70 bytes, packer 0x0803C6CC, unpacker 0x0803C294, also used for the other player's hero in link play): running both in Unicorn with every input bit set shows bits 5-7 of byte 0x4B are never written or read; everything else is used.
-- `tools/orcslots.py` (Jordan, 2026-11-08): 4 slots under the grid, one Orc Head (unique item 23, word 0xFFFF17FE) each, +1 Courage per head only from there. Count per player at EWRAM 0x0203FFE0 (saved in header 0x4B bits 5-7, cleared by the title screen); the backpack keepsake path returns "no bonus" for Orc Heads in slots 0-15 and our slots call it with slot 16; the text layer is shown from a copy (screenblock 0x1B) with rows 10-17 moved to 13-18 (one empty row dropped), except in Carve Rune. Text 418 (the Orc Head description) re-encoded at 0x9FC00. Code is C in tools/orcslots/, at 0x9F000. Locked in 2-player games (A gives the "can't" sound); the saved count still applies there.
+- `tools/orcslots.py` (Jordan, 2026-11-08): 4 slots under the grid, one Orc Head (unique item 23, word 0xFFFF17FE) each, +1 Courage per head only from there. Count per player at EWRAM 0x0203FFE0 (saved in header 0x4B bits 5-7, cleared by the title screen); the backpack keepsake path returns "no bonus" for Orc Heads in slots 0-15 and our slots call it with slot 16; the text layer is shown from a copy (screenblock 0x1B) with rows 10-17 moved to 13-18 (one empty row dropped), except in Carve Rune. Text 418 (the Orc Head description) re-encoded at 0x9FC00. Code is C in tools/orcslots/, at 0x9F000. Slots are drawn dark red (grid box tiles shown with BG palette 6, a red copy of palette 2) with a faded Orc Head (OBJ palette 11) in empty ones; both palettes are unused on this screen. Locked in 2-player games (A gives the "can't" sound); the saved count still applies there.
 
 ## Free space map (Spanish text bank, English only)
 
@@ -181,7 +181,7 @@ or `0x08` (ROM as the CPU sees it).
 - 0x9EC80-0x9ECCF: gem auto pickup (tools/autogems.py).
 - 0x9E820-0x9E877: save slot lock (tools/nodupe.py).
 - 0x9EA00-0x9EC47: skill point refund (tools/skillrefund.py).
-- 0x9F000-0x9F90B: Orc Head slots code and Orc Head picture; 0x9FC00-0x9FC3F: its re-encoded description (tools/orcslots.py).
+- 0x9F000-0x9F9BF: Orc Head slots code, Orc Head picture and slot palettes; 0x9FC00-0x9FC3F: its re-encoded description (tools/orcslots.py).
 
 ## Testing
 
