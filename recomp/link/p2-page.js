@@ -1,10 +1,17 @@
-// Play Room v99: the P2 helper (inside the page's main script; uses $, WideHost and startWide's engine).
+// Play Room v100: the P2 helper (inside the page's main script; uses $, WideHost and startWide's engine).
   // ---------------- P2 helper (Jordan, 2026-11-08) ----------------
   // A P2 button next to Auto. In the wide view it lists the saved heroes that aren't the one being played; picking one
   // restarts as a 2-player link game (the PC app's engine runs both games side by side): both games load their own
   // slot, and P2 is played by the page like Auto, but it stays on P1's screen: it fights enemies near P1, picks up herbs
   // and food near P1, and otherwise follows P1. Only P1's picture is shown. When P1 saves (pause, Save Game), P2 saves
   // its own slot too, and both slots go into the one saved-games file. Tap P2 again to stop it.
+  // Loading screen over the game while P2 joins (Jordan, 2026-11-08: don't show the menus being driven).
+  const p2Loading = (on, text) => {
+    let el = document.getElementById("p2Load");
+    if (!el) { if (!on) return; el = document.createElement("div"); el.id = "p2Load"; el.innerHTML = '<div class="spin"></div><div class="t"></div>'; ($("game") || document.body).appendChild(el); }
+    if (on) el.querySelector(".t").textContent = text || "P2 is joining…";
+    el.hidden = !on;
+  };
   const P2_HEROES = ["Frodo", "Legolas", "Aragorn", "Gandalf", "Eowyn", "Gimli", "Sam", "Smeagol"];
   // Saved-games file: slot k at 0x40 + 0x70 k, stored in 8-byte blocks with each block's bytes reversed.
   const p2SlotInfo = (b) => {
@@ -48,7 +55,7 @@
       if (disposed) return;
       if (cfg.p1 === cfg.p2 || cfg.p1 > 3) { hold(false); show("P2 can't join: load a different hero first.", 4000); return; }
       try { keepSave(); } catch (e) {}
-      show("P2 is joining…", 3000);
+
       if (!(await join(cfg))) { hold(false); show("P2 couldn't join. Keep playing, or try again.", 5000); }
     };
     const restart = (cfg) => {
@@ -111,7 +118,7 @@
     if (link.moria) try { M._rotk_link_level(82); } catch (e) {}
     setBoot(0);
     const say = (t) => { $("mpBanner").textContent = t; $("mpBanner").hidden = !t; };
-    say("Starting the 2-player game…");
+    p2Loading(true);
     try { M._rotk_link_turbo && M._rotk_link_turbo(4); } catch (e) {}   // menus run at 5x while the page drives them
     const bootTick = () => {
       const f = frames();
@@ -156,8 +163,8 @@
         if (f - boot.t > 3600) fail("the level didn't start (" + s0 + "/" + s1 + ")");
       }
     };
-    const fail = (why) => { try { M._rotk_link_turbo && M._rotk_link_turbo(0); } catch (e) {} slog("boot failed: " + why); boot = null; setBoot(null); p2(0); say(""); show("P2 couldn't start the game: " + why + ". You can play on as P1.", 6000); };
-    const done = () => { try { M._rotk_link_turbo && M._rotk_link_turbo(0); } catch (e) {} slog("boot done, P1 slot " + link.p1 + ", P2 slot " + link.p2 + ", level " + mem(0).r8(0x030041F8)); boot = null; setBoot(null); p2(0); say(""); show("P2 joined", 2500); };
+    const fail = (why) => { try { M._rotk_link_turbo && M._rotk_link_turbo(0); } catch (e) {} slog("boot failed: " + why); boot = null; setBoot(null); p2(0); say(""); p2Loading(false); show("P2 couldn't start the game: " + why + ". You can play on as P1.", 6000); };
+    const done = () => { try { M._rotk_link_turbo && M._rotk_link_turbo(0); } catch (e) {} slog("boot done, P1 slot " + link.p1 + ", P2 slot " + link.p2 + ", level " + mem(0).r8(0x030041F8)); boot = null; setBoot(null); p2(0); say(""); p2Loading(false); show("P2 joined", 2500); };
 
     // ---- Saves: both games keep their own copy; slot p2 comes from P2's game, the rest from P1's. ----
     const buf = M._malloc(512), copies = [save.slice(0, 512), save.slice(0, 512)], so = 0x40 + link.p2 * 0x70;
@@ -344,22 +351,29 @@
     return ctl;
   }
 
-// startWide's in-page join (no reload), v99:
+// startWide's in-page join (no reload):
       // P2 joins in this page (Jordan, 2026-11-08: no reload): start the 2-player engine from the saved games,
       // pause the 1-player one, and point everything at the new engine.
       let p2Ctl = null;
       const join = async (cfg) => {
         const cur = readSave() || save;
-        say("P2 is joining…");
+        p2Loading(true);
         let M2;
-        try { M2 = await makeEngine(cfg, cur); } catch (e) { log.push("join: " + e); say(""); return false; }
+        try { M2 = await makeEngine(cfg, cur); } catch (e) { log.push("join: " + e); p2Loading(false); return false; }
         try { M._rotk_pause(1); } catch (e) {}
         M = M2; window.__wideM = M; window.__mp = { iwram: () => M._rotk_iwram(), frame: () => H.frames, M, wide: true };
         try { sessionStorage.setItem("rotk-p2", JSON.stringify(cfg)); } catch (e) {}
-        try { M._rotk_main(); } catch (e) { if (e !== "unwind" && !(e && e.name === "ExitStatus")) { log.push("join start: " + e); say("The 2-player game didn't start. Reload the page to play on."); return false; } }
+        try { M._rotk_main(); } catch (e) { if (e !== "unwind" && !(e && e.name === "ExitStatus")) { log.push("join start: " + e); p2Loading(false); say("The 2-player game didn't start. Reload the page to play on."); return false; } }
         [100, 1000, 3000].forEach((t) => setTimeout(() => { try { window.__refindIwram && window.__refindIwram(); } catch (e) {} }, t));
         if (p2Ctl) p2Ctl.dispose();
         p2Ctl = wideP2({ M, H, readSave, save: cur, link: cfg, setBoot, keepSave, join, prefetch: () => fetchEngine(true) });
         return true;
       };
       p2Ctl = wideP2({ M, H, readSave, save: save || new Uint8Array(512), link, setBoot, keepSave, join, prefetch: () => fetchEngine(true) });
+
+/* CSS:
+  #p2Load { position: absolute; inset: 0; z-index: 24; background: #0b0a08; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; color: #f3e6c4; font: 600 16px var(--ui); }
+  #p2Load[hidden] { display: none; }
+  #p2Load .spin { width: 44px; height: 44px; border-radius: 50%; border: 4px solid rgba(216,178,90,0.25); border-top-color: #d8b25a; animation: p2spin 0.9s linear infinite; }
+  @keyframes p2spin { to { transform: rotate(360deg); } }
+*/
