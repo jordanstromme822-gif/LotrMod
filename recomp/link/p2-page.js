@@ -1,4 +1,3 @@
-// Play Room v108: the P2 helper (inside the page's main script; uses $, WideHost and startWide's engine).
   // ---------------- P2 helper (Jordan, 2026-11-08) ----------------
   // A P2 button next to Auto. In the wide view it lists the saved heroes that aren't the one being played; picking one
   // restarts as a 2-player link game (the PC app's engine runs both games side by side): both games load their own
@@ -120,6 +119,22 @@
     if (link.moria) try { M._rotk_link_level(82); } catch (e) {}
     setBoot(0);
     const say = (t) => { $("mpBanner").textContent = t; $("mpBanner").hidden = !t; };
+    // Gems P2 picks up go into your gem total too (Jordan, 2026-11-08): P2's own game is where its pickups count, so each
+    // rise in P2's gems there is added to your gems in both games.
+    let p2Gems = -1;
+    every(() => {
+      try {
+        if (boot || state(0) !== 1) { p2Gems = -1; return; }
+        const m0 = mem(0), m1 = mem(1); if (!m0.ok || !m1.ok) return;
+        const i1 = m1.r8(0x03003F59) & 1, i0 = m0.r8(0x03003F59) & 1, Q = 0x03003C00 + 0x1AC * i1, O = 0x03003C00 + 0x1AC * i0;
+        const g = m1.r16(Q + 0x184);
+        if (p2Gems >= 0 && g > p2Gems) {
+          const v = Math.min(65535, m0.r16(O + 0x184) + (g - p2Gems));
+          w8both(O + 0x184, v & 255); w8both(O + 0x185, v >> 8); slog("P2 gems +" + (g - p2Gems) + " -> yours " + v);
+        }
+        p2Gems = g;
+      } catch (e) {}
+    }, 200);
     p2Loading(true);
     try { M._rotk_link_turbo && M._rotk_link_turbo(4); } catch (e) {}   // menus run at 5x while the page drives them
     const bootTick = () => {
@@ -234,6 +249,9 @@
     // groups, backs off behind P1 when its health is low (with a note on screen), and picks up gear only when it is
     // an upgrade for P2, then wears it. P2 never discards, sells or uses the Forge.
     const seen = new Map(), skillCost2 = new Map(), noSkill2 = new Map(), noGear = new Set(), p2Tries = new Map();
+    // P2 picks up gear only when it beats what P2 wears (and anything of that kind in its pack) and the pack has room; it
+    // never wears or throws gear away itself (Jordan, 2026-11-08), so it stays in the pack for you.
+    const P2_WEARS = false;
     let plan = null, lastNote = 0, retreatT = 0, retreatCool = 0, castT2 = 0, castPend = null, eqPend = null, side = 1, lastGoalKey = "";
     const p2casts = {}, p2eq = [];
     const w8both = (a, v) => { const o = a & 0x7fff, H8 = M.HEAPU8; H8[M._rotk_link_iwram(0) + o] = v; H8[M._rotk_link_iwram(1) + o] = v; };
@@ -302,7 +320,8 @@
       for (let s = 0; s < 6; s++) {
         if ((m.r8(P + 0x16A + s) << 24 >> 24) <= 0) continue;
         const key = hero * 8 + s; if ((noSkill2.get(key) || 0) > now) continue;
-        const cost = skillCost2.has(key) ? skillCost2.get(key) : Math.round(msp * 0.3);
+        const t = m.r32(P + 0x1C), real = t >>> 24 === 8 && rr32(t + 40 * s) ? rr8(t + 40 * s + 4) | rr8(t + 40 * s + 5) << 8 : -1;
+        const cost = real > 0 ? real : skillCost2.has(key) ? skillCost2.get(key) : Math.round(msp * 0.3);
         if (sp < cost) continue;
         if (cost > bc) { bc = cost; best = s; }
       }
@@ -384,7 +403,7 @@
       // Low HP: food right next to P2 comes before anything else.
       if (low) for (const p of want) if (food(m.r8(p + 0x60)) && at(p, 8)) { seq([[K.R, 4], [0, 6]], f); return; }
       // Wear an upgrade picked up earlier (the game's Backpack menu: Start, move to it, A, A), when no enemy is near.
-      if (!close && !eqPend && now - (wearT || 0) > 3000) {
+      if (P2_WEARS && !close && !eqPend && now - (wearT || 0) > 3000) {
         const k = toWear(m, P);
         if (k >= 0) { wearT = now; const it = m.r32(P + 0x5c + 4 * k); eqPend = { k, it, t: now }; slog("P2 wears " + (it >>> 0).toString(16)); wearMacro(k, f); return; }
       }
@@ -422,7 +441,9 @@
               }
             }
             // Swing, with a small random pause like a person's rhythm.
-            const bk = window.__bAct && window.__bAct(m, P, list, false) ? K.R : K.B;   // P2's B works like the player's B
+            // P2's B works like the player's B, except gear that isn't an upgrade (or has no room) is left on the floor.
+            const bList = list.filter((p) => !(m.r32(p + 0x14) === ITEM_UPD && m.r8(p + 0x60) >= 25 && !items.includes(p)));
+            const bk = window.__bAct && window.__bAct(m, P, bList, false) ? K.R : K.B;
             seq([[face, 2], [bk, 4], [0, 3 + ((Math.random() * 5) | 0)]], f); return;
           }
         }
@@ -559,3 +580,180 @@
     window.__p2 = { get boot() { return boot && boot.phase; }, get macro() { return macro && macro.phase; }, get keys() { return p2keys; }, get wrote() { return wrote; }, state: () => [state(0), sub(0), state(1), sub(1)], lastSave: () => lastSave, get dbg() { return dbg; }, casts: p2casts, costs: skillCost2, eq: p2eq };
     return ctl;
   }
+  // Sharp HD for the wide view (Jordan, 2026-11-07: "Upgrade graphics"): the same passes as Classic's picture
+  // (our scene pass, then ScaleFX at 3x), run here with WebGL2 because this engine draws its own pictures.
+  // Returns null when the phone can't run it; the caller then draws plain pixels.
+  function makeSharpHD(gl) {
+    try {
+      const src = {}; for (const r of SCALEFX_PRESET.resources) src[r.name] = r.type === "base64" ? atob(r.value) : r.value;
+      src["rotk-enhance.glsl"] = ROTK_ENHANCE_GLSL;
+      const order = ["rotk-enhance.glsl", "scalefx-pass0.glsl", "scalefx-pass1.glsl", "scalefx-pass2.glsl", "scalefx-pass3.glsl", "scalefx-pass4.glsl"];
+      const floatFB = !!gl.getExtension("EXT_color_buffer_float") || !!gl.getExtension("EXT_color_buffer_half_float");
+      const sh = (type, text) => { const s = gl.createShader(type); gl.shaderSource(s, text); gl.compileShader(s); if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s)); return s; };
+      const prog = (text) => {
+        const body = text.replace(/^\s*#version[^\n]*\n/, "").replace(/uniform\s+COMPAT_PRECISION\s+/g, "uniform highp ");
+        const p = gl.createProgram();
+        gl.attachShader(p, sh(gl.VERTEX_SHADER, "#version 300 es\n#define VERTEX\n" + body));
+        gl.attachShader(p, sh(gl.FRAGMENT_SHADER, "#version 300 es\nprecision highp float;\nprecision highp int;\n#define FRAGMENT\n" + body));
+        gl.bindAttribLocation(p, 0, "VertexCoord"); gl.bindAttribLocation(p, 1, "TexCoord");
+        gl.linkProgram(p); if (!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(p));
+        const u = {}; const n = gl.getProgramParameter(p, gl.ACTIVE_UNIFORMS);
+        for (let i = 0; i < n; i++) { const a = gl.getActiveUniform(p, i); u[a.name] = gl.getUniformLocation(p, a.name); }
+        return { p, u };
+      };
+      const BLIT = "#if defined(VERTEX)\nin vec4 VertexCoord; in vec4 TexCoord; out vec2 v; uniform mat4 MVPMatrix;\nvoid main(){ gl_Position = MVPMatrix * VertexCoord; v = TexCoord.xy; }\n#else\nprecision highp float; in vec2 v; out vec4 o; uniform sampler2D Texture;\nvoid main(){ o = vec4(texture(Texture, v).rgb, 1.0); }\n#endif\n";
+      const passes = order.map((n) => prog(src[n])), blit = prog(BLIT);
+      const vb = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, vb);
+      gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([0, 0, 1, 0, 0, 1, 1, 1]), gl.STATIC_DRAW);
+      const vao = gl.createVertexArray(); gl.bindVertexArray(vao);
+      for (const loc of [0, 1]) { gl.enableVertexAttribArray(loc); gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0); }
+      const MVP = new Float32Array([2, 0, 0, 0, 0, 2, 0, 0, 0, 0, 1, 0, -1, -1, 0, 1]);
+      const MVP_FLIP = new Float32Array([2, 0, 0, 0, 0, -2, 0, 0, 0, 0, 1, 0, -1, 1, 0, 1]);
+      const tex = (w, h, fmt, filter) => {
+        const t = gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D, t);
+        const f = { rgb: [gl.RGB8, gl.RGB, gl.UNSIGNED_BYTE], rgba: [gl.RGBA8, gl.RGBA, gl.UNSIGNED_BYTE], float: [gl.RGBA16F, gl.RGBA, gl.HALF_FLOAT] }[fmt];
+        gl.texImage2D(gl.TEXTURE_2D, 0, f[0], w, h, 0, f[1], f[2], null);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, filter); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, filter);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+        return t;
+      };
+      let W = 0, Hh = 0, input = null, outs = [], fbs = [], frame = 0;
+      const setup = (w, h) => {
+        for (const t of outs) gl.deleteTexture(t); for (const f of fbs) gl.deleteFramebuffer(f); if (input) gl.deleteTexture(input);
+        W = w; Hh = h; input = tex(w, h, "rgb", gl.NEAREST); outs = []; fbs = [];
+        for (let i = 0; i < 6; i++) {
+          const k = i === 5 ? 3 : 1, fl = (i === 1 || i === 2) && floatFB;
+          const t = tex(w * k, h * k, fl ? "float" : "rgba", i === 5 ? gl.LINEAR : gl.NEAREST);
+          const fb = gl.createFramebuffer(); gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
+          gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, t, 0);
+          if (gl.checkFramebufferStatus(gl.FRAMEBUFFER) !== gl.FRAMEBUFFER_COMPLETE) throw new Error("framebuffer " + i);
+          outs.push(t); fbs.push(fb);
+        }
+        gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      };
+      // heap: bytes holding RGB888 rows of width `stride`; (sx, sy, w, h) is the part to show; dest is the
+      // rectangle on the 960x720 canvas (top-left origin).
+      // plain: skip the passes and show the pixels as they are (used when the phone is too slow for Sharp HD).
+      return function draw(heap, off, stride, sx, sy, w, h, dest, plain) {
+        if (gl.isContextLost()) return;
+        if (w !== W || h !== Hh) setup(w, h);
+        gl.bindVertexArray(vao); gl.disable(gl.BLEND); gl.disable(gl.DEPTH_TEST);
+        gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, input);
+        gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1); gl.pixelStorei(gl.UNPACK_ROW_LENGTH, stride);
+        gl.pixelStorei(gl.UNPACK_SKIP_PIXELS, sx); gl.pixelStorei(gl.UNPACK_SKIP_ROWS, sy);
+        gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, w, h, gl.RGB, gl.UNSIGNED_BYTE, heap, off);
+        gl.pixelStorei(gl.UNPACK_ROW_LENGTH, 0); gl.pixelStorei(gl.UNPACK_SKIP_PIXELS, 0); gl.pixelStorei(gl.UNPACK_SKIP_ROWS, 0);
+        frame++;
+        let srcTex = input;
+        for (let i = 0; i < (plain ? 0 : 6); i++) {
+          const P = passes[i], u = P.u, k = i === 5 ? 3 : 1;
+          gl.useProgram(P.p); gl.bindFramebuffer(gl.FRAMEBUFFER, fbs[i]); gl.viewport(0, 0, w * k, h * k);
+          gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, srcTex);
+          if (u.Texture) gl.uniform1i(u.Texture, 0);
+          if (u.MVPMatrix) gl.uniformMatrix4fv(u.MVPMatrix, false, MVP);
+          if (u.TextureSize) gl.uniform2f(u.TextureSize, w, h);
+          if (u.InputSize) gl.uniform2f(u.InputSize, w, h);
+          if (u.OutputSize) gl.uniform2f(u.OutputSize, w * k, h * k);
+          if (u.FrameCount) gl.uniform1i(u.FrameCount, frame);
+          if (u.FrameDirection) gl.uniform1i(u.FrameDirection, 1);
+          // In the preset, pass 3 reads pass 1's output (PassPrev2) and pass 5 reads pass 0's output (PassPrev5).
+          const prev = i === 3 ? ["PassPrev2Texture", outs[1]] : i === 5 ? ["PassPrev5Texture", outs[0]] : null;
+          if (prev && u[prev[0]]) {
+            gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, prev[1]); gl.uniform1i(u[prev[0]], 1);
+            const n = prev[0].replace("Texture", "");
+            if (u[n + "TextureSize"]) gl.uniform2f(u[n + "TextureSize"], w, h);
+            if (u[n + "InputSize"]) gl.uniform2f(u[n + "InputSize"], w, h);
+          }
+          gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+          srcTex = outs[i];
+        }
+        gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+        const cw = gl.drawingBufferWidth, ch = gl.drawingBufferHeight;
+        gl.viewport(0, 0, cw, ch); gl.clearColor(0, 0, 0, 1); gl.clear(gl.COLOR_BUFFER_BIT);
+        gl.viewport(dest[0], ch - dest[1] - dest[3], dest[2], dest[3]);
+        gl.useProgram(blit.p); gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, plain ? input : outs[5]);
+        gl.uniform1i(blit.u.Texture, 0); gl.uniformMatrix4fv(blit.u.MVPMatrix, false, MVP_FLIP);
+        gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+      };
+    } catch (e) { (window.__wideLog || (window.__wideLog = [])).push("sharp: " + (e && e.message || e)); return null; }
+  }
+  // Page side of the wide-view engine: pictures, buttons and sound go through one shared block in the engine's memory.
+  const WideHost = {
+    canvas: null, ctx: null, img: null, keys: 1023, audio: null, out: null, audioT: 0, frames: 0, front: 0, d: null,
+    attach(getBuf, ptr, d) { this.getBuf = getBuf; this.ptr = ptr; this.d = d; this.st("audioReady", 1); this.st("hostRate", 48000); return true; },
+    u32() { const b = this.getBuf(); if (this._b !== b) { this._b = b; this._u = new Uint32Array(b); this._u8 = new Uint8Array(b); this._i16 = new Int16Array(b); } return this._u; },
+    ld(k) { return this.u32()[(this.ptr >> 2) + this.d.fields[k]] >>> 0; },
+    st(k, v) { if (this.d && this.d.fields[k] !== undefined) this.u32()[(this.ptr >> 2) + this.d.fields[k]] = v >>> 0; },
+    detach() { this.st("detached", 1); },
+    configure() {}, fullscreenRequest() {}, configureTouch() {}, setPadVisible() {}, haptic() {}, requestSettings() {}, ended() {},
+    // Canvas size = the picture area in the screen's own pixels (checked on resize and turning the phone).
+    fit() {
+      this.fitDue = false;
+      const el = this.canvas, r = (el.parentElement || el).getBoundingClientRect(), d = window.devicePixelRatio || 1;
+      const W = Math.max(1, Math.round(r.width * d)), H = Math.max(1, Math.round(r.height * d));
+      if (r.width > 0 && r.height > 0 && (el.width !== W || el.height !== H)) { el.width = W; el.height = H; }
+    },
+    draw() {
+      if (!this.d || !this.canvas) return;
+      this.st("keys", this.keys);
+      const m = this.ld("middle");
+      if (m & 4) { this.st("middle", this.front); this.front = m & 3; this.frames++; } else { this.pumpAudio(); return; }
+      const base = this.ptr + this.d.video + this.front * this.d.videoStride, u = this.u32(), w = u[base >> 2], h = u[(base >> 2) + 1];
+      if (w && h && w <= this.d.maxWidth && h <= this.d.maxHeight) {
+        // The canvas matches the screen's own pixels and the picture fills the whole game area (Jordan, 2026-11-08).
+        // Levels already have the area's shape (the view width is chosen to match); menus (240x160) are stretched.
+        let native = false; try { native = !!(this.nativeView && this.nativeView()); } catch (e) {}
+        if (this.fitDue !== false) this.fit();
+        const CW = this.canvas.width, CH = this.canvas.height;
+        let sx = 0, sy = 0, sw = w, sh = h;
+        if (native && w >= 240 && h >= 160) { sx = (w - 240) >> 1; sy = (h - 160) >> 1; sw = 240; sh = 160; }
+        let dest = [0, 0, CW, CH];
+        // The 2-player game's narrower view keeps its shape (black bars at the sides) instead of stretching.
+        if (this.keepAspect && !native && w > 0 && h > 0) { const k = Math.min(CW / w, CH / h), dw = Math.round(w * k), dh = Math.round(h * k); dest = [(CW - dw) >> 1, (CH - dh) >> 1, dw, dh]; }
+        if (this.sharp) {
+          // If the picture rate stays under 40 a second with Sharp HD on, this phone can't keep up: plain pixels from then on.
+          const now = performance.now();
+          if (!this.rateT || document.visibilityState !== "visible") { this.rateT = now; this.rateF = this.frames; }
+          else if (now - this.rateT > 4000) {
+            const fps = (this.frames - this.rateF) * 1000 / (now - this.rateT);
+            this.slow = !this.plain && fps < 40 ? (this.slow || 0) + 1 : 0;
+            if (this.slow >= 2) { this.plain = true; (window.__wideLog || (window.__wideLog = [])).push("sharp off, fps " + fps.toFixed(1)); }
+            this.rateT = now; this.rateF = this.frames;
+          }
+          if (window.__capF) window.__capF(this._u8, base + this.d.pixels, w, h);
+          this.sharp(this._u8, base + this.d.pixels, w, sx, sy, sw, sh, dest, this.plain);
+          this.pumpAudio(); return;
+        }
+        if (!this.buf) { this.buf = document.createElement("canvas"); this.bctx = this.buf.getContext("2d"); }
+        if (this.buf.width !== w || this.buf.height !== h || !this.img) { this.buf.width = w; this.buf.height = h; this.img = this.bctx.createImageData(w, h); }
+        const src = this._u8, dst = this.img.data, n = w * h;
+        for (let i = 0, s = base + this.d.pixels, t = 0; i < n; ++i, s += 3, t += 4) { dst[t] = src[s]; dst[t + 1] = src[s + 1]; dst[t + 2] = src[s + 2]; dst[t + 3] = 255; }
+        this.bctx.putImageData(this.img, 0, 0);
+        const c = this.ctx; c.imageSmoothingEnabled = false;
+        c.fillStyle = "#000"; c.fillRect(0, 0, CW, CH);
+        c.drawImage(this.buf, sx, sy, sw, sh, dest[0], dest[1], dest[2], dest[3]);
+      }
+      this.pumpAudio();
+    },
+    pumpAudio() {
+      const d = this.d; let r = this.ld("audioRead"); const w = this.ld("audioWrite");
+      if (this.ld("resetRequest") !== this.ld("resetAck")) { this.st("audioRead", w); this.st("resetAck", this.ld("resetRequest")); return; }
+      const ac = this.audio;
+      if (!ac || ac.state !== "running") { this.st("audioRead", w); return; }
+      while (r !== w) {
+        const p = this.ptr + d.audio + (r & (d.audioSlots - 1)) * d.audioStride, u = this.u32(), n = u[p >> 2], rate = u[(p >> 2) + 1]; r = (r + 1) >>> 0;
+        if (n < 1 || n > d.audioSamples || !rate) continue;
+        const pcm = this._i16.subarray((p + 12) >> 1, ((p + 12) >> 1) + n), outN = Math.max(1, Math.round(n * ac.sampleRate / rate));
+        // The engine runs one game frame per screen refresh (0.45% fast on a 60 Hz screen), so sound arrives a little
+        // quicker than it plays. When it piles up, play 1% faster until it catches up instead of cutting it off.
+        const ahead = this.audioT - ac.currentTime, fast = ahead > 0.14 ? 1.01 : 1;
+        const outN2 = Math.max(1, Math.round(outN / fast));
+        const buf = ac.createBuffer(1, outN2, ac.sampleRate), ch = buf.getChannelData(0), step = rate / ac.sampleRate * fast;
+        for (let i = 0; i < outN2; ++i) { const x = i * step, j = x | 0, f = x - j, a = pcm[j] || 0, b = pcm[Math.min(n - 1, j + 1)] || 0; ch[i] = (a + (b - a) * f) / 32768; }
+        const now = ac.currentTime;
+        if (this.audioT < now + 0.02 || this.audioT > now + 0.3) this.audioT = now + 0.08;
+        const s = ac.createBufferSource(); s.buffer = buf; s.connect(this.out || ac.destination); s.start(this.audioT); this.audioT += outN2 / ac.sampleRate;
+      }
+      this.st("audioRead", r);
+    },
+  };

@@ -136,3 +136,13 @@ Jordan asked for Smooth 60 everywhere. A native walk (walk2.input, `GBARECOMP_SM
 picture got no in-between frame) showed levels already smoothed; fades were the gap (80 skipped for
 brightness/blend changes). The in-between picture now uses halfway BLDY/BLDALPHA, so fades step evenly
 (80 -> 15 skipped). Patch file updated (same name, cumulative on top of v82).
+
+### Options without Quick Skill Select (Play Room v110, 2026-11-08)
+
+`tools/noquickskill.py` hides the Options row and makes the cursor step over it. The generated code of
+both Wide engines (1 player `pcgame2/generated`, 2 player `mp/gen`) has the same three calls pointed at
+the helpers, so no regeneration is needed: in `recompiled_007.cpp` `_blt_08036A2E = 0x0809ED00u`, in
+`recompiled_003.cpp` `_blt_08036B38 = 0x0809ED0Au`, in `recompiled_002.cpp` `_blt_08036E84 = 0x0809ED12u`.
+The helpers are not recompiled; they run in the interpreter (bridged) and call back into recompiled code.
+Only those three shards were rebuilt; the page loads the engines with `?v=110` so a cached old `.js`
+is never paired with the new `.wasm`.
