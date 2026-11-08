@@ -1,4 +1,4 @@
-// Play Room v104: skill buttons (icons inside, black when used, countdown), B's skill on L, B picks up (window.__bPick).
+// Play Room v105: skill buttons (icons inside, black when used, countdown), B's skill on L, B picks up (window.__bPick).
       const skIcons = [...document.querySelectorAll("#pad .sk")].sort((a, b) => a.dataset.slot - b.dataset.slot);   // A, B's skill (on L), R
       const skPos = (v) => (v[1] * 20) + "% " + (v[0] * 100 / 7).toFixed(3) + "%";   // sheet: 6 skills across, 8 heroes down
       // Used skills (Jordan, 2026-11-08): the pressed skill's icon turns black. If the game took Spirit for it and it's a
@@ -148,3 +148,24 @@
       const lift = setInterval(() => { const f = frames(); if (f > 75) { $("bootCover").classList.add("gone"); clearInterval(lift); } }, 100);
       setTimeout(() => { $("bootCover").classList.add("gone"); clearInterval(lift); }, 8000);
       // Watchdog: if no frames run, ask for a tap; only restart if a tap does not get it going.
+
+        // B picks up too (Jordan, 2026-11-08): with an item at the hero's feet, B works as R unless it can't be taken
+        // (gear with a full backpack, a full Kingsfoil pouch); then B swings. Auto and P2 also pick up before swinging.
+        const herbRoom = (P, t) => t === 17 ? (r8(P + 0x1AA) >> 4) < 10 : t === 18 ? (r8(P + 0x1AA) & 15) < 10 : true;
+        window.__bPick = () => {
+          try {
+            if (iwram < 0 || inMenu()) return false;
+            ew = findEw(); H8 = heap(); if (ew < 0) return false;
+            const P = playerAddr(), hero = r32(P); if (hero >>> 24 !== 2) return false;
+            const [x, y] = pos(hero);
+            for (const p of entities()) {
+              if (r32(p + 0x14) !== ITEM_UPD || r8(p + 0x63) !== 3) continue;
+              const [ix, iy] = pos(p); if (Math.abs(ix - x) > 10 || Math.abs(iy - y) > 10) continue;
+              const t = r8(p + 0x60);
+              const food = t === 15 || t === 16 || t === 19;   // eaten on the spot: only worth it when hurt
+              if (t >= 25 ? !packFull(P) : food ? r16(P + 0x17C) < r16(P + 0xD0) : t >= 15 ? herbRoom(P, t) : false) return true;
+            }
+          } catch (e) {}
+          return false;
+        };
+        // Some enemies are scenery standing inside the walls (no floor around them); those never fight and aren't counted.
