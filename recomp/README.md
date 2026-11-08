@@ -165,3 +165,14 @@ flips tabs in menus. Auto and P2 press the game's R themselves, so they still pi
 an item as soon as the screen changes (play, Skills, Attributes); its Backpack redraw flip (R then L) now runs
 behind a held picture with the sound off (`window.__wideHold`), since writing the game's own redraw flags did not
 redraw the items. Auto and P2 buttons show only in the game's pause menu (state 16). Engines unchanged.
+
+### Online 2-player in Wide, walk steps of 5% (Play Room v113, 2026-11-08)
+
+Online games now use the 2-player Wide engine (`playroom/online-wide.js`), with the same lockstep as the Classic
+link: each page runs both games and only buttons travel through the room. `link/link_main.cpp` adds an online
+mode: `ROTK_LINK_NET=1` runs a frame only when the page queues both players' buttons (`rotk_link_push`,
+`rotk_link_queued`), `ROTK_LINK_SHOW` picks the game shown and heard (0 host, 1 guest), and both games mix
+their sound in full so both pages hold the same memory (`rotk_link_hash`, compared every 120 frames).
+Tested with two headless players at 40 ms latency: hashes matched for 1500+ frames, both in the same level.
+Classic is the fallback if the engine can't load. The P2 helper still works with the new build (`?v=113`).
+The walk speed-up now goes in steps of 5% speed, up to +75%.
