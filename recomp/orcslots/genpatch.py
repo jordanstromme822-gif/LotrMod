@@ -16,8 +16,10 @@ import glob, os, re, sys
 BL = [  # address of the bl's second half, hook symbol
     (0x08026016, "ac24_wrap"), (0x0803C2A8, "unpack_stub"), (0x08047F1A, "clear_stub"),
     (0x0802AC0C, "frame_hook"), (0x0802A706, "frame_hook"), (0x0802ABA0, "sound_wrap"),
+    (0x0802A9DA, "menu_wrap"), (0x0802AA06, "desc_wrap"), (0x0802AA56, "discard_wrap"),
 ]
-PAIRS = [(0x0802DBE0, "db90_stub"), (0x0803CC08, "pack_stub"), (0x0802CC60, "nav_stub"), (0x0802A854, "a_stub")]
+PAIRS = [(0x0802DBE0, "db90_stub"), (0x0803CC08, "pack_stub"), (0x0802CC60, "nav_stub"), (0x0802A854, "a_stub"),
+         (0x0802CCC4, "mcur_stub"), (0x0802C5FC, "label_stub")]
 
 CALL = """    /* {S:08X}  LotrMod Orc Head slots: bl {name} */
     {{

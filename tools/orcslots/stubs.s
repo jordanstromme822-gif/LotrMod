@@ -103,6 +103,27 @@ a_stub:
     lsls r0, r7, #2
     pop {r1}
     bx r1
+@ 0x0802CCC4: item menu up/down, r4 = cursor. Our slots get an equipment slot's two-line menu.
+    .global mcur_stub
+    .thumb_func
+mcur_stub:
+    adds r0, #0x62
+    ldrb r4, [r0]
+    cmp r4, #20
+    blo 1f
+    movs r4, #0
+1:  bx lr
+
+@ 0x0802C5FC: item menu option text, r0 = UI. Our slots read as an equipment slot ("Unequip").
+    .global label_stub
+    .thumb_func
+label_stub:
+    adds r0, #0x62
+    ldrb r0, [r0]
+    cmp r0, #20
+    blo 1f
+    movs r0, #0
+1:  bx lr
     .pool
 seven:
     .byte 7

@@ -33,11 +33,17 @@ typedef int (*fn6)(int, int, int, int, int, int);
 #define OAMADD(i, a)          ((fn4)0x08036541)(i, (int)(a), 0, 0)
 #define OAMFINISH()           ((fn4)0x080366A5)(0, 0, 0, 0)
 #define STATE_EXIT()          ((fn4)0x0802E875)(0, 0, 0, 0)
+#define TEXT(id)              ((const char *)((fn4)0x08047A69)(id, 0, 0, 0))
+#define MENUOPT(o, s)         ((fn4)0x0802C5BD)(o, s, 0, 0)
+#define MENU_A()              ((fn4)0x0802C659)(0, 0, 0, 0)
+#define GAMEDESC(c)           ((fn4)0x0802CFFD)(c, 0, 0, 0)
+#define MENU       ((volatile int *)0x030041B0)   /* [2] carve flag, [3] menu choice, [4] substate, [5] yes/no */
+#define ROWS       ((volatile u8 *)0x03001FE8)
+#define SETTINGS   (*(volatile u8 *)0x03005820)   /* bit 0: Fast Discard */
 
 extern const u8 orc_tiles[384];
 extern const u16 orc_pal[16];
 extern const u16 slot_pal[16];
-extern const u16 fade_pal[16];
 /* grid box entry from row 7 shown in our row: BG palette 2 -> 6 (dark red) */
 static u16 red(u16 v) { return (v >> 12) == 2 ? (v & 0x0FFF) | 0x6000 : v; }
 
@@ -60,10 +66,10 @@ static void desc(int cur)
     TEXTCOLOR(0, 3, 0);
     if (c < cnt(p)) {
         t = DRAWTEXT(t, 0x79, 0x50, 0x76, "Orc Head", 0);
-        t = DRAWTEXT(t, 0x79, 0x60, 0x76, "+1 Courage while it sits in this slot. Press A to put it back in your backpack.", 0);
+        t = DRAWTEXT(t, 0x79, 0x60, 0x76, "+1 Courage while equipped here.", 0);
     } else {
         t = DRAWTEXT(t, 0x79, 0x50, 0x76, "Orc Head Slot", 0);
-        t = DRAWTEXT(t, 0x79, 0x60, 0x76, "Holds one Orc Head (+1 Courage). Press A to move one here from your backpack.", 0);
+        t = DRAWTEXT(t, 0x79, 0x60, 0x76, "Equip an Orc Head from your backpack here for +1 Courage.", 0);
     }
 }
 
@@ -98,30 +104,91 @@ int nav_c(int proposed)
     return n;
 }
 
-/* ---- A on one of our slots ---- */
+/* ---- A on one of our slots: like an equipment slot. Full: the Unequip / Discard menu. Empty: "can't" sound. ---- */
 void a_c(int cur, int p)
 {
-    int c = cur - FIRST, n = cnt(p), j;
+    if (FLAGS & 0x20) { QUIET = 1; SOUND(5); return; }   /* not in 2-player games */
+    if (cur - FIRST >= cnt(p)) return;                    /* empty: the game's own code plays its error sound */
+    QUIET = 1;
+    CLEARTEXT(1, 15, 10, 15, 10, 0);
+    MENU[4] = 1;
+    TEXTCOLOR(0, 3, 0);
+    DRAWTEXT(0x13, 0x79, 0x50, 0x76, TEXT(0x141), 0);      /* "What would you like to do with this item?" */
+    MENU[3] = 0;
+    ROWS[0] = 0; ROWS[1] = 1;
+    MENUOPT(0, 0);                                         /* Unequip */
+    MENUOPT(1, 0);                                         /* Discard */
+    MENU[2] = 0;
+    SOUND(3);
+}
+
+static void error_text(const char *s)
+{
+    SOUND(5);
+    CLEARTEXT(1, 15, 10, 15, 10, 0);
+    TEXTCOLOR(0, 3, 0);
+    DRAWTEXT(0x13, 0x79, 0x50, 0x76, s, 0);
+    MENU[4] = 8;                                           /* the game's "show a message until A or B" step */
+}
+
+static void remove_one(int p)
+{
+    COUNT[p] = cnt(p) - 1;
+    DB90(ORC, ORC_SLOT, p, 1);
+}
+
+/* ---- A in the item menu ---- */
+void menu_wrap(void)
+{
+    u8 *ui = UI;
+    int cur = ui[0x62], p = LOCAL_P, sel = MENU[3], j;
     u32 *it = inv(p);
-    QUIET = 1;                                       /* the game's own code then plays its error sound; skip it */
-    if (FLAGS & 0x20) { SOUND(5); return; }          /* not in 2-player games */
-    if (c < n) {                                     /* take one out */
-        for (j = 8; j < 16 && (it[j] & 0xF) != 0xF; j++) ;
-        if (j == 16) { SOUND(5); return; }
-        it[j] = ORC;
-        COUNT[p] = n - 1;
-        DB90(ORC, ORC_SLOT, p, 1);
-        MKSPRITE(j);
-        SOUND(2);
-    } else {                                         /* put one in */
-        for (j = 8; j < 16 && !is_orc(it[j]); j++) ;
-        if (j == 16) { SOUND(5); return; }
-        DISCARD(j, p);                               /* removes it and its picture (plays a sound) */
-        COUNT[p] = n + 1;
-        DB90(ORC, ORC_SLOT, p, 0);
+    if (cur >= FIRST) {
+        if (sel == 0) {                                    /* Unequip: back into the backpack */
+            for (j = 8; j < 16 && (it[j] & 0xF) != 0xF; j++) ;
+            if (j == 16) { error_text("Your backpack is full!"); return; }
+            it[j] = ORC;
+            remove_one(p);
+            MKSPRITE(j);
+        } else if (SETTINGS & 1) {                         /* Discard with Fast Discard on */
+            remove_one(p);
+        } else {                                           /* Discard: "Are you sure?" first, like the game */
+            CLEARTEXT(1, 15, 10, 15, 10, 0);
+            MENU[4] = 3;
+            TEXTCOLOR(0, 3, 0);
+            DRAWTEXT(0x13, 0x79, 0x50, 0x76, TEXT(0x142), 0);
+            MENUOPT(MENU[5], MENU[5]);
+            MENUOPT(0, MENU[5]);
+            return;
+        }
+        SOUND(3);
+        MENU[4] = 2;
+        return;
     }
-    CURSHAPE(12 + c);                                /* the discard path resets the cursor picture */
-    desc(cur);
+    if (cur >= 8 && cur < 16 && sel == 0 && is_orc(it[cur])) {   /* Equip an Orc Head: into the next free slot */
+        if (FLAGS & 0x20) { SOUND(5); MENU[4] = 2; return; }
+        if (cnt(p) >= 4) { error_text("All 4 Orc Head slots are full!"); return; }
+        DISCARD(cur, p);                                   /* removes it and its picture (plays a sound) */
+        COUNT[p] = cnt(p) + 1;
+        DB90(ORC, ORC_SLOT, p, 0);
+        MENU[4] = 2;
+        return;
+    }
+    MENU_A();
+}
+
+/* ---- "Are you sure?" Yes ---- */
+void discard_wrap(int cur, int p)
+{
+    if (cur >= FIRST) remove_one(p);
+    else DISCARD(cur, p);
+}
+
+/* ---- menu closed: description of the cursor ---- */
+void desc_wrap(int cur)
+{
+    if (cur >= FIRST) { CURSHAPE(12 + cur - FIRST); desc(cur); }
+    else GAMEDESC(cur);
 }
 
 void sound_wrap(int n)
@@ -195,16 +262,15 @@ void frame_hook(void)
     u32 *pv = (u32 *)(0x05000200 + 7 * 32);
     const u32 *ps = (const u32 *)orc_pal;
     for (int i = 0; i < 8; i++) pv[i] = ps[i];
-    pv = (u32 *)(0x05000200 + 11 * 32);
-    ps = (const u32 *)fade_pal;
-    for (int i = 0; i < 8; i++) pv[i] = ps[i];
     int p = LOCAL_P, c = cnt(p);
-    for (int k = 0; k < 4; k++) {               /* full head in a filled slot, faded head in an empty one */
+    /* full head in a filled slot; in an empty one the same head half see-through (the screen's own 50/50
+       blend with BG0), since OBJ palettes 8-15 belong to the backpack's 8 item pictures */
+    for (int k = 0; k < 4; k++) {
         u16 a[4];
-        int x = 120 + 30 * k, pal = k < c ? 7 : 11;
-        a[0] = 80 | (1 << 14); a[1] = x | (1 << 14); a[2] = 1000 | (1 << 10) | (pal << 12); a[3] = 0;
+        int x = 120 + 30 * k, fade = k < c ? 0 : 1 << 10;
+        a[0] = 80 | (1 << 14) | fade; a[1] = x | (1 << 14); a[2] = 1000 | (1 << 10) | (7 << 12); a[3] = 0;
         OAMADD(OAM_COUNT, a);
-        a[0] = 88 | (1 << 14); a[1] = x | (2 << 14); a[2] = 1004 | (1 << 10) | (pal << 12);
+        a[0] = 88 | (1 << 14) | fade; a[1] = x | (2 << 14); a[2] = 1004 | (1 << 10) | (7 << 12);
         OAMADD(OAM_COUNT, a);
     }
     OAMFINISH();
