@@ -209,3 +209,14 @@ handovers a frame; headless top speed 68 -> about 100 frames a second. Online ga
 The frame smoother also handles a picture every 3rd VBlank (two in-between pictures at a third and two thirds);
 measured while walking with P2 the game draws an even 30 pictures a second, so it rarely applies. The play log
 shows in-between counts for the 2-player engine now too. `GBA_SESSION_PROFILE=1` prints why slices end.
+
+### Phone version, full screen from the Home Screen (2026-11-08)
+
+Jordan wanted to play sideways without the Claude app's bar. A page inside Claude can't hide it and iPhones don't
+let a page go full screen, so `docs/phone/` (GitHub Pages: https://jordanstromme822-gif.github.io/LotrMod/phone/)
+is the Play Room (`play.html`, made by `phone/make-phone.py page`) with `phone.js` standing in for the Claude
+account: saves and the game file live in the phone's IndexedDB, with Back up / Restore saves buttons (a JSON file).
+The public site holds no game: the engine builds, the game file and a copy of the saves come from a private game
+pack (`make-phone.py pack`, project files `phone/rotk-phone-pack.bin`) that the player picks once; `sw.js` serves
+`wide/` and `emu/` from the phone's cache. A newer pack never overwrites saves already on the phone. Online games
+need the Claude Play Room (no room service here); P2 works.
