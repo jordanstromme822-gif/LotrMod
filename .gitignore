@@ -6,3 +6,5 @@ __pycache__/
 *.ppm
 tools/run
 tools/link2
+tools/orcslots/*.o
+tools/orcslots/*.elf
