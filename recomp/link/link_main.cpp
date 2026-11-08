@@ -353,6 +353,7 @@ static int run_link(const gbarecomp::RunOptions& opts) {
         rotk_link_setup(m);
     }
     S.machine(1).ppu.set_rasterization_enabled(false);
+    { extern gba::GbaBus* g_link_quiet_bus; g_link_quiet_bus = &S.machine(1).bus; }
     {   // same cold start as the link probe (before the wide view: snapshots refuse it)
         auto cold = S.save_state();
         if (!S.load_state(cold, &err)) { std::fprintf(stderr, "[rotk:link] %s\n", err.c_str()); return 1; }

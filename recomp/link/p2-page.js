@@ -1,4 +1,4 @@
-// Play Room v95: the P2 helper (inside the page's main script; uses $, WideHost and startWide's engine).
+// Play Room v97: the P2 helper (inside the page's main script; uses $, WideHost and startWide's engine).
   // ---------------- P2 helper (Jordan, 2026-11-08) ----------------
   // A P2 button next to Auto. In the wide view it lists the saved heroes that aren't the one being played; picking one
   // restarts as a 2-player link game (the PC app's engine runs both games side by side): both games load their own
@@ -142,7 +142,7 @@
 
     // ---- P2 player ----
     const ENEMY_UPD = 0x0801b9d1, ITEM_UPD = 0x0802f131, DEAD = new Set([0x11, 0x15, 4, 0x1b, 0x13]);
-    let dbg = null, grid = null, gridT = 0, hist = [], savedPause = false, lastSave = 0, waitB = 0, mirror = 0, blocked = new Map(), seqRun = null;
+    let p2Hp = 0, p2HurtAt = 0, dbg = null, grid = null, gridT = 0, hist = [], savedPause = false, lastSave = 0, waitB = 0, mirror = 0, blocked = new Map(), seqRun = null;
     const pkeys = () => 1023 & ~H.keys;  // P1's buttons held now
     const tick = () => {
       if (boot) { try { bootTick(); } catch (e) { fail(String(e)); } return; }
@@ -218,15 +218,30 @@
       }
       dbg = { x, y, px, py, en: en.length, items: items.length };
       const steer = (tx, ty) => { let k = 0; if (tx - x > 2) k |= K.RT; if (tx - x < -2) k |= K.LT; if (ty - y > 2) k |= K.D; if (ty - y < -2) k |= K.U; return k; };
-      // Hit an enemy right next to P2.
+      // Same rules as Auto (Jordan, 2026-11-08): elites first (even tier byte +0x60 or 40+ HP at +0x5A); while
+      // taking damage (HP down in the last 3 s) with an enemy near, fight and only take food that heals; food
+      // (fruit 15, mushrooms 16, lembas 19) whenever hurt; herbs (17, 18, 20-24) when not fighting.
+      const mhp = m.r16(me + 0xD0), low = hp * 10 < mhp * 4;
+      if (hp < p2Hp) p2HurtAt = now; p2Hp = hp;
+      const elite = (p) => (m.r8(p + 0x60) & 1) === 0 || (m.r16(p + 0x5A) << 16 >> 16) >= 40;
+      const close = en.some((p) => { const [ex, ey] = pos(p); return Math.abs(ex - x) + Math.abs(ey - y) < 70; });
+      const fighting = now - p2HurtAt < 3000 && close;
+      const food = (t) => t === 15 || t === 16 || t === 19;
+      const want = items.filter((p) => { const t = m.r8(p + 0x60); return food(t) ? hp < mhp && (!fighting || low) : !fighting; });
+      en.sort((a, b) => elite(b) - elite(a));
+      // Low HP: food right next to P2 comes before hitting.
+      if (low) for (const p of want) { const [ix, iy] = pos(p); if (food(m.r8(p + 0x60)) && Math.abs(ix - x) <= 8 && Math.abs(iy - y) <= 8) { seq([[K.R, 4], [0, 6]], f); return; } }
+      // Hit an enemy right next to P2 (elites first).
       for (const p of en) { const [ex, ey] = pos(p); if (Math.abs(ex - x) <= 22 && Math.abs(ey - y) <= 16) { seq([[steer(ex, ey), 2], [K.B, 4], [0, 4]], f); return; } }
-      for (const p of items) { const [ix, iy] = pos(p); if (Math.abs(ix - x) <= 8 && Math.abs(iy - y) <= 8) { seq([[K.R, 4], [0, 6]], f); return; } }
-      // Walk: to the nearest enemy near P1, else a herb or food near P1, else back next to P1.
+      for (const p of want) { const [ix, iy] = pos(p); if (Math.abs(ix - x) <= 8 && Math.abs(iy - y) <= 8) { seq([[K.R, 4], [0, 6]], f); return; } }
+      // Walk: food when low, else the nearest enemy near P1 (an elite counts 40 steps nearer), else a herb or food
+      // near P1, else back next to P1.
       const prev = bfs(x, y);
-      let best = null;
-      const consider = (tx, ty, r) => { const path = pathTo(prev, tx, ty, r); if (path && (!best || path.length < best.length)) best = path; };
-      for (const p of en) { const [ex, ey] = pos(p); consider(ex, ey, 2); }
-      if (!best) for (const p of items) { const [ix, iy] = pos(p); consider(ix, iy, 1); }
+      let best = null, bestSc = 1e9;
+      const consider = (tx, ty, r, bonus) => { const path = pathTo(prev, tx, ty, r); if (path && path.length - (bonus || 0) < bestSc) { best = path; bestSc = path.length - (bonus || 0); } };
+      if (low) for (const p of want) { if (!food(m.r8(p + 0x60))) continue; const [ix, iy] = pos(p); consider(ix, iy, 1); }
+      if (!best || best.length > 25) { best = null; bestSc = 1e9; for (const p of en) { const [ex, ey] = pos(p); consider(ex, ey, 2, elite(p) ? 40 : 0); } }
+      if (!best) for (const p of want) { const [ix, iy] = pos(p); consider(ix, iy, 1); }
       if (!best && Math.abs(px - x) + Math.abs(py - y) > 36) consider(px, py, 2);
       if (!best) { hist = []; p2(0); return; }
       const W = grid.W, c = best[Math.min(3, best.length - 1)];

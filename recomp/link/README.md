@@ -40,3 +40,11 @@ It acts like the auto except P2 stays on Auto's screen." Picture: Wide 60 fps.
   on P2's slot, Left + A for Yes, A, B). When P1 is waiting, P2 presses B.
 - In a level P2 fights enemies and picks up herbs and food within 100 x 62 px of P1, and otherwise
   walks back next to P1. It never equips, discards, sells or uses the Forge.
+
+## Speed notes (2026-11-08, v97)
+
+Profile of the browser build in Moria (2 games, wide view): about 20% in `runtime_should_yield`
+(called before every guest instruction of both games), about 14% drawing P1's wide picture,
+about 15% in the session loop and device ticking. Compiling the game code at -O2 instead of -O1,
+and skipping P2's sound mixing (`g_link_quiet_bus` in mixer_hook.cpp), made no measurable
+difference, so v97 still ships the -O1 build without the quiet mixer.

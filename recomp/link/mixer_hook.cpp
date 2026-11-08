@@ -7,6 +7,8 @@
 #include "gba_bus.h"
 #include <cstdint>
 
+// P2's game is never heard: its mixer only moves the pointers and charges the same time.
+gba::GbaBus* g_link_quiet_bus = nullptr;
 namespace {
 constexpr std::uint32_t kStart = 0x03000B38u, kEnd = 0x03000BF0u;
 inline std::uint32_t iw32(const std::uint8_t* iw, std::uint32_t a) {
@@ -49,7 +51,8 @@ int mixer(std::uint32_t pc, int thumb) {
     };
     std::uint32_t sl = 0, fp = 0, last4 = 0, last6 = 0;
     std::uint32_t loops = 0;
-    do {
+    if (bus == g_link_quiet_bus) { loops = n; r0 += 16 * loops; r1 += 4 * loops; r2 += 4 * loops; n = 0; }
+    else do {
         const std::uint32_t w4 = bus->read32(r0), w5 = bus->read32(r0 + 4), w6 = bus->read32(r0 + 8), w7 = bus->read32(r0 + 12);
         r0 += 16;
         std::uint32_t a = pair(w4, r8, s0), b = pair(w5, r8, s0);
