@@ -1,4 +1,4 @@
-// Play Room v112: the Undo button is Grab / Open / Full in play (the game's R action); B only hits, R only flips
+// Play Room v112+: the Undo button is Grab / Open / Full in play (the game's R action); B only hits, R only flips
 // menu tabs and casts its skill. Cut from the page; __stepPick, __grabInfo, sendL, bNoL are page helpers.
       // In play the Undo button is Grab (Jordan, 2026-11-08): the game's action (pick up, open a chest or the Shrine, talk),
       // which R and B no longer do. It reads Open next to an unopened chest or the Shrine, Full when the backpack is full,

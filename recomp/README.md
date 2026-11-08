@@ -176,3 +176,13 @@ their sound in full so both pages hold the same memory (`rotk_link_hash`, compar
 Tested with two headless players at 40 ms latency: hashes matched for 1500+ frames, both in the same level.
 Classic is the fallback if the engine can't load. The P2 helper still works with the new build (`?v=113`).
 The walk speed-up now goes in steps of 5% speed, up to +75%.
+
+### Shop Undo, P2 in the paused level, pause-menu buttons (Play Room v114, 2026-11-08)
+
+Undo of a sale in the Shrine (state 20) put the item and gems back in memory, but the shop only draws them when
+it opens, so the page now closes the shop (B) and opens it again (Grab) behind a held picture (`playroom/undo.js`).
+Tested in Moria by moving the hero next to the Shrine (hero +0xAE/+0xB2 in both games). P2 now joins in the level
+the game was paused in (the page remembers the level byte 0x030041F8 seen in play and the link engine swaps it in
+at the path screen, `rotk_link_level`); tested level 76. After P2 joins, the sound stays off for 4 s and fades in.
+Auto sits under P2 in the pause menu when the paused level is Moria (the level byte reads 0 for a frame as the
+pause menu opens, so that no longer clears it). Upright A is a third smaller; sideways buttons are spread evenly.
