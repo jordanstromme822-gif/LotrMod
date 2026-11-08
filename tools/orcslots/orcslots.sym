@@ -1,0 +1,17 @@
+a_c 0809f2a8
+a_stub 0809f07a
+ac24_wrap 0809f0b0
+clear_stub 0809f05a
+db90_stub 0809f000
+desc 0809f200
+exit_hook 0809f678
+frame_hook 0809f3ec
+frame_hook.order 0809f6b0
+nav_c 0809f10c
+nav_stub 0809f068
+orc_pal 0809f8ec
+orc_tiles 0809f76c
+pack_stub 0809f026
+seven 0809f0ac
+sound_wrap 0809f3bc
+unpack_stub 0809f046

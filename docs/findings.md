@@ -159,6 +159,16 @@ or `0x08` (ROM as the CPU sees it).
 - The update sets item + 0x8C + player when that player's hero is within 15 pixels and no other item holds the player's HUD label (0x03003F70 + 0x7C * player + 0x70). The IWRAM collision loop calls the touch callback while hero and item overlap (r0 = item, r1 = hero); it picks up only on a fresh R press (0x03004080 + 2 * player, bit 0x100) with that flag set. Gems add byte1 + byte2 + byte3 of the item word to player + 0x184 (u16).
 - `tools/autogems.py` (Jordan, 2026-11-06): gems are taken on touch, no R. Hook at 0x0802F59E calls 0x0809EC80, which for types 13/14 only checks that the toucher is the player's own hero ([0x03003C00 + 0x1AC * player]); other items keep the R + label rule. Tested: walking onto a gem and a pile (1 + 7) gave 8 gems with no buttons; the unpatched game gave 0 until R; herbs still need R.
 
+## Orc Head slots (Backpack screen, state 0x0A)
+
+- State table at 0x0806C828, 12 bytes per state (enter, update, exit). Backpack: enter 0x0802A4DC, update 0x0802A798, exit 0x0802E874. UI struct pointer at [0x03001FE0]: cursor byte +0x62 (0-7 equipment, 8-15 backpack grid, 16-19 top icons), cursor sprite position +0xAC / +0xB0 (x << 16, y << 16), position table 0x08062AA4 (8 bytes per cursor). Substate [0x030041C0]: 0 idle, 1 item menu, 2 closing it, 4 Carve Rune, 6 Move Item.
+- D-pad movement is 0x0802C928; every substate-0 path ends at 0x0802CC60 with the new cursor in r4, then 0x0802E600(cursor) sets the cursor picture and 0x0802CFFC(cursor) draws the description. A in substate 0 is handled from 0x0802A840; cursors above 15 already give the "can't" sound (0x0802AB9C, sound 5).
+- Item pictures in the grid are sprite objects: 0x0802E1E0(slot) makes one, 0x0802C08C(slot, player) removes an item and its picture (discard). The game adds OAM entries through 0x08036540(index, attrs) with the count at 0x03004220 and hides the rest in 0x080366A4.
+- Text is on BG1 (screenblock 0x1E, written straight to VRAM): drawText 0x0801D6D0(tile, x, y, width, string, 0) returns the next free tile, 0x08012660(1, 15, 10, 15, 10, 0) clears the description box, 0x0801D5C0(0, color, 0) sets the color. Strings are plain bytes. Item box frames are BG0 (screenblock 0x1F) tiles; the grid rows are tile rows 4-6 and 7-9, columns 15-29.
+- Keepsakes ("Keep in backpack to use", list word bit 16) add their stats from the backpack through 0x0802DB90(item, slot, player, remove); its keepsake path (0x0802DBE0) skips heroes whose id byte (+0x19F) is 7 (Smeagol) and checks the hero mask and level. 0x0802ACE8 (pick up) and 0x0802C08C (drop) call it. Loading a game and levelling up reset the attributes (0x08025F74) and add every item again (0x0802AC24, called at 0x08026014).
+- Save slot header (0x70 bytes, packer 0x0803C6CC, unpacker 0x0803C294, also used for the other player's hero in link play): running both in Unicorn with every input bit set shows bits 5-7 of byte 0x4B are never written or read; everything else is used.
+- `tools/orcslots.py` (Jordan, 2026-11-08): 4 slots under the grid, one Orc Head (unique item 23, word 0xFFFF17FE) each, +1 Courage per head only from there. Count per player at EWRAM 0x0203FFE0 (saved in header 0x4B bits 5-7, cleared by the title screen); the backpack keepsake path returns "no bonus" for Orc Heads in slots 0-15 and our slots call it with slot 16; the text layer is shown from a copy (screenblock 0x1B) with rows 10-17 moved to 13-18 (one empty row dropped), except in Carve Rune. Text 418 (the Orc Head description) re-encoded at 0x9FC00. Code is C in tools/orcslots/, at 0x9F000. Locked in 2-player games (A gives the "can't" sound); the saved count still applies there.
+
 ## Free space map (Spanish text bank, English only)
 
 - 0x9E400-0x9E46F: story-cutscene hook (tools/nocutscenes.py).
@@ -171,6 +181,7 @@ or `0x08` (ROM as the CPU sees it).
 - 0x9EC80-0x9ECCF: gem auto pickup (tools/autogems.py).
 - 0x9E820-0x9E877: save slot lock (tools/nodupe.py).
 - 0x9EA00-0x9EC47: skill point refund (tools/skillrefund.py).
+- 0x9F000-0x9F90B: Orc Head slots code and Orc Head picture; 0x9FC00-0x9FC3F: its re-encoded description (tools/orcslots.py).
 
 ## Testing
 

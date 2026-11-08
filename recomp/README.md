@@ -220,3 +220,16 @@ The public site holds no game: the engine builds, the game file and a copy of th
 pack (`make-phone.py pack`, project files `phone/rotk-phone-pack.bin`) that the player picks once; `sw.js` serves
 `wide/` and `emu/` from the phone's cache. A newer pack never overwrites saves already on the phone. Online games
 need the Claude Play Room (no room service here); P2 works.
+
+### Orc Head slots (Play Room v117, 2026-11-08)
+
+Jordan: "create 4 backpack slots underneath the inventory slots that can only hold 1 orc head item", with Orc
+Heads giving their +1 Courage only from those slots. The ROM patch is `tools/orcslots.py` (code in
+`tools/orcslots/`, see `docs/findings.md`). The Wide engines can't see ROM code changes, so
+`orcslots/genpatch.py <generated dir> <orcslots.sym>` edits the generated C++ to call the hooks: six BL
+second halves get a fixed target (AC24 re-apply, save unpack, title clear, two frame hooks, the A error sound)
+and four sites become a call into a stub (keepsake check 0x0802DBE0, save pack 0x0803CC08, cursor move
+0x0802CC60, A press 0x0802A854). Every hook returns to its call site, so the interpreter runs them and the
+native code goes on as before. Applied to both the solo and the 2-player builds (shards 000, 001, 003, 004,
+006, 007); engines `?v=117`. Tested in the Wide engine: two heads moved in (count 0 → 1 → 2, Courage 35 → 36 → 37),
+picture and text as in mGBA, closing the backpack keeps both.
