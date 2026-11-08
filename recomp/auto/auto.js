@@ -72,15 +72,14 @@
           let best = empty(r32(P + 0x3c + 4 * s)) ? -1e9 : score(r32(P + 0x3c + 4 * s));
           for (let k = 0; k < 8; k++) { const b = r32(P + 0x5c + 4 * k); if (!empty(b) && slotOf(iflags(b)) === s) best = Math.max(best, score(b)); }
           const sc = score(it); if (sc <= best + 0.01) return false;
-          if (!packFull(P)) return true;
-          const [k, ks] = cheapest(P); return k >= 0 && ks < sc;            // room can be made
+          return !packFull(P);                                              // never makes room by discarding
         };
         // Backpack gear that a better item of the same kind (worn, or in the backpack and wearable at this level) makes useless.
         // Jordan equips gear by hand, so Auto never equips; it only throws away the weaker copy.
         // Only a copy that Auto just picked up can push an older item out: the older backpack item of the same
         // kind that is weaker than the new one is thrown away. Worn gear and anything else are never touched.
         const toDiscard = (P) => {
-          if (dropOff) return -1;
+          return -1;  // Jordan (2026-11-08): Auto never throws anything away.
           const lvl = r8(P + 0x19C) + 1;
           for (let k = 0; k < 8; k++) {
             const it = r32(P + 0x5c + 4 * k); if (noEquip.has(it) || fresh.has(it)) continue;
@@ -268,7 +267,7 @@
             tries.set(tgt.p, (tries.get(tgt.p) || 0) + 1);
             if (tgt.gear && packFull(P)) {
               // No room: throw away the least valuable backpack item first (Start, pick it, Discard).
-              const [k] = dropOff ? [-1] : cheapest(P);
+              const k = -1;  // never discard to make room (Jordan, 2026-11-08)
               if (k >= 0) {
                 const before = packNow(P);
                 macro = "discard"; slog("discard " + (r32(P + 0x5c + 4 * k) >>> 0).toString(16) + " for " + (r32(tgt.p + 0x88) >>> 0).toString(16));
