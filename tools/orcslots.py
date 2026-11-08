@@ -1,31 +1,42 @@
 #!/usr/bin/env python3
-"""Orc Head slots: 4 slots under the Backpack grid, one Orc Head each (Jordan, 2026-11-08).
+"""Orc Head slots and Orc Head tiers (Jordan, 2026-11-08).
 
-Orc Heads give their +1 Courage only from these slots. An Orc Head in the normal
-backpack gives nothing. On the Backpack screen, press Down from the bottom row of
-the backpack to reach the slots. A on an empty slot moves an Orc Head in from the
-backpack, A on a full slot puts it back. The slots are locked in 2-player games
-(their bonus still counts there).
+Slots: 4 slots under the Backpack grid, one Orc Head each. Down from the bottom
+backpack row reaches them; they work like equipment slots (Equip from an Orc Head's
+item menu; Unequip or Discard from a slot). They are locked in 2-player games.
 
-How it works (details in docs/findings.md, "Orc Head slots"):
-  - Keepsake items (category list word bit 16) add their stats from the backpack
-    through 0x0802DB90(item, slot, player, remove). Its keepsake path (0x0802DBE0)
-    now returns early for an Orc Head in slots 0-15. Our slots call it with slot 16.
-  - Loading and level-ups rebuild stats from base + all items (0x0802AC24, called
-    at 0x08026014); the wrapper adds one Orc Head per filled slot.
-  - The number of filled slots per player is a byte at 0x0203FFE0 + player. It is
-    saved in bits 5-7 of save-slot header byte 0x4B, which the game never writes
-    or reads (checked by running its packer and unpacker), so it also travels with
-    the hero in link play. The title screen clears it.
-  - Screen: the second grid row's boxes are copied one row down on BG0; the text
-    layer (BG1) is shown from a copy (screenblock 0x1B) with the text moved down
-    three tile rows (one empty row dropped); the Orc Head pictures are sprites
-    (tiles 1000-1011, palette 7); the cursor and A press are hooked for slots 20-23.
-  - The Orc Head's description (text 418) says where it works now.
+Tiers: every Orc Head is normal (yellow name), magic (green) or rare (red), with
+bonuses rolled when it drops. Heads give their bonuses only from the slots.
+  - Drops: on every kill, 1 in N for a rare, then a magic, then a normal head
+    (tables in orcslots.c, drop_c). "Hard" enemies are the ones the game's own drop
+    table always lets drop (0x08057F78, value 45). Normal difficulty drops normal and
+    magic heads, Hard all three (rare twice as hard), Grueling magic and rare. Black
+    Gate (level 58) and Cirith Ungol (levels 6-13) on Hard and Pelennor Fields
+    (levels 99-107) on Grueling have better odds. The game's own item rolls never
+    make an Orc Head any more.
+  - Bonuses: normal heads 1-5 (Normal) or 3-7 (Hard) to a random attribute; magic
+    heads 3-5 Spirit Regen or 1-5 Hit Points Regen (Normal, Hard), or 3-5 Hit Points
+    Regen, 3-7 Spirit Regen or 15-20 Spirit per hit (Grueling); rare heads (5-10 to an
+    attribute or 5-15% Extra Gems and Treasure) and (25-40 Hit Points, 25-40 Spirit
+    Points or 5% Speed).
+  - Caps: % Extra Treasure counts up to 100 and % Extra Gems up to 40 where drops
+    read them (the game itself caps % Speed at 75).
+  - Old Orc Heads (from before tiers) become normal heads with a fresh roll when a
+    single player game loads.
+
+How it works (details in docs/findings.md, "Orc Head slots" and "Orc Head tiers"):
+  - A head's roll is the top half of its item word (the game ignores it for unique
+    items): tier, difficulty table and a 12-bit seed its bonuses come from.
+  - Bonuses go on and off through the game's stat routine 0x0802DDC4. Loading and
+    level-ups rebuild stats (0x0802AC24 at 0x08026014); the wrapper adds the slots.
+  - The slot count is saved in header byte 0x4B bits 5-7; the slot heads in EEPROM
+    blocks 0x32-0x34 (one per save slot), which the game never uses.
+  - 2-player games: each GBA sends its player's slot heads once as link message 4
+    (unused by the game); both GBAs put the bonuses on when it arrives.
 
 The code is C + a few assembly stubs in tools/orcslots/ (build.py needs clang and
 ld.lld); the built bytes are in tools/orcslots/orcslots.bin and go in the unused
-Spanish text bank at 0x9F000, so the English-only patch must come first.
+French text bank at 0x7F000, so the English-only patch must come first.
 
   python3 tools/orcslots.py in.gba out.gba
 """
@@ -34,7 +45,7 @@ import struct
 import sys
 
 D = os.path.join(os.path.dirname(os.path.abspath(__file__)), "orcslots")
-CODE_AT = 0x9F000
+CODE_AT = 0x7F000
 BASE = 0x08000000 + CODE_AT
 
 
@@ -68,34 +79,31 @@ BL_SITES = [
     (0x2AC0A, "0bf04bfd", "frame_hook"),  # end of the Backpack frame (sprites done)
     (0x2A704, "0bf0ceff", "frame_hook"),  # Backpack enter
     (0x2AB9E, "1cf0a5f9", "sound_wrap"),  # the Backpack's "can't do that" sound (skipped after our A action)
+    # Orc Head tiers
+    (0x3A6EC, "071c6530", "drop_stub"),   # enemy drop routine: roll for an Orc Head on every kill
+    (0x14B9A, "25f0effd", "genitem_wrap"),# the game's item rolls: never an Orc Head
+    (0x1E0BA, "1cf05ffb", "genitem_wrap"),
+    (0x2EF3E, "0bf01dfc", "genitem_wrap"),
+    (0x3A750, "00f014f8", "genitem_wrap"),
+    (0x461B2, "f4f7e3fa", "genitem_wrap"),
+    (0x3A746, "0021425e", "find_cap"),    # % Extra Treasure read by enemy drops: at most 100
+    (0x2EF32, "0288d218", "chest_cap"),   # ... and by chests
+    (0x3AF54, "00240b5f", "gem_cap"),     # % Extra Gems read by gem drops: at most 40
+    (0x2C4A2, "fef7dffd", "name_wrap"),   # item name: tier name and colour (backpack, shop)
+    (0x2F2B4, "fbf7d6fe", "name_wrap"),   # ... and the label of an item on the ground
+    (0x2D206, "fff739f9", "itemdesc_wrap"),  # item description: the head's bonuses (backpack)
+    (0x1E96E, "0df085fd", "itemdesc_wrap"),  # ... (shop)
+    (0x1EB8A, "0df077fc", "itemdesc_wrap"),
+    (0x30F7C, "0bf052ff", "save_wrap"),   # save slot written to EEPROM: write the slot heads too
+    (0x3105E, "0bf0e1fe", "save_wrap"),
+    (0x3CC56, "00f0e5f8", "save_wrap"),
+    (0x3CCDC, "00f084f8", "load_wrap"),   # save slots read from EEPROM: read the slot heads too
+    (0x3CD14, "00f068f8", "load_wrap"),
+    (0x31ED0, "07f078f9", "gp_hook"),     # every gameplay frame: 2-player games send the slot heads once
 ]
-# The Orc Head's description (text 418, table entry 417) is re-encoded with the English Huffman tree
-# and placed in free space; only its offset in the string table changes.
-LANG_TABLE, TEXT_IDX, TEXT_AT = 0x289A10, 417, 0x9FE00
-ORC_TEXT = b"+1 Courage, only when equipped in an Orc Head slot (the row under your backpack)."
+# link message 4 (never used by the game): send and receive cases
+LINK_CASES = [(0x3FE48, 0x0804006A, "send4"), (0x3F6AC, 0x0803FDAC, "recv4")]
 EXIT_PTR, EXIT_OLD = 0x6C8A8, 0x0802E875     # state 0x0A (Backpack) exit in the state table
-
-
-def encode(rom, bank, text):
-    """Huffman-encode text (plus the 0 terminator) with the bank's own tree (see tools/text.py)."""
-    tree_size = struct.unpack_from("<I", rom, bank)[0]
-    codes, todo = {}, [(0x100, [])]
-    while todo:
-        node, path = todo.pop()
-        e = bank + 4 + (node - 0x100) * 4
-        for bit in (0, 1):
-            child = struct.unpack_from("<H", rom, e + 2 * bit)[0]
-            if child == 0x100:
-                continue                      # a link back to the root; never needed to encode
-            if child > 0xFF:
-                todo.append((child, path + [bit]))
-            else:
-                codes.setdefault(child, path + [bit])
-    bits = [b for ch in text + b"\0" for b in codes[ch]]
-    out = bytearray((len(bits) + 7) // 8)
-    for i, b in enumerate(bits):
-        out[i // 8] |= b << (i % 8)
-    return bytes(out)
 
 
 def patch(rom: bytearray) -> bytearray:
@@ -108,16 +116,16 @@ def patch(rom: bytearray) -> bytearray:
         if bytes(rom[off:off + 4]) not in (bytes.fromhex(old), new):
             raise SystemExit(f"unexpected bytes at {off:#x}; is this the BLRE ROM?")
         rom[off:off + 4] = new
-    bank = struct.unpack_from("<I", rom, LANG_TABLE)[0] - 0x08000000
-    enc = encode(rom, bank, ORC_TEXT)
-    rom[TEXT_AT:TEXT_AT + len(enc)] = enc
-    tree_size = struct.unpack_from("<I", rom, bank)[0]
-    struct.pack_into("<I", rom, bank + 4 + tree_size + 4 * TEXT_IDX, TEXT_AT - bank)
+    for at, orig, name in LINK_CASES:
+        cur = struct.unpack_from("<I", rom, at)[0]
+        if cur not in (orig, s[name]):
+            raise SystemExit(f"unexpected link case at {at:#x}")
+        struct.pack_into("<I", rom, at, s[name])
     cur = struct.unpack_from("<I", rom, EXIT_PTR)[0]
     if cur not in (EXIT_OLD, s["exit_hook"] | 1):
         raise SystemExit(f"unexpected state table entry at {EXIT_PTR:#x}")
     struct.pack_into("<I", rom, EXIT_PTR, s["exit_hook"] | 1)
-    assert CODE_AT + len(code) <= TEXT_AT, "code runs into the text"
+    assert CODE_AT + len(code) <= 0x89864, "code runs into the German text bank"
     rom[CODE_AT:CODE_AT + len(code)] = code
     return rom
 

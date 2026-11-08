@@ -2,7 +2,7 @@
 """Build the Orc Head slots code (needs clang + ld.lld) and write orcslots.bin + orcslots.sym."""
 import os, subprocess, sys
 D = os.path.dirname(os.path.abspath(__file__))
-CF = ["clang", "--target=thumbv4t-none-eabi", "-mthumb", "-Os", "-ffreestanding", "-fno-builtin",
+CF = ["clang"] + (["-DDEBUG_SPAWN"] if os.environ.get("DBG") else []) + ["--target=thumbv4t-none-eabi", "-mthumb", "-Os", "-ffreestanding", "-fno-builtin",
       "-fomit-frame-pointer", "-fno-pic", "-c"]
 def run(*a): subprocess.run(a, check=True, cwd=D)
 run(*CF, "orcslots.c", "-o", "orcslots.o")

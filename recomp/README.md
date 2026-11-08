@@ -242,3 +242,14 @@ item menu puts it in the next free slot; A on a filled slot opens Unequip / Disc
 in `orcslots/genpatch.py`; shard 002 now changes too. The code grew, so every hook address moved: re-run genpatch
 on the untouched generated shards, not on already patched ones (a patched call block is skipped, so it would keep
 the old address). Engines `?v=119`.
+
+### Orc Head tiers (Play Room v120, 2026-11-08)
+
+Jordan: normal, magic and rare Orc Heads with rolled bonuses, new drop odds and caps (see `tools/orcslots.py`).
+The code moved to the French text bank (0x7F000), so every hook address changed. `orcslots/genpatch.py` adds 16 bl
+targets (item rolls, names, descriptions, EEPROM slot read/write, the gameplay frame) and 4 call blocks (drop routine
+0x0803A6EC, treasure caps 0x0803A746 and 0x0802EF32, gem cap 0x0803AF54). Some of those sites are in functions the
+generator didn't emit (the solo build lacks 0x08014B9A, 0x0802EF32/0x0802EF3E; neither has 0x0803CD14); those run
+in the interpreter, which already sees the ROM patch. The link message cases are table data, so they need nothing.
+All 8 shards change now (005 too); re-run genpatch on the untouched shards. Engines `?v=120`.
+

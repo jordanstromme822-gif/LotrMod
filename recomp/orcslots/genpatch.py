@@ -17,9 +17,17 @@ BL = [  # address of the bl's second half, hook symbol
     (0x08026016, "ac24_wrap"), (0x0803C2A8, "unpack_stub"), (0x08047F1A, "clear_stub"),
     (0x0802AC0C, "frame_hook"), (0x0802A706, "frame_hook"), (0x0802ABA0, "sound_wrap"),
     (0x0802A9DA, "menu_wrap"), (0x0802AA06, "desc_wrap"), (0x0802AA56, "discard_wrap"),
+    # Orc Head tiers
+    (0x08014B9C, "genitem_wrap"), (0x0801E0BC, "genitem_wrap"), (0x0802EF40, "genitem_wrap"),
+    (0x0803A752, "genitem_wrap"), (0x080461B4, "genitem_wrap"),
+    (0x0802C4A4, "name_wrap"), (0x0802F2B6, "name_wrap"),
+    (0x0802D208, "itemdesc_wrap"), (0x0801E970, "itemdesc_wrap"), (0x0801EB8C, "itemdesc_wrap"),
+    (0x08030F7E, "save_wrap"), (0x08031060, "save_wrap"), (0x0803CC58, "save_wrap"),
+    (0x0803CCDE, "load_wrap"), (0x0803CD16, "load_wrap"), (0x08031ED2, "gp_hook"),
 ]
 PAIRS = [(0x0802DBE0, "db90_stub"), (0x0803CC08, "pack_stub"), (0x0802CC60, "nav_stub"), (0x0802A854, "a_stub"),
-         (0x0802CCC4, "mcur_stub"), (0x0802C5FC, "label_stub")]
+         (0x0802CCC4, "mcur_stub"), (0x0802C5FC, "label_stub"),
+         (0x0803A6EC, "drop_stub"), (0x0803A746, "find_cap"), (0x0802EF32, "chest_cap"), (0x0803AF54, "gem_cap")]
 
 CALL = """    /* {S:08X}  LotrMod Orc Head slots: bl {name} */
     {{
