@@ -554,7 +554,7 @@ index 82ed5f8..3b7e886 100644
  }
 +namespace gbarecomp { bool HostWindow::saved_audio_enhanced(bool&) const { return false; } }
 diff --git a/src/runtime/runtime.cpp b/src/runtime/runtime.cpp
-index 1d17757..3e31bb2 100644
+index 1d17757..5b43ec6 100644
 --- a/src/runtime/runtime.cpp
 +++ b/src/runtime/runtime.cpp
 @@ -19,6 +19,10 @@
@@ -576,7 +576,61 @@ index 1d17757..3e31bb2 100644
  #include "gba_rom_header.h"
  #include "host_platform.h"
  #include "host_window.h"
-@@ -100,6 +105,7 @@ void runtime_mark_present_stack_base();
+@@ -85,6 +90,53 @@
+ #include <thread>
+ #include <vector>
+ 
++// Play log (PC app): every 15 s one line in play-log.txt (or $GBARECOMP_PLAY_LOG; "0" turns it off) with the
++// picture rate, late pictures, the 60 fps in-between counters and the current level, so stutter can be diagnosed
++// from the file while someone plays.
++namespace {
++struct PlayLog {
++    std::FILE* f = nullptr;
++    bool tried = false;
++    std::chrono::steady_clock::time_point t0, last;
++    uint64_t pics = 0, late20 = 0, late34 = 0, m0 = 0, b0 = 0, s0 = 0, i0 = 0;
++    double worst = 0;
++    int lvl_last = -1;
++    void tick(const gbarecomp::FrameSmoother& sm, const uint8_t* iwram) {
++        if (!tried) {
++            tried = true;
++            const char* e = std::getenv("GBARECOMP_PLAY_LOG");
++            if (e && e[0] == '0' && !e[1]) return;
++            f = std::fopen(e && e[0] ? e : "play-log.txt", "a");
++            if (!f) return;
++            t0 = last = std::chrono::steady_clock::now();
++            std::fprintf(f, "--- start ---\n"); std::fflush(f);
++            m0 = sm.mids; b0 = sm.blends; s0 = sm.skipped; i0 = sm.incompat;
++            return;
++        }
++        if (!f) return;
++        const auto now = std::chrono::steady_clock::now();
++        const double ms = std::chrono::duration<double, std::milli>(now - last).count();
++        last = now; ++pics;
++        if (ms > 20) ++late20;
++        if (ms > 34) ++late34;
++        if (ms > worst) worst = ms;
++        const int lvl = iwram ? iwram[0x41F8] : -1;
++        const double secs = std::chrono::duration<double>(now - t0).count();
++        if (secs < 15 && lvl == lvl_last) return;
++        if (lvl_last < 0) { lvl_last = lvl; return; }
++        std::fprintf(f, "%.0fs level %d: %.1f pics/s, late >20ms %llu, >34ms %llu, worst %.0f ms, in-between %llu (blended %llu), skipped %llu, big moves %llu\n",
++                     secs, lvl_last, pics / secs, (unsigned long long)late20, (unsigned long long)late34, worst,
++                     (unsigned long long)(sm.mids - m0), (unsigned long long)(sm.blends - b0),
++                     (unsigned long long)(sm.skipped - s0), (unsigned long long)(sm.incompat - i0));
++        std::fflush(f);
++        lvl_last = lvl; t0 = now; pics = late20 = late34 = 0; worst = 0;
++        m0 = sm.mids; b0 = sm.blends; s0 = sm.skipped; i0 = sm.incompat;
++    }
++};
++PlayLog g_play_log;
++}  // namespace
++
++
+ // Authoritative IRQ-entry counter, incremented in runtime_irq (runtime_arm.cpp)
+ // at the actual vectoring site. The TCP `counters` command surfaces it via
+ // ctx.irq_entries (the run-loop local never increments — IRQs are taken in
+@@ -100,6 +152,7 @@ void runtime_mark_present_stack_base();
  void runtime_set_host_service_hook(std::function<void()>);
  void runtime_set_frame_start_hook(std::function<void()>);
  void runtime_set_vblank_input_hook(std::function<void()>);
@@ -584,7 +638,7 @@ index 1d17757..3e31bb2 100644
  
  #ifndef GBARECOMP_DEFAULT_GAME_CONFIG
  #define GBARECOMP_DEFAULT_GAME_CONFIG "game.toml"
-@@ -1352,6 +1358,67 @@ extern "C" unsigned g_ws_extra_left  = 0;
+@@ -1352,6 +1405,67 @@ extern "C" unsigned g_ws_extra_left  = 0;
  extern "C" unsigned g_ws_extra_right = 0;
  extern "C" unsigned g_ws_view_width  = 240;
  
@@ -652,7 +706,7 @@ index 1d17757..3e31bb2 100644
  int run_game(int argc, char** argv, const RunOptions& opts) {
      // Game runners install this before entering run_game(). Clear it on every
      // return path so a later game launched in the same process cannot call a
-@@ -2690,6 +2757,42 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
+@@ -2690,6 +2804,42 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
      struct ClearVblankInputHook {
          ~ClearVblankInputHook() { runtime_set_vblank_input_hook(nullptr); }
      } clear_vblank_input_hook;
@@ -695,7 +749,7 @@ index 1d17757..3e31bb2 100644
      // Structured TCP commands shared by every TCP session: engine touch
      // commands first, then the game's own extension.
      auto tcp_extension = [&](const std::string& request, std::string& reply) -> bool {
-@@ -4283,7 +4386,11 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
+@@ -4283,7 +4433,11 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
  #if defined(GBARECOMP_WEB_HOST)
              // The page re-presents its private staging copy; publishing here
              // would count paused frames as new ones.
@@ -707,7 +761,7 @@ index 1d17757..3e31bb2 100644
  #else
              // Keep the native window (and any runtime UI drawn over the
              // game renderer) alive while the guest is held still.
-@@ -4315,7 +4422,11 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
+@@ -4315,7 +4469,11 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
      // relies on the per-frame runner loop (which present-in-place bypasses).
      const char* pip_env = std::getenv("GBARECOMP_PRESENT_IN_PLACE");
      const bool present_in_place =
@@ -720,13 +774,16 @@ index 1d17757..3e31bb2 100644
  
      // ── Diagnostic replay: capture (default for interactive play) or playback.
      // Inputs are sampled at the present-in-place VBlank hook, the one frame
-@@ -4562,8 +4673,24 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
+@@ -4562,8 +4720,27 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
                                     bus.pal_ptr());
                      }
                  }
 +                if (present_frame && !fast_forward_active)
 +                    smoother.apply(ppu, live_fb.data(), ppu.render_bytes());
 +                else if (fast_forward_active) smoother.reset();
++#if !defined(GBR_WEB_SINGLE)
++                if (present_frame) g_play_log.tick(smoother, bus.iwram_ptr());
++#endif
 +#if defined(GBR_WEB_SINGLE)
 +                g_web_tick_stats[5] = (int)smoother.mids; g_web_tick_stats[6] = (int)smoother.skipped;
 +                g_web_tick_stats[7] = (int)smoother.blends; g_web_tick_stats[8] = (int)smoother.incompat;
@@ -745,7 +802,7 @@ index 1d17757..3e31bb2 100644
                  if (phase_active) fp_t2 = FramePhaseRing::now_ns();
                  drain_host_audio();
                  // Windowed present-in-place stays inside one step_once() for
-@@ -4592,6 +4719,9 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
+@@ -4592,6 +4769,9 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
                  last_presented_frame = frame;
                  if (present_frame) {
                      ++frames_presented;
@@ -755,7 +812,7 @@ index 1d17757..3e31bb2 100644
                      if (args.frames >= 0 && frames_presented >= args.frames)
                          host_quit = true;
                      if (pacer) pacer->wait_for_next_frame(banked_frames);
-@@ -4906,7 +5036,11 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
+@@ -4906,7 +5086,11 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
      // Two timestamps only: normal render/audio/present work stays inside,
      // startup/state restore and exit saves/dumps stay outside the interval.
      const auto gameplay_begin = std::chrono::steady_clock::now();
@@ -767,13 +824,16 @@ index 1d17757..3e31bb2 100644
          // Paused: hold the guest still, keep the window alive (input pump,
          // re-present, ~100 Hz idle). Applies to windowed play only.
          service_host_pause();
-@@ -5003,6 +5137,13 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
+@@ -5003,6 +5187,16 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
                                     bus.pal_ptr());
                      }
                  }
 +                if (present_frame && !fast_forward_active)
 +                    smoother.apply(ppu, live_fb.data(), ppu.render_bytes());
 +                else if (fast_forward_active) smoother.reset();
++#if !defined(GBR_WEB_SINGLE)
++                if (present_frame) g_play_log.tick(smoother, bus.iwram_ptr());
++#endif
 +#if defined(GBR_WEB_SINGLE)
 +                g_web_tick_stats[5] = (int)smoother.mids; g_web_tick_stats[6] = (int)smoother.skipped;
 +                g_web_tick_stats[7] = (int)smoother.blends; g_web_tick_stats[8] = (int)smoother.incompat;
@@ -781,7 +841,7 @@ index 1d17757..3e31bb2 100644
                  if (phase_active) fp_t1 = FramePhaseRing::now_ns();
                  if (present_frame) present_live_frame();
                  // Framedump (capture runs only) is attributed to present_us.
-@@ -5032,6 +5173,9 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
+@@ -5032,6 +5226,9 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
                  last_presented_frame = frame;
                  if (present_frame) {
                      ++frames_presented;
@@ -791,7 +851,7 @@ index 1d17757..3e31bb2 100644
                      if (args.frames >= 0 && frames_presented >= args.frames) {
                          host_quit = true;
                      }
-@@ -5063,7 +5207,12 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
+@@ -5063,7 +5260,12 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
                  static_cast<uint64_t>(args.frames)) {
              break;
          }
