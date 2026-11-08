@@ -1,4 +1,4 @@
-// Play Room v107: skill buttons (icons inside, black when used, countdown), B's skill on L, B picks up and opens chests/Shrine, R doesn't (window.__bPick).
+// Play Room v108: skill buttons (icons inside, black when used, countdown), B's skill on L, B rules shared by player, Auto and P2 (bAct).
       const skIcons = [...document.querySelectorAll("#pad .sk")].sort((a, b) => a.dataset.slot - b.dataset.slot);   // A, B's skill (on L), R
       const skPos = (v) => (v[1] * 20) + "% " + (v[0] * 100 / 7).toFixed(3) + "%";   // sheet: 6 skills across, 8 heroes down
       // Used skills (Jordan, 2026-11-08): the pressed skill's icon turns black. If the game took Spirit for it and it's a
@@ -155,30 +155,36 @@
       setTimeout(() => { $("bootCover").classList.add("gone"); clearInterval(lift); }, 8000);
       // Watchdog: if no frames run, ask for a tap; only restart if a tap does not get it going.
 
-        // B picks up too (Jordan, 2026-11-08): with an item at the hero's feet, B works as R unless it can't be taken
-        // (gear with a full backpack, a full Kingsfoil pouch); then B swings. Auto and P2 also pick up before swinging.
-        const herbRoom = (P, t) => t === 17 ? (r8(P + 0x1AA) >> 4) < 10 : t === 18 ? (r8(P + 0x1AA) & 15) < 10 : true;
-        // any = true: is there any item at the hero's feet (R no longer picks up, Jordan 2026-11-08).
+        // What B does next to things (Jordan, 2026-11-08), the same for the player, Auto and P2: with a takeable item at
+        // the feet (gear with backpack room, food when hurt, herbs with pouch room), an unopened chest (+0x85) or the
+        // Spirit Shrine (player only) B works as R; otherwise B swings. rd = memory reader of that game, P = hero struct.
+        // any = true: anything of the kind is there (R alone then does nothing).
+        const bAct = (rd, P, list, shrine, any) => {
+          const hero = rd.r32(P); if (hero >>> 24 !== 2) return false;
+          const at = (p) => [rd.r16(p + 0xae), rd.r16(p + 0xb2)], [x, y] = at(hero);
+          for (const p of list) {
+            const u = rd.r32(p + 0x14);
+            if (u === CHEST_UPD && !rd.r8(p + 0x85)) { const [bx, by] = at(p); if (bx - x >= -18 && bx - x <= 22 && Math.abs(by - y) <= 24) return true; continue; }
+            if (u === SHOP_UPD) { if (!shrine) continue; const [sx, sy] = at(p); if (Math.abs(sx - x) <= 30 && Math.abs(sy - y) <= 30) return true; continue; }
+            if (u !== ITEM_UPD || rd.r8(p + 0x63) !== 3) continue;
+            const [ix, iy] = at(p); if (Math.abs(ix - x) > 10 || Math.abs(iy - y) > 10) continue;
+            const t = rd.r8(p + 0x60);
+            if (any && t >= 15) return true;
+            const food = t === 15 || t === 16 || t === 19, hb = rd.r8(P + 0x1AA);
+            const pack = () => { for (let k = 0; k < 8; k++) if ((rd.r32(P + 0x5c + 4 * k) & 15) === 15) return true; return false; };
+            if (t >= 25 ? pack() : food ? rd.r16(P + 0x17C) < rd.r16(P + 0xD0) : t === 17 ? (hb >> 4) < 10 : t === 18 ? (hb & 15) < 10 : t >= 19) return true;
+          }
+          return false;
+        };
+        window.__bAct = bAct;
         window.__bPick = (any) => {
           try {
             if (iwram < 0 || inMenu()) return false;
             ew = findEw(); H8 = heap(); if (ew < 0) return false;
-            const P = playerAddr(), hero = r32(P); if (hero >>> 24 !== 2) return false;
-            const [x, y] = pos(hero);
-            for (const p of entities()) {
-              const u = r32(p + 0x14);
-              // B also opens chests (not yet opened, +0x85) and the Spirit Shrine's shop (Jordan, 2026-11-08); R doesn't.
-              if (u === CHEST_UPD && !r8(p + 0x85)) { const [bx, by] = pos(p); if (bx - x >= -18 && bx - x <= 22 && Math.abs(by - y) <= 24) return true; continue; }
-              if (u === SHOP_UPD) { const [sx, sy] = pos(p); if (Math.abs(sx - x) <= 30 && Math.abs(sy - y) <= 30) return true; continue; }
-              if (u !== ITEM_UPD || r8(p + 0x63) !== 3) continue;
-              const [ix, iy] = pos(p); if (Math.abs(ix - x) > 10 || Math.abs(iy - y) > 10) continue;
-              const t = r8(p + 0x60);
-              if (any && t >= 15) return true;
-              const food = t === 15 || t === 16 || t === 19;   // eaten on the spot: only worth it when hurt
-              if (t >= 25 ? !packFull(P) : food ? r16(P + 0x17C) < r16(P + 0xD0) : t >= 15 ? herbRoom(P, t) : false) return true;
-            }
-          } catch (e) {}
-          return false;
+            return bAct({ r8, r16, r32 }, playerAddr(), entities(), true, any);
+          } catch (e) { return false; }
         };
         // Some enemies are scenery standing inside the walls (no floor around them); those never fight and aren't counted.
         const onFloor = (p) => { const [ex, ey] = pos(p), { W, H, free } = grid, cx = ex >> 3, cy = ey >> 3;
+          for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) { const X = cx + dx, Y = cy + dy; if (X >= 0 && Y >= 0 && X < W && Y < H && free[X + Y * W]) return true; }
+          return false; };

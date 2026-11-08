@@ -1,4 +1,4 @@
-// Play Room v103: the P2 helper (inside the page's main script; uses $, WideHost and startWide's engine).
+// Play Room v108: the P2 helper (inside the page's main script; uses $, WideHost and startWide's engine).
   // ---------------- P2 helper (Jordan, 2026-11-08) ----------------
   // A P2 button next to Auto. In the wide view it lists the saved heroes that aren't the one being played; picking one
   // restarts as a 2-player link game (the PC app's engine runs both games side by side): both games load their own
@@ -400,6 +400,10 @@
         if (ok) { p2Tries.set(p, (p2Tries.get(p) || 0) + 1); seq([[K.R, 4], [0, 6]], f); return; }
       }
       if (p2Tries.size > 64) p2Tries.clear();
+      // An unopened chest at P2's feet: open it (B, which works as R there, like the player's B).
+      for (const p of list) if (m.r32(p + 0x14) === 0x08014a3d && !m.r8(p + 0x85) && (p2Tries.get(p) || 0) <= 6) {
+        const [bx, by] = pos(p); if (bx - x >= -18 && bx - x <= 22 && Math.abs(by - y) <= 24) { p2Tries.set(p, (p2Tries.get(p) || 0) + 1); seq([[0, 6], [K.R, 6], [0, 20]], f); return; }
+      }
       if (!retreatT) {
         // Hit an enemy next to P2 (elites first); skills on elites and groups.
         for (const p of en) {
@@ -418,7 +422,8 @@
               }
             }
             // Swing, with a small random pause like a person's rhythm.
-            seq([[face, 2], [K.B, 4], [0, 3 + ((Math.random() * 5) | 0)]], f); return;
+            const bk = window.__bAct && window.__bAct(m, P, list, false) ? K.R : K.B;   // P2's B works like the player's B
+            seq([[face, 2], [bk, 4], [0, 3 + ((Math.random() * 5) | 0)]], f); return;
           }
         }
         for (const p of want) if (at(p, 8)) { seq([[K.R, 4], [0, 6]], f); return; }
