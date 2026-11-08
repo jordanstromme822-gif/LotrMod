@@ -5,10 +5,12 @@
       // wave appears, and turns itself off once no enemies are left. Solo and Wide only, like the extra skill buttons.
       (() => {
         const MORIA = 82, ENEMY_UPD = 0x0801b9d1, ITEM_UPD = 0x0802f131, TRIG_UPD = 0x0802ed21;
+        // Pots and barrels (smash with B), chests (open with R) and the Spirit Shrine (R opens its shop; herbs are its third tab).
+        const POT_UPD = 0x08046125, CHEST_UPD = 0x08014a3d, SHOP_UPD = 0x080200c9;
         const DEAD = new Set([0x11, 0x15, 4, 0x1b, 0x13]);
         const btn = $("autoBtn"), note = $("saveNote");
         let on = false, ew = -1, H8 = null, grid = null, gridT = 0, queue = [], qUntil = 0, keysDown = new Set();
-        let hist = [], stuck = 0, tries = new Map(), idleSince = 0, unreachSince = 0, userUntil = 0, oldHeal = null, lastSeen = 0, kills = 0;
+        let hist = [], stuck = 0, tries = new Map(), blocked = new Map(), skip = new Map(), macro = null, noEquip = new Set(), shopT = 0, lastLog = 0, idleSince = 0, unreachSince = 0, userUntil = 0, oldHeal = null, lastSeen = 0, kills = 0;
         const rom = () => window.__romFull;
         const heap = () => emu.Module.HEAPU8;
         const findEw = () => {
@@ -24,7 +26,7 @@
         const rr32 = (a) => { const R = rom(), o = a - 0x08000000; return (R[o] | R[o + 1] << 8 | R[o + 2] << 16 | R[o + 3] << 24) >>> 0; };
         const playerAddr = () => 0x03003C00 + 0x1AC * (r8(0x03003F59) & 1);
         const pos = (p) => [r16(p + 0xae), r16(p + 0xb2)];
-        const inMoria = () => { try { if (iwram < 0 || linked() || inMenu()) return false; ew = findEw(); H8 = heap(); return ew >= 0 && r8(0x030041F8) === MORIA && r32(playerAddr()) >>> 24 === 2; } catch (e) { return false; } };
+        const inMoria = (menuOk) => { try { if (iwram < 0 || linked()) return false; if (menuOk) return true; if (inMenu()) return false; ew = findEw(); H8 = heap(); return ew >= 0 && r8(0x030041F8) === MORIA && r32(playerAddr()) >>> 24 === 2; } catch (e) { return false; } };
         // Items: 32-bit words (category bits 0-3, index 8-15, prefix 16-23, suffix 24-31). Category table at 0x08068F50, 0x28 bytes each.
         const catw = (c, k) => rr32(0x08068F50 + c * 0x28 + 4 * k);
         const iflags = (it) => rr32(catw(it & 15, 8) + 8 * ((it >>> 8) & 255));
@@ -40,18 +42,54 @@
         const score = (it) => ipairs(it).reduce((t, [s, v]) => t + wstat(s) * v, 0);
         const slotOf = (f) => { for (let s = 0; s < 8; s++) if (f & (1 << (18 + s))) return s; return -1; };
         const empty = (it) => (it & 15) === 15;
-        const wanted = (P, it) => {
-          if (empty(it) || (it & 15) === 7) return false;
-          const f = iflags(it); if (f & 0x10000) return false;            // backpack-only item
-          let hero = r8(P + 0x19F); if (hero === 6) hero = 0;
-          if (hero >= 6 || !(f & (0x04000000 << hero))) return false;     // this hero can't wear it (level is not checked)
-          const s = slotOf(f); if (s < 0) return false;
-          const wpn = r32(P + 0x40);
-          if (s === 2 && !empty(wpn) && (iflags(wpn) & 0x20000)) return false;  // shield while holding a two-handed weapon
-          let best = empty(r32(P + 0x3c + 4 * s)) ? -1e9 : score(r32(P + 0x3c + 4 * s)), full = true;
-          for (let k = 0; k < 8; k++) { const b = r32(P + 0x5c + 4 * k); if (empty(b)) { full = false; continue; } if (slotOf(iflags(b)) === s) best = Math.max(best, score(b)); }
-          return !full && score(it) > best + 0.01;
+        // Level an item needs (same sums as the game's own function at 0x0802D2F8); the hero may wear it up to its level + 1.
+        const reqLevel = (it) => {
+          const c = it & 15, i = (it >>> 8) & 255, pre = (it >>> 16) & 255, suf = it >>> 24, f = iflags(it);
+          let r = rr8(catw(c, 0) + 12 * i + 2);
+          if (f & 0x80) r += 5; if (f & 0x100) r += 5;
+          if (pre !== 255 && c !== 7) { r += rr8(catw(c, 2) + 12 * pre + 2) >> 1; const pf = rr32(catw(c, 3) + 4 * pre); r += 5 * !!(pf & 1) + 5 * !!(pf & 2); }
+          if (suf !== 255) { r += rr8(catw(c, 5) + 12 * suf + 2); const sf = rr32(catw(c, 6) + 4 * suf); r += 5 * !!(sf & 1) + 5 * !!(sf & 2); }
+          if (f & 0x10000) r = 1;
+          return r & 255;
         };
+        // Gear this hero can wear in some slot (level not checked): returns the slot, or -1.
+        const gearSlot = (P, it) => {
+          if (empty(it) || (it & 15) === 7) return -1;
+          const f = iflags(it); if (f & 0x10000) return -1;               // backpack-only item
+          let hero = r8(P + 0x19F); if (hero === 6) hero = 0;
+          if (hero >= 6 || !(f & (0x04000000 << hero))) return -1;        // this hero can't wear it
+          const s = slotOf(f); if (s < 0) return -1;
+          const wpn = r32(P + 0x40), sh = r32(P + 0x44);
+          if (s === 2 && !empty(wpn) && (iflags(wpn) & 0x20000)) return -1;  // shield while holding a two-handed weapon
+          if (s === 1 && (f & 0x20000) && !empty(sh)) return -1;             // two-handed weapon while holding a shield
+          return s;
+        };
+        const packFull = (P) => { for (let k = 0; k < 8; k++) if (empty(r32(P + 0x5c + 4 * k))) return false; return true; };
+        // Least valuable backpack item that may be thrown away for something better (runes and the like are kept).
+        const cheapest = (P) => { let b = -1, bs = 1e9; for (let k = 0; k < 8; k++) { const it = r32(P + 0x5c + 4 * k); if (empty(it) || (it & 15) === 7) continue; const sc = score(it); if (sc < bs) { bs = sc; b = k; } } return [b, bs]; };
+        const wanted = (P, it) => {
+          const s = gearSlot(P, it); if (s < 0) return false;
+          let best = empty(r32(P + 0x3c + 4 * s)) ? -1e9 : score(r32(P + 0x3c + 4 * s));
+          for (let k = 0; k < 8; k++) { const b = r32(P + 0x5c + 4 * k); if (!empty(b) && slotOf(iflags(b)) === s) best = Math.max(best, score(b)); }
+          const sc = score(it); if (sc <= best + 0.01) return false;
+          if (!packFull(P)) return true;
+          const [k, ks] = cheapest(P); return k >= 0 && ks < sc;            // room can be made
+        };
+        // Backpack item that should be worn now: wearable, level allows it, and better than what's in its slot.
+        const toEquip = (P) => {
+          const lvl = r8(P + 0x19C) + 1;
+          for (let k = 0; k < 8; k++) {
+            const it = r32(P + 0x5c + 4 * k); if (noEquip.has(it)) continue;
+            const s = gearSlot(P, it); if (s < 0 || reqLevel(it) > lvl) continue;
+            const cur = r32(P + 0x3c + 4 * s);
+            if (empty(cur) || score(it) > score(cur) + 0.01) return k;
+          }
+          return -1;
+        };
+        // Menu macros: button taps sent while the game is in a menu. Backpack grid is 4 x 2 and the cursor starts on slot 0.
+        const tapSteps = (id, n) => { const out = []; for (let i = 0; i < (n === undefined ? 1 : n); i++) out.push({ k: [id], ms: 160 }, { k: [], ms: 340 }); return out; };
+        const gridSteps = (k) => [...tapSteps(7, k & 3), ...tapSteps(5, k >> 2)];
+        const slog = (m) => { try { window.__slog && window.__slog("auto: " + m); } catch (e) {} };
         // Walls: the level's 8x8 collision cells (block map *0x0300206C, cell data *0x03002068); values 1 and 2 block.
         const buildGrid = () => {
           const W = r16(0x03005F90), Hh = r16(0x03005F88), bm = r32(0x0300206C), ct = r32(0x03002068);
@@ -66,7 +104,9 @@
           return { W, H: Hh, free };
         };
         const bfs = (x, y) => {
-          const { W, H, free } = grid, prev = new Int32Array(W * H).fill(-2), q = new Int32Array(W * H);
+          const { W, H } = grid, now = performance.now(), prev = new Int32Array(W * H).fill(-2), q = new Int32Array(W * H);
+          let free = grid.free;
+          if (blocked.size) { free = free.slice(); for (const [c, t] of blocked) { if (t < now) blocked.delete(c); else free[c] = 0; } }
           let qh = 0, qt = 0; const s = (x >> 3) + (y >> 3) * W;
           prev[s] = -1; q[qt++] = s;
           if (!free[s]) for (let r = 1; r <= 3 && qt === 1; r++) for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) {
@@ -101,6 +141,10 @@
           n = 0; while (p && p >>> 24 === 2 && n++ < 400) { out.push(p); p = r32(p + 4); }
           return out;
         };
+        // Some enemies are scenery standing inside the walls (no floor around them); those never fight and aren't counted.
+        const onFloor = (p) => { const [ex, ey] = pos(p), { W, H, free } = grid, cx = ex >> 3, cy = ey >> 3;
+          for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) { const X = cx + dx, Y = cy + dy; if (X >= 0 && Y >= 0 && X < W && Y < H && free[X + Y * W]) return true; }
+          return false; };
         const alive = (p) => !DEAD.has(r8(p + 0x62)) && r8(p + 0x63) !== 0x2f && !(r32(p + 0xe8) & 2);
         // Buttons (libretro ids): 0 B, 11 R, 4 up, 5 down, 6 left, 7 right.
         const setKeys = (ids) => {
@@ -118,7 +162,7 @@
         const setOn = (v, msg) => {
           if (on === v) return; on = v;
           btn.classList.toggle("on", on); btn.setAttribute("aria-pressed", on ? "true" : "false");
-          queue = []; setKeys([]); hist = []; stuck = 0; tries.clear(); idleSince = unreachSince = 0; kills = 0;
+          queue = []; setKeys([]); hist = []; stuck = 0; tries.clear(); blocked.clear(); skip.clear(); noEquip.clear(); macro = null; idleSince = unreachSince = 0; kills = 0;
           try { H8 = heap(); ew = findEw(); setHeal(on); } catch (e) {}
           if (msg) show(msg, 3500);
         };
@@ -128,12 +172,16 @@
           if (!grid || now - gridT > 2000) { grid = buildGrid(); gridT = now; if (!grid) return; }
           const [x, y] = pos(hero), list = entities();
           if (list.length < 6) { setKeys([]); return; }                           // level still setting up
-          const en = [], items = [], trig = [];
+          const en = [], items = [], trig = [], boxes = [], shops = [];
+          for (const [p, t] of skip) if (t < now) skip.delete(p);
           for (const p of list) {
             const u = r32(p + 0x14);
-            if (u === ENEMY_UPD) { if (alive(p)) en.push(p); }
+            if (skip.has(p)) continue;
+            if (u === ENEMY_UPD) { if (alive(p) && onFloor(p)) en.push(p); }
             else if (u === ITEM_UPD) { if (r8(p + 0x63) === 3) items.push(p); }
             else if (u === TRIG_UPD && r8(p + 0x63) === 0) trig.push(p);
+            else if ((u === POT_UPD || u === CHEST_UPD) && r8(p + 0x63) === 0 && onFloor(p)) boxes.push(p);
+            else if (u === SHOP_UPD && r8(p + 0x60) === 2) shops.push(p);
           }
           if (en.length < lastSeen) kills += lastSeen - en.length; lastSeen = en.length;
           const prev = bfs(x, y);
@@ -141,6 +189,18 @@
           let tgt = null;
           for (const p of en) { const [ex, ey] = pos(p); if (Math.abs(ex - x) <= 22 && Math.abs(ey - y) <= 16) { tgt = { kind: "hit", p }; break; } }
           const close = en.some((p) => near(p, 70)), low = hp * 10 < mhp * 4;
+          const gems = r16(P + 0x184), herbs = r8(P + 0x1AA) >> 4;
+          if (!tgt && !close) {
+            // Wear anything better that is in the backpack (through the game's own Backpack menu: Start, pick it, Equip).
+            const k = toEquip(P);
+            if (k >= 0) {
+              const it = r32(P + 0x5c + 4 * k);
+              macro = "equip"; slog("equip " + (it >>> 0).toString(16));
+              queue = [...tapSteps(3), { k: [], ms: 900 }, ...gridSteps(k), ...tapSteps(8), { k: [], ms: 250 }, ...tapSteps(8), { k: [], ms: 600 },
+                { k: [], ms: 10, run: () => { if (r32(P + 0x5c + 4 * k) === it) { noEquip.add(it); slog("equip failed"); } } }, ...tapSteps(0), { k: [], ms: 500, end: true }];
+              return;
+            }
+          }
           if (!tgt && (!close || low)) {
             for (const p of items) {
               if ((tries.get(p) || 0) > 6) continue;
@@ -148,16 +208,44 @@
               const ok = (t >= 15 && t <= 24) || (t >= 25 && !close && wanted(P, r32(p + 0x88)));
               if (!ok) continue;
               const [ix, iy] = pos(p);
-              if (Math.abs(ix - x) <= 8 && Math.abs(iy - y) <= 8) { tgt = { kind: "pick", p }; break; }
+              if (Math.abs(ix - x) <= 8 && Math.abs(iy - y) <= 8) { tgt = { kind: "pick", p, gear: t >= 25 }; break; }
               const path = pathTo(prev, ix, iy, 1);
               if (path && path.length < 60 && (!tgt || path.length < tgt.len)) tgt = { kind: "go", p, len: path.length, path, item: true };
             }
           }
+          // Pots, barrels and chests: smash or open the ones next to the hero, walk to near ones when no enemy is close.
+          if (!tgt && !close) for (const p of boxes) {
+            const [bx, by] = pos(p), chest = r32(p + 0x14) === CHEST_UPD;
+            if (chest) {
+              // A chest opens with R from right beside it (left, right, just below or just above), facing it.
+              // Left and right sides first (the nearer one), then below and above; 2.5 s per side, then give up for a while.
+              const d = (a) => Math.abs(a[0] - x) + Math.abs(a[1] - y);
+              const spots = [...[[bx - 20, by, 7], [bx + 20, by, 6]].sort((a, b) => d(a) - d(b)), [bx, by + 12, 4], [bx, by - 14, 5]];
+              if (Math.abs(bx - x) > 40 || Math.abs(by - y) > 40) continue;    // far: walked to below (goBox)
+              if (!tries.has("t" + p)) tries.set("t" + p, now);
+              const si = Math.floor((now - tries.get("t" + p)) / 2500);
+              if (si > 3) { skip.set(p, now + 60000); tries.delete("t" + p); slog("chest gave up at " + x + "," + y); continue; }
+              const sp = spots[si];
+              if (Math.abs(sp[0] - x) <= 8 && Math.abs(sp[1] - y) <= 8) { tgt = { kind: "open", p, face: sp[2] }; break; }
+              if (Math.abs(bx - x) <= 40 && Math.abs(by - y) <= 40) { tgt = { kind: "step", p, to: sp }; break; }
+            } else if (Math.abs(bx - x) <= 22 && Math.abs(by - y) <= 18) { tgt = { kind: "smash", p }; break; }
+          }
+          const goBox = (maxLen) => { for (const p of boxes) { const [bx, by] = pos(p); const path = pathTo(prev, bx, by, 2); if (path && path.length < maxLen && (!tgt || path.length < tgt.len)) tgt = { kind: "go", p, len: path.length, path }; } };
+          if (!tgt && !close) goBox(40);
+          const shopGo = () => { if (herbs < 10 && gems >= 50 && now - shopT > 90000) for (const p of shops) {
+            const [sx, sy] = pos(p);
+            if (Math.abs(sx - x) <= 30 && Math.abs(sy - y) <= 30) { tgt = { kind: "shop", p }; break; }
+            const path = pathTo(prev, sx, sy, 3); if (path && (!tgt || path.length < tgt.len)) tgt = { kind: "go", p, len: path.length, path };
+          } };
+          if (!tgt && !close && herbs <= 2) shopGo();                       // low on herbs: restock before going on
           if (!tgt) for (const p of en) { const [ex, ey] = pos(p); const path = pathTo(prev, ex, ey, 2); if (path && (!tgt || path.length < tgt.len)) tgt = { kind: "go", p, len: path.length, path }; }
+          if (!tgt) goBox(1e9);
+          // Spirit Shrine: buy herbs until the hero carries 10 or the gems run out.
+          if (!tgt) shopGo();
           if (!tgt) for (const p of trig) { const [tx, ty] = pos(p); const path = pathTo(prev, tx, ty, 3); if (path && (!tgt || path.length < tgt.len)) tgt = { kind: "go", p, len: path.length, path }; }
           if (!tgt) {
             setKeys([]);
-            if (!en.length) { if (!idleSince) idleSince = now; else if (now - idleSince > 3000) setOn(false, "Auto off: every enemy is gone."); }
+            if (!en.length) { if (!idleSince) idleSince = now; else if (now - idleSince > 3000) { slog("done, kills " + kills); setOn(false, "Auto off: every enemy is gone."); } }
             else { if (!unreachSince) unreachSince = now; else if (now - unreachSince > 20000) setOn(false, "Auto off: can't reach the last " + en.length + " enemies."); }
             queue = [{ k: [], ms: 200 }];
             return;
@@ -168,28 +256,66 @@
             queue = [{ k: steer(x, y, ex, ey), ms: 40 }, { k: [0], ms: 70 }, { k: [], ms: 70 }];
           } else if (tgt.kind === "pick") {
             tries.set(tgt.p, (tries.get(tgt.p) || 0) + 1);
+            if (tgt.gear && packFull(P)) {
+              // No room: throw away the least valuable backpack item first (Start, pick it, Discard).
+              const [k] = cheapest(P);
+              if (k >= 0) {
+                macro = "discard"; slog("discard " + (r32(P + 0x5c + 4 * k) >>> 0).toString(16) + " for " + (r32(tgt.p + 0x88) >>> 0).toString(16));
+                queue = [...tapSteps(3), { k: [], ms: 900 }, ...gridSteps(k), ...tapSteps(8), { k: [], ms: 250 }, ...tapSteps(5), ...tapSteps(8), { k: [], ms: 500 }, ...tapSteps(0), { k: [], ms: 500, end: true }];
+                return;
+              }
+            }
             queue = [{ k: [11], ms: 60 }, { k: [], ms: 90 }];
+          } else if (tgt.kind === "open") {
+            queue = [{ k: [], ms: 120 }, { k: [11], ms: 100 }, { k: [], ms: 250 }];      // R alone, standing still (R while walking doesn't open it)
+          } else if (tgt.kind === "step") {
+            // Walk the last few pixels to the chest's side.
+            const tx = tgt.to[0], ty = tgt.to[1], k = [];
+            if (tx - x > 1) k.push(7); if (tx - x < -1) k.push(6); if (ty - y > 1) k.push(5); if (ty - y < -1) k.push(4);
+            queue = [{ k, ms: 60 }, { k: [], ms: 30 }];
+          } else if (tgt.kind === "smash") {
+            const n = (tries.get(tgt.p) || 0) + 1; tries.set(tgt.p, n);
+            if (n > 14) { skip.set(tgt.p, now + 60000); slog("smash gave up at " + x + "," + y); }
+            const [bx, by] = pos(tgt.p);
+            queue = [{ k: steer(x, y, bx, by), ms: 50 }, { k: [...steer(x, y, bx, by), 0], ms: 80 }, { k: [], ms: 120 }];
+          } else if (tgt.kind === "shop") {
+            shopT = now; macro = "shop";
+            const g0 = gems;
+            // R opens the shop, Left moves to the herb tab, A then A (Yes) buys one; repeat until the gems stop going down.
+            const buy = () => { const before = r16(P + 0x184); return [...tapSteps(8), { k: [], ms: 200 }, ...tapSteps(8), { k: [], ms: 400 },
+              { k: [], ms: 10, run: () => { const g = r16(P + 0x184); if (g < before && g >= 50 && (r8(P + 0x1AA) >> 4) < 10) queue.unshift(...buy()); } }]; };
+            queue = [...tapSteps(11), { k: [], ms: 900 }, ...tapSteps(6), { k: [], ms: 300 }, ...buy(), ...tapSteps(0), { k: [], ms: 400 }, ...tapSteps(0), { k: [], ms: 600 },
+              { k: [], ms: 10, run: () => slog("shrine: spent " + (g0 - r16(P + 0x184)) + " gems, herbs " + (r8(P + 0x1AA) >> 4)) }, { k: [], ms: 10, end: true }];
           } else {
             const W = grid.W, c = tgt.path[Math.min(3, tgt.path.length - 1)], k = steer(x, y, (c % W) * 8 + 4, ((c / W) | 0) * 8 + 4);
             hist.push([x, y, now]); while (hist.length && now - hist[0][2] > 600) hist.shift();
             if (hist.length > 4 && Math.abs(hist[0][0] - x) + Math.abs(hist[0][1] - y) < 4) {
               stuck++; hist = [];
+              // Stuck on the same target again and again: leave it for a while and do something else.
+              const n = (tries.get("s" + tgt.p) || 0) + 1; tries.set("s" + tgt.p, n);
+              if (n >= 5) { skip.set(tgt.p, now + 30000); tries.delete("s" + tgt.p); if (now - lastLog > 5000) { lastLog = now; slog("stuck at " + x + "," + y + ", skipping that target for 30 s"); } }
               if (tgt.item) tries.set(tgt.p, (tries.get(tgt.p) || 0) + 1);
+              // Mark the cells ahead as blocked for 15 s (a statue or other object the wall map doesn't know about), so the path goes around.
+              const here = (x >> 3) + (y >> 3) * W;
+              for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) { const b = c + dx + dy * W; if (b !== here && b >= 0) blocked.set(b, now + 15000); }
               // Something is in the way (often a pot): swing at it, and now and then step aside.
               queue = stuck % 3 ? [{ k, ms: 40 }, { k: [0], ms: 70 }, { k: [], ms: 70 }] : [{ k: [[4], [5], [6], [7]][(Math.random() * 4) | 0], ms: 170 }];
             } else queue = [{ k, ms: 70 }];
           }
         };
         const loop = () => {
-          const ok = inMoria();
-          btn.hidden = !ok;
-          if (!ok) { if (on) { queue = []; setKeys([]); } return; }
+          // While a menu macro runs the game is in its menu (the level number reads 0 there), so only the macro keeps going.
+          const ok = inMoria(!!macro && on);
+          btn.hidden = !ok && !macro;
+          if (!ok) { if (on) { queue = []; macro = null; setKeys([]); } return; }
           if (!on) return;
           const now = performance.now();
-          if (now < userUntil) { queue = []; setKeys([]); return; }
+          if (now < userUntil) { queue = []; macro = null; setKeys([]); return; }
           if (now < qUntil) return;
-          try { if (!queue.length) decide(now); } catch (e) { queue = []; setKeys([]); return; }
+          try { if (!queue.length) { macro = null; decide(now); } } catch (e) { queue = []; setKeys([]); return; }
           const step = queue.shift(); if (!step) return;
+          if (step.run) { try { step.run(); } catch (e) {} }
+          if (step.end) macro = null;
           setKeys(step.k); qUntil = now + step.ms;
         };
         setInterval(loop, 16);
