@@ -1,4 +1,4 @@
-// Play Room v106: skill buttons (icons inside, black when used, countdown), B's skill on L, B picks up, R doesn't (window.__bPick).
+// Play Room v107: skill buttons (icons inside, black when used, countdown), B's skill on L, B picks up and opens chests/Shrine, R doesn't (window.__bPick).
       const skIcons = [...document.querySelectorAll("#pad .sk")].sort((a, b) => a.dataset.slot - b.dataset.slot);   // A, B's skill (on L), R
       const skPos = (v) => (v[1] * 20) + "% " + (v[0] * 100 / 7).toFixed(3) + "%";   // sheet: 6 skills across, 8 heroes down
       // Used skills (Jordan, 2026-11-08): the pressed skill's icon turns black. If the game took Spirit for it and it's a
@@ -128,8 +128,8 @@
           // B also picks up (Jordan, 2026-11-08): with an item at the hero's feet that can be taken, B works as R. B never
           // casts (its skill is on L), so L is let go while B is down even with Quick Skill on.
           let sid = id;
-          // R no longer picks up (Jordan, 2026-11-08): with an item at the hero's feet, R alone does nothing (B picks up).
-          // With L held (Quick Skill) R still casts its skill, and R still opens chests and the Shrine.
+          // R no longer picks up or opens chests and the Shrine (Jordan, 2026-11-08; B does): next to any of those, R alone
+          // does nothing. With L held (Quick Skill) R still casts its skill.
           if (id === 11) {
             if (on) el.__rBlock = !(qsHeld || lTouch || lCast) && !!(window.__bPick && window.__bPick(true));
             if (el.__rBlock) { if (!on) el.__rBlock = false; return; }
@@ -166,7 +166,11 @@
             const P = playerAddr(), hero = r32(P); if (hero >>> 24 !== 2) return false;
             const [x, y] = pos(hero);
             for (const p of entities()) {
-              if (r32(p + 0x14) !== ITEM_UPD || r8(p + 0x63) !== 3) continue;
+              const u = r32(p + 0x14);
+              // B also opens chests (not yet opened, +0x85) and the Spirit Shrine's shop (Jordan, 2026-11-08); R doesn't.
+              if (u === CHEST_UPD && !r8(p + 0x85)) { const [bx, by] = pos(p); if (bx - x >= -18 && bx - x <= 22 && Math.abs(by - y) <= 24) return true; continue; }
+              if (u === SHOP_UPD) { const [sx, sy] = pos(p); if (Math.abs(sx - x) <= 30 && Math.abs(sy - y) <= 30) return true; continue; }
+              if (u !== ITEM_UPD || r8(p + 0x63) !== 3) continue;
               const [ix, iy] = pos(p); if (Math.abs(ix - x) > 10 || Math.abs(iy - y) > 10) continue;
               const t = r8(p + 0x60);
               if (any && t >= 15) return true;
