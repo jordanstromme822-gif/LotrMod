@@ -24,6 +24,12 @@ bonuses rolled when it drops. Heads give their bonuses only from the slots.
   - Old Orc Heads (from before tiers) become normal heads with a fresh roll when a
     single player game loads.
 
+Regenerating quivers (Jordan, 2026-11-08, same code): 3% of dropped arrows regenerate
+1 arrow a second, starting 1 second after the last shot, up to the count they dropped
+with. They stay at 0 arrows instead of vanishing (you can still discard them), never
+merge with picked-up arrows, and show "Orcish Arrows: 7/25" in green with "Regenerates
+1 arrow a second" (docs/findings.md, "Arrows and quivers").
+
 How it works (details in docs/findings.md, "Orc Head slots" and "Orc Head tiers"):
   - A head's roll is the top half of its item word (the game ignores it for unique
     items): tier, difficulty table and a 12-bit seed its bonuses come from.
@@ -99,7 +105,14 @@ BL_SITES = [
     (0x3CC56, "00f0e5f8", "save_wrap"),
     (0x3CCDC, "00f084f8", "load_wrap"),   # save slots read from EEPROM: read the slot heads too
     (0x3CD14, "00f068f8", "load_wrap"),
-    (0x31ED0, "07f078f9", "gp_hook"),     # every gameplay frame: 2-player games send the slot heads once
+    (0x31ED0, "07f078f9", "gp_hook"),     # every gameplay frame: 2-player games send the slot heads once; quivers refill
+    # regenerating quivers
+    (0x249A2, "07f035fd", "arrow_wrap"),  # a shot uses up an arrow (4 calls)
+    (0x24A0C, "07f000fd", "arrow_wrap"),
+    (0x24BEE, "07f00ffc", "arrow_wrap"),
+    (0x44AE0, "e7f796fc", "arrow_wrap"),
+    (0x2AEAC, "03f02cfe", "same_wrap"),   # picked-up arrows join a matching quiver: never a regenerating one
+    (0x2AF22, "03f0f1fd", "same_wrap"),
 ]
 # link message 4 (never used by the game): send and receive cases
 LINK_CASES = [(0x3FE48, 0x0804006A, "send4"), (0x3F6AC, 0x0803FDAC, "recv4")]

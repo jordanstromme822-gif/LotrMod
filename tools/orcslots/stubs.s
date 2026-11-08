@@ -2,6 +2,31 @@
     .thumb
     .text
     .align 2
+@ Receive case for link message 4 (table 0x0803F69C): r6 = message, r9 = sending player.
+@ Kept first and self-contained (no calls, its own literals) so its bytes never change: the 2-player
+@ Wide engine has it compiled natively (game-link.toml extra_func 0x0807F000). A bridged case handler
+@ that jumps back into the game's receive loop crashed that engine. It only stores the 4 heads
+@ (CONF[p], 0x0203FF38 + 8 p) and marks them pending (CONFV[p] = 2); gp_hook puts them on.
+    .global recv4
+    .thumb_func
+recv4:
+    mov r0, r9
+    cmp r0, #3
+    bhi 1f
+    lsls r1, r0, #3
+    ldr r2, =0x0203FF38
+    adds r2, r2, r1
+    ldr r1, [r6, #4]
+    str r1, [r2]
+    ldr r1, [r6, #8]
+    str r1, [r2, #4]
+    ldr r2, =0x0203FF58
+    movs r1, #2
+    strb r1, [r2, r0]
+1:  ldr r0, =0x0803FDAD
+    bx r0
+    .pool
+    .align 2
 @ 0x0802DBE0: keepsake path of the item stat routine. r5 = item, sl = slot, sb = player.
 @ For an Orc Head in slots 0-15, hand back a base that makes the hero-id check right after
 @ (byte at hero + 0x19F == 7, Smeagol, who gets no keepsake bonus) take its "no bonus" exit.
@@ -174,16 +199,6 @@ send4:
     ldr r0, [r3, #4]
     str r0, [r5, #8]
     ldr r0, =0x0804006B
-    bx r0
-@ Receive case (table 0x0803F69C): r6 = message, r9 = sending player.
-    .global recv4
-    .thumb_func
-    .align 2
-recv4:
-    mov r0, r9
-    adds r1, r6, #4
-    bl recv_c
-    ldr r0, =0x0803FDAD
     bx r0
 
     .pool

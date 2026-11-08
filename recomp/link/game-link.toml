@@ -1880,3 +1880,181 @@ note = "link: function pointer target"
 addr = 0x083F7904
 mode = "thumb"
 note = "link: function pointer target"
+
+# ---- LotrMod hooks (orcslots/linkfuncs.py) ----
+
+[[extra_func]]
+addr = 0x0807F000
+mode = "thumb"
+
+[[extra_func]]
+addr = 0x0807F02C
+mode = "thumb"
+
+[[extra_func]]
+addr = 0x0807F052
+mode = "thumb"
+
+[[extra_func]]
+addr = 0x0807F066
+mode = "thumb"
+
+[[extra_func]]
+addr = 0x0807F078
+mode = "thumb"
+
+[[extra_func]]
+addr = 0x0807F086
+mode = "thumb"
+
+[[extra_func]]
+addr = 0x0807F098
+mode = "thumb"
+
+[[extra_func]]
+addr = 0x0807F0AE
+mode = "thumb"
+
+[[extra_func]]
+addr = 0x0807F0BA
+mode = "thumb"
+
+[[extra_func]]
+addr = 0x0807F0C6
+mode = "thumb"
+
+[[extra_func]]
+addr = 0x0807F0D6
+mode = "thumb"
+
+[[extra_func]]
+addr = 0x0807F0E2
+mode = "thumb"
+
+[[extra_func]]
+addr = 0x0807F0F2
+mode = "thumb"
+
+[[extra_func]]
+addr = 0x0807F100
+mode = "thumb"
+
+[[extra_func]]
+addr = 0x0807F130
+mode = "thumb"
+
+[[extra_func]]
+addr = 0x0807F1C4
+mode = "thumb"
+
+[[extra_func]]
+addr = 0x0807F238
+mode = "thumb"
+
+[[extra_func]]
+addr = 0x0807F3C4
+mode = "thumb"
+
+[[extra_func]]
+addr = 0x0807F43C
+mode = "thumb"
+
+[[extra_func]]
+addr = 0x0807F500
+mode = "thumb"
+
+[[extra_func]]
+addr = 0x0807F57C
+mode = "thumb"
+
+[[extra_func]]
+addr = 0x0807F644
+mode = "thumb"
+
+[[extra_func]]
+addr = 0x0807F7AC
+mode = "thumb"
+
+[[extra_func]]
+addr = 0x0807F84C
+mode = "thumb"
+
+[[extra_func]]
+addr = 0x0807F88C
+mode = "thumb"
+
+[[extra_func]]
+addr = 0x0807F8CC
+mode = "thumb"
+
+[[extra_func]]
+addr = 0x0807F9FC
+mode = "thumb"
+
+[[extra_func]]
+addr = 0x0807FA88
+mode = "thumb"
+
+[[extra_func]]
+addr = 0x0807FBE0
+mode = "thumb"
+
+[[extra_func]]
+addr = 0x0807FC58
+mode = "thumb"
+
+[[extra_func]]
+addr = 0x0807FD04
+mode = "thumb"
+
+[[extra_func]]
+addr = 0x0807FDCC
+mode = "thumb"
+
+[[extra_func]]
+addr = 0x0807FEC0
+mode = "thumb"
+
+[[extra_func]]
+addr = 0x0807FFA4
+mode = "thumb"
+
+[[extra_func]]
+addr = 0x08080080
+mode = "thumb"
+
+[[extra_func]]
+addr = 0x080802A4
+mode = "thumb"
+
+[[extra_func]]
+addr = 0x08080314
+mode = "thumb"
+
+[[extra_func]]
+addr = 0x08080364
+mode = "thumb"
+
+[[extra_func]]
+addr = 0x08080394
+mode = "thumb"
+
+[[extra_func]]
+addr = 0x080803D4
+mode = "thumb"
+
+[[extra_func]]
+addr = 0x08080404
+mode = "thumb"
+
+[[extra_func]]
+addr = 0x080806EC
+mode = "thumb"
+
+[[extra_func]]
+addr = 0x08080724
+mode = "thumb"
+
+[[extra_func]]
+addr = 0x0808076C
+mode = "thumb"

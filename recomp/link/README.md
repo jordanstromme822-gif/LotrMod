@@ -64,3 +64,28 @@ difference, so v97 still ships the -O1 build without the quiet mixer.
   cache instead of a hash map in `multiplayer_slice_safe`), about 10% faster 2-player in the browser.
 - A narrower picture (288 instead of 320) gave no measurable gain, so it was not shipped; 240 was about 13%
   faster.
+
+## v121 (2026-11-08): Legolas plays like a ranger
+
+Jordan: "Legolas P2 doesn't play the way a ranger should". When P2's hero is Legolas (hero id 1 at hero + 0x19F):
+- Keeps bow distance: it plans to a shooting spot 56-72 px along the target's row, 52 px on its column or 46 px on a
+  diagonal, with a clear line to it, preferring spots near P2 and on P1's side of the target (P1 stays the front line).
+- Shoots only when lined up (row within 7 px, column within 7 px, or diagonal) with a clear line, after a 1-frame turn
+  toward the target; skills on elites and on groups of 3 or more near the target.
+- Kites: an enemy within 34 px makes it step away (toward P1's side, sideways if blocked); it swings in melee only
+  when there is no room to back off.
+- Targets the enemies near P1 first, then elites, then the nearest. Follows P1 a little further back (34 px) when
+  there is nothing to shoot.
+
+## v121: Orc Head hooks compiled natively
+
+The 2-player engine used to run the hook code (tools/orcslots) through the runtime's interpreter, like the solo
+engines still do. Nested bridges crashed it: first the Orc Head link message (type 4), whose receive case jumps back
+into the game's receive loop (0x0803FDAC), then, in long fights, a call to 0x00000008 deep inside nested bridges
+(entry depth 7). Both showed as a dispatch miss at 0x00000008 and also happened in v120.
+Now every hook entry is compiled natively: the end of `game-link.toml` lists them as `extra_func`
+(written by `orcslots/linkfuncs.py` from `tools/orcslots/orcslots.sym`). `recv4` sits at 0x0807F000, never calls
+anything and keeps its own literals; it only stores the heads, and `gp_hook` puts them on next tick.
+To regenerate after a hook change: build `tools/orcslots`, run `linkfuncs.py`, write `orcslots.bin` at 0x7F000 into
+the ROM you generate from (the toml's sha1 must match that ROM), generate, re-apply the three noquickskill edits
+(shards 002, 003, 007) and run `orcslots/genpatch.py`; compile `dispatch_table.cpp` and `symbol_map.cpp` too.

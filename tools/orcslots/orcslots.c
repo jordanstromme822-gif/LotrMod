@@ -150,6 +150,107 @@ static void convert_old(int p)
         if (is_old(CODE[p][i])) CODE[p][i] = local_code(0, tab);
 }
 
+/* ---------------- regenerating quivers (Jordan, 2026-11-08) ----------------
+   Arrows keep their count in item byte 2 (the game rolls 10-40 and deletes a quiver at 0).
+   3% of dropped quivers regenerate: 1 arrow a second, starting 1 second after the last shot,
+   up to the count they dropped with; they stay at 0 instead of being deleted.
+   Every other bit of an arrow word is used by the game (bits 4-7 are the rune), so a regenerating
+   quiver off the hero is written with byte 2 = 0x80 | max (it is full: it regenerates in the pack
+   too). The equipped one holds its live count in byte 2 like any quiver, and its max is QMAX[p].
+   Saves and the hero sent to the other GBA in 2-player games get the pack form (full), so a loaded
+   or joined game starts with the quiver full on both GBAs. */
+#define QMAX    ((volatile u8 *)0x0203FE80)   /* [player]: max of the equipped regenerating quiver, 0 = none */
+#define QIDLE   ((volatile u8 *)0x0203FE82)   /* [player]: ticks since the last shot or refill */
+#define DEBTN   ((volatile u8 *)0x0203FEA0)   /* [player]: arrows missing from the quiver last taken off */
+#define QWORD   ((volatile u32 *)0x0203FEA4)  /* [player]: the equipped regenerating quiver's word */
+#define DEBTW   ((volatile u32 *)0x0203FEAC)  /* [player]: that quiver's word off the hero */
+#define DEBTT   ((volatile u32 *)0x0203FEB4)  /* [player]: QCLK when it was taken off */
+#define QCLK    (*(volatile u32 *)0x0203FEBC) /* gameplay ticks */
+#define TICKS   30                     /* the game logic runs 30 ticks a second */
+#define USE_ARROW(p)   ((fn4)0x0802C411)(p, 0, 0, 0)
+#define SAME_ITEM(a,b) ((fn4)0x0802EB09)(a, b, 0, 0)
+#define HFLAGS(p)      (*(volatile u16 *)(HERO + (p) * HERO_SZ + 0x18C))
+#define ARROWS_ON      0x400                  /* hero flag: shooting from the equipped quiver */
+
+static int is_arrow(u32 w) { return (w & 0xF) == 7; }
+static int is_regen(u32 w) { return is_arrow(w) && (w & 0x800000); }
+static u32 with_count(u32 w, int n) { return (w & 0xFF00FFFFu) | ((u32)(n & 0xFF) << 16); }
+
+/* keep QMAX/QWORD in step with what the hero wears (called every gameplay and Backpack frame) */
+static void q_sync(int p)
+{
+    u32 *it = inv(p), w = it[2];
+    if (QMAX[p] && w != QWORD[p]) {                    /* taken off (or swapped): back to the pack form */
+        int mx = QMAX[p], cur = (QWORD[p] >> 16) & 0xFF;
+        u32 off = with_count(QWORD[p], 0x80 | mx);
+        for (int j = 8; j < 16; j++)
+            if (it[j] == QWORD[p]) { it[j] = off; break; }
+        DEBTW[p] = off; DEBTN[p] = cur < mx ? mx - cur : 0; DEBTT[p] = QCLK;
+        QMAX[p] = 0;
+    }
+    if (!QMAX[p] && is_regen(w)) {                     /* just put on */
+        int mx = (w >> 16) & 0x3F, cur = mx;
+        if (w == DEBTW[p] && DEBTN[p]) {               /* the same quiver again: what it has refilled since */
+            int miss = DEBTN[p]; volatile int t = (int)(QCLK - DEBTT[p]);
+            while (t >= TICKS && miss) { t -= TICKS; miss--; }
+            cur = mx - miss;
+            DEBTN[p] = 0;
+        }
+        w = with_count(w, cur);
+        it[2] = w;
+        QMAX[p] = mx; QWORD[p] = w; QIDLE[p] = 0;
+    }
+    if (QMAX[p]) {
+        if ((w >> 16) & 0xFF) HFLAGS(p) |= ARROWS_ON; else HFLAGS(p) &= ~(ARROWS_ON | 0x20);
+    }
+}
+
+static void q_frame(int p)
+{
+    q_sync(p);
+    if (!QMAX[p]) return;
+    u32 *it = inv(p), w = it[2];
+    int cur = (w >> 16) & 0xFF;
+    if (cur >= QMAX[p]) { QIDLE[p] = 0; return; }
+    if (++QIDLE[p] < TICKS) return;
+    QIDLE[p] = 0;
+    w = with_count(w, cur + 1);
+    it[2] = w; QWORD[p] = w;
+    HFLAGS(p) |= ARROWS_ON;
+}
+
+/* a shot: the game's 4 calls that use up an arrow */
+void arrow_wrap(int p)
+{
+    if (!QMAX[p]) { USE_ARROW(p); return; }
+    u32 *it = inv(p), w = it[2];
+    int cur = (w >> 16) & 0xFF;
+    if (cur) cur--;
+    w = with_count(w, cur);
+    it[2] = w; QWORD[p] = w; QIDLE[p] = 0;
+    if (!cur) HFLAGS(p) &= ~(ARROWS_ON | 0x20);         /* empty: plain shots, the quiver stays */
+    *(volatile u32 *)(0x03003F70 + p * 0x7C + 0x70) |= 0x4000;   /* the game's arrow count label */
+    *(volatile u8 *)(0x03003F70 + p * 0x7C + 0x79) = 0x14;
+}
+
+/* picking up arrows adds them to a matching quiver: never to or from a regenerating one */
+int same_wrap(u32 a, u32 b)
+{
+    if (is_regen(a) || is_regen(b)) return 0;
+    for (int p = 0; p < 2; p++) if (QMAX[p] && a == inv(p)[2]) return 0;
+    return SAME_ITEM(a, b);
+}
+
+/* is this word a regenerating quiver, and its live count and max */
+static int q_info(u32 w, int *cur)
+{
+    if (!is_arrow(w)) return 0;
+    if (is_regen(w)) { *cur = (w >> 16) & 0x3F; return *cur; }
+    for (int p = 0; p < 2; p++)
+        if (QMAX[p] && w == inv(p)[2]) { *cur = (w >> 16) & 0xFF; return QMAX[p]; }
+    return 0;
+}
+
 /* what is on each hero is tracked, so taking bonuses off is always exact */
 static void set_applied(int p, volatile u16 *codes, int n)
 {
@@ -168,16 +269,8 @@ void ac24_wrap(int p, int rem)
     else if (CONFV[p]) set_applied(p, CONF[p], cnt(p));
 }
 
-/* ---- 2-player games: every GBA sends its player's slot heads once; both GBAs put the bonuses
-   on when the message arrives (the game hands a message to both on the same frame) ---- */
-void recv_c(int p, const u8 *m)
-{
-    if (p > 3) return;
-    for (int i = 0; i < 4; i++) CONF[p][i] = m[2 * i] | (m[2 * i + 1] << 8);
-    CONFV[p] = 1;
-    set_applied(p, CONF[p], cnt(p));
-}
-
+/* ---- 2-player games: every GBA sends its player's slot heads once (link message 4); recv4 (stubs.s)
+   stores them on both GBAs on the same frame and the next gameplay frame puts them on. ---- */
 int gp_hook(int a, int b, int c, int d)
 {
     int r = GP_FRAME(a, b, c, d);
@@ -193,6 +286,11 @@ int gp_hook(int a, int b, int c, int d)
         SENT = 1;
         LINK_SEND(LINK_MSG, CODE[p][0] | (CODE[p][1] << 16), CODE[p][2] | (CODE[p][3] << 16), 0);
     }
+    for (int p = 0; p < 4; p++)                        /* heads that came from the other GBA: both GBAs, same frame */
+        if (CONFV[p] == 2) { CONFV[p] = 1; set_applied(p, CONF[p], cnt(p)); }
+    QCLK++;
+    q_frame(0);
+    if (LINKED) q_frame(1);
     return r;
 }
 
@@ -204,6 +302,8 @@ void pack_c(u8 *h, int p)
     int n = cnt(p), s = hdr_slot((u32)h);
     h[0x4B] = (h[0x4B] & 0x1F) | (n << 5);
     if (s >= 0) for (int i = 0; i < 4; i++) SAVED[s][i] = (i < n ? CODE[p][i] : 0xFFFF) ^ EE_KEY;
+    q_sync(p);                                         /* worn regenerating quiver: packed full (header + 8 = off hand) */
+    if (QMAX[p] && h[8] == (QWORD[p] & 0xFF)) h[10] = 0x80 | QMAX[p];
 }
 
 void unpack_c(const u8 *h, int p)
@@ -214,6 +314,7 @@ void unpack_c(const u8 *h, int p)
     CONFV[p] = 0;
     APPN[p] = 0;
     SENT = 0;
+    if (p < 2) { QMAX[p] = 0; DEBTN[p] = 0; }          /* its quiver comes in packed: full */
 }
 
 int save_wrap(int src, int slot)
@@ -261,18 +362,29 @@ int genitem_wrap(u32 *item, int p, int find, int type)
         r = GENITEM((int)item, p, find, type);
         if (!is_orc(*item)) break;
     }
+    if (is_arrow(*item) && RAND(1, 100) <= 3)          /* 3%: a regenerating quiver */
+        *item = with_count(*item, 0x80 | (((*item >> 16) & 0xFF) > 63 ? 63 : ((*item >> 16) & 0x3F)));
     return r;
 }
 
 /* ---- names and descriptions ---- */
 static char *put(char *d, const char *s) { while (*s) *d++ = *s++; *d = 0; return d; }
-static char *num(char *d, int v) { if (v >= 10) { int t = 0; while (v >= 10) { v -= 10; t++; } *d++ = '0' + t; } *d++ = '0' + v; *d = 0; return d; }
+static char *num(char *d, int v) { if (v >= 10) { volatile int t = 0; while (v >= 10) { v -= 10; t++; } *d++ = '0' + t; } *d++ = '0' + v; *d = 0; return d; }
 
 static const char *const TIER_NAME[3] = {"Orc Head", "Magic Orc Head", "Rare Orc Head"};
 static int tier_of(u32 item) { return is_old(item >> 16) ? 0 : (int)(item >> 30); }
 
 int name_wrap(char *buf, u32 item, int n)
 {
+    int qc, qm = q_info(item, &qc);
+    if (qm) {                                          /* "Orcish Arrows: 7/25", in the magic colour */
+        NAME(buf, with_count(item, qc), n);
+        char *d = buf;
+        while (*d && *d != ':') d++;
+        if (*d) { d = put(d, ": "); d = num(d, qc); d = put(d, "/"); num(d, qm); }
+        *(volatile u8 *)(0x03003F70 + LOCAL_P * 0x7C + 0x78) = MENU[0] == 1 ? 12 : 9;
+        return (int)buf;
+    }
     int r = NAME(buf, item, n);
     if (is_orc(item)) {
         int t = tier_of(item);
@@ -302,6 +414,13 @@ static char *bonus_text(char *d, u16 code)
 int itemdesc_wrap(char *buf, int p, u32 item, u16 *x, u16 *y, u16 *tile)
 {
     int r = ITEMDESC(buf, p, item, x, y, tile);
+    int qc;
+    if (q_info(item, &qc)) {
+        char *d = buf;
+        while (*d) d++;
+        put(d, d == buf ? "Regenerates 1 arrow a second" : ", Regenerates 1 arrow a second");
+        return (int)buf;
+    }
     if (!is_orc(item)) return r;
     char *d = bonus_text(buf, item >> 16);
     put(d, ". Works only in an Orc Head slot (the row under your backpack).");
@@ -472,6 +591,7 @@ void frame_hook(void)
 {
     u16 *bg0 = (u16 *)0x0600F800;
     int sub = SUBSTATE;
+    q_sync(LOCAL_P);
     if (bg0[10 * 32 + 15] != red(bg0[7 * 32 + 15]))          /* freshly drawn by the game: keep a copy */
         for (int r = 0; r < 3; r++)
             for (int x = 15; x < 30; x++) BG0_SAVE[r * 15 + x - 15] = bg0[(10 + r) * 32 + x];
