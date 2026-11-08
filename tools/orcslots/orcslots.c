@@ -19,7 +19,7 @@ typedef volatile u16 vu16;
 #define COUNT      ((volatile u8 *)0x0203FFE0)
 #define QUIET      (*(volatile u8 *)0x0203FFE4)   /* skip the game's next error sound */
 #define CODE       ((volatile u16 (*)[4])0x0203FF00) /* [player][slot]: the heads in the slots */
-#define SAVED      ((volatile u16 (*)[4])0x0203FF20) /* [save slot][slot]: copy of EEPROM blocks 0x32-0x34 */
+#define SAVED      ((volatile u16 (*)[4])0x0203F280) /* [save slot][slot]: the slot heads kept in the save file header */
 #define CONF       ((volatile u16 (*)[4])0x0203FF38) /* 2-player: heads whose bonuses are on the hero */
 #define CONFV      ((volatile u8 *)0x0203FF58)       /* 2-player: CONF[p] is in use */
 #define SENT       (*(volatile u8 *)0x0203FF5C)       /* 2-player: our heads were sent */
@@ -68,7 +68,33 @@ typedef int (*fn6)(int, int, int, int, int, int);
 #define SETTINGS   (*(volatile u32 *)0x03005820)  /* bit 0: Fast Discard, bits 5-6 difficulty */
 #define DIFF       ((SETTINGS >> 5) & 3)
 #define DROPTBL    ((const signed char *)0x08057F78)
-#define EE_BLOCK   0x32         /* EEPROM blocks 0x32-0x34 (bytes 0x190-0x1A7): never used by the game */
+#define PAGE    (*(volatile u8 *)0x0203F000)
+#define PREADY  (*(volatile u8 *)0x0203F001)          /* the page has put the stored page 2 into PBUF */
+#define PGEN    (*(volatile u16 *)0x0203F002)         /* bumped on every page-2 write: the page saves it */
+#define UREQ    (*(volatile u8 *)0x0203F004)          /* page asks: write UBUF to slot USLOT of page UPAGE */
+#define UPAGE   (*(volatile u8 *)0x0203F005)
+#define USLOT   (*(volatile u8 *)0x0203F006)
+#define SESSPG  (*(volatile u8 *)0x0203F007)          /* page of the slot this play session belongs to */
+#define FLIPREQ (*(volatile u8 *)0x0203F008)          /* page's Page button */
+#define SESSV   (*(volatile u8 *)0x0203F009)
+#define ULOCK   (*(volatile u8 *)0x0203F00A)          /* Undo: the save lock (and its page) from before the undone save */
+#define ULOCKPG (*(volatile u8 *)0x0203F00B)
+#define PBUF    ((volatile u8 *)0x0203F010)           /* 4 x 0x70: page 2 headers, as in RAM */
+#define PHEAD   ((volatile u16 (*)[4])0x0203F1D0)     /* page 2 slot heads (like SAVED) */
+#define UBUF    ((volatile u8 *)0x0203F200)           /* 0x70 header + 8 bytes of heads */
+#define HDRS    0x03005630
+#define GSTATE  (*(volatile u8 *)0x030041B0)
+#define SLOTSUB (*(volatile u8 *)0x030041C0)
+#define SAVEMODE (*(volatile u8 *)0x030041B4)
+#define DUPELOCK (*(volatile u8 *)0x0203FFF0)
+#define READ_ALL()            ((fn4)0x0803CCBD)(0, 0, 0, 0)
+#define SLOT_UPD()            ((fn4)0x080306ED)(0, 0, 0, 0)
+#define PAUSE_UPD()           ((fn4)0x080397FD)(0, 0, 0, 0)
+
+/* Slot heads of save slot k: bytes 8 + 8k of the save file header (RAM copy 0x030057F0, unused 0xFF in the game's
+   template), written with the header checksum the game checks at boot. v117-v121 kept them in EEPROM
+   blocks 0x32-0x34, which are the first 3 blocks of save slot 4: saving any game there broke slot 4 (Jordan's Aragorn). */
+#define SAVEHDR    ((volatile u8 *)0x030057F0)
 #define LINK_MSG   4            /* link message type the game never uses: one player's 4 slot heads */
 
 extern const u8 orc_tiles[384];
@@ -288,6 +314,7 @@ int gp_hook(int a, int b, int c, int d)
     }
     for (int p = 0; p < 4; p++)                        /* heads that came from the other GBA: both GBAs, same frame */
         if (CONFV[p] == 2) { CONFV[p] = 1; set_applied(p, CONF[p], cnt(p)); }
+    if (DUPELOCK && !SESSV) { SESSPG = PAGE; SESSV = 1; } else if (!DUPELOCK) SESSV = 0;
     QCLK++;
     q_frame(0);
     if (LINKED) q_frame(1);
@@ -317,19 +344,100 @@ void unpack_c(const u8 *h, int p)
     if (p < 2) { QMAX[p] = 0; DEBTN[p] = 0; }          /* its quiver comes in packed: full */
 }
 
+/* ---- a second page of 4 save slots (Jordan, 2026-11-08: "8 in total") ----
+   The EEPROM holds only 4 slots, so page 2 lives in EWRAM (PBUF) and the page keeps it on the player's account.
+   With PAGE = 1 every slot read and write goes to PBUF instead of the EEPROM. R on the slot screen (free since
+   nodelete) or the page's Page button flips the page and reads the 4 headers again. The page restores a saved-over
+   slot through UREQ (Undo). */
+static void cpy(volatile u8 *d, const volatile u8 *s, int n) { for (int i = 0; i < n; i++) d[i] = s[i]; }
+static void empty_page(void)
+{
+    for (int i = 0; i < 4 * 0x70; i++) PBUF[i] = 0;
+    for (int k = 0; k < 4; k++) {                      /* an empty slot as the game leaves it: marker 0x82, checksum 0xFF7E */
+        PBUF[k * 0x70 + 0x68] = 0x82; PBUF[k * 0x70 + 0x6E] = 0x7E; PBUF[k * 0x70 + 0x6F] = 0xFF;
+        for (int i = 0; i < 4; i++) PHEAD[k][i] = 0xFFFF ^ EE_KEY;
+    }
+    PREADY = 1; PGEN++;
+}
+
 int save_wrap(int src, int slot)
 {
+    if (PAGE) {
+        cpy(PBUF + slot * 0x70, (const volatile u8 *)src, 0x70);
+        for (int i = 0; i < 4; i++) PHEAD[slot][i] = SAVED[slot][i];
+        PGEN++;
+        return 0;
+    }
     int r = SLOT_WRITE(src, slot);
-    if (slot < 3) EE_WRITE(EE_BLOCK + slot, 1, (const void *)SAVED[slot]);
+    cpy(SAVEHDR + 8 + 8 * slot, (const volatile u8 *)SAVED[slot], 8);
+    volatile u16 *hw = (volatile u16 *)SAVEHDR;        /* the game's header checksum, then all 8 header blocks */
+    u16 sum = 0; hw[0x1F] = 0;
+    for (int i = 0; i < 0x20; i++) sum += hw[i];
+    hw[0x1F] = (u16)-sum;
+    EE_WRITE(0, 8, SAVEHDR);
     return r;
 }
 
 int load_wrap(int dst, int slot)
 {
+    if (PAGE) {
+        if (!PREADY) empty_page();
+        cpy((volatile u8 *)dst, PBUF + slot * 0x70, 0x70);
+        for (int i = 0; i < 4; i++) SAVED[slot][i] = PHEAD[slot][i];
+        return 0;
+    }
     int r = SLOT_READ(dst, slot);
-    if (slot < 3) EE_READ(EE_BLOCK + slot, 1, (void *)SAVED[slot]);
+    int unset = 1;                                     /* never written (0xFF): no heads */
+    for (int i = 0; i < 8; i++) if (SAVEHDR[8 + 8 * slot + i] != 0xFF) unset = 0;
+    for (int i = 0; i < 4; i++)
+        SAVED[slot][i] = unset ? 0xFFFF ^ EE_KEY : SAVEHDR[8 + 8 * slot + 2 * i] | SAVEHDR[9 + 8 * slot + 2 * i] << 8;
     return r;
 }
+
+static void redraw(void)
+{
+    for (int k = 0; k < 4; k++) {                      /* the 4 panels and hero pictures again */
+        ((fn4)0x08030DA1)(k, *(volatile u8 *)0x030041BC, 0, 0);
+        ((fn4)0x080311E5)(k, 0, 0, 0);
+    }
+}
+
+/* A play session that has saved or loaded may only save to its own slot (tools/nodupe.py), so in save mode it
+   can't look at the other page either. */
+static int flip(void)
+{
+    if (GSTATE != 9 || SLOTSUB != 0) return 0;
+    if (SAVEMODE == 1 && DUPELOCK && SESSV && SESSPG != (PAGE ^ 1)) { SOUND(5); return 0; }
+    PAGE ^= 1;
+    READ_ALL();
+    redraw();
+    SOUND(2);
+    return 1;
+}
+void flip_r(void) { flip(); }
+
+static void undo_apply(void)
+{
+    int cur = PAGE, sl = USLOT & 3;
+    u16 keep[4];
+    for (int i = 0; i < 4; i++) keep[i] = SAVED[sl][i];
+    PAGE = UPAGE & 1;
+    for (int i = 0; i < 4; i++) SAVED[sl][i] = ((volatile u16 *)(UBUF + 0x70))[i];
+    save_wrap((int)UBUF, sl);
+    PAGE = cur;
+    if ((UPAGE & 1) == cur) cpy((volatile u8 *)(HDRS + sl * 0x70), UBUF, 0x70);
+    else for (int i = 0; i < 4; i++) SAVED[sl][i] = keep[i];
+    DUPELOCK = ULOCK; SESSPG = ULOCKPG; SESSV = ULOCK ? 1 : 0;   /* the undone save no longer ties the session to that slot */
+    if (GSTATE == 9 && (UPAGE & 1) == cur) redraw();
+}
+
+static void menu_service(void)
+{
+    if (FLIPREQ) { FLIPREQ = 0; flip(); }
+    if (UREQ) { UREQ = 0; undo_apply(); }
+}
+int slot_upd(int a, int b, int c, int d) { menu_service(); return ((fn4)0x080306ED)(a, b, c, d); }
+int pause_upd(int a, int b, int c, int d) { menu_service(); return ((fn4)0x080397FD)(a, b, c, d); }
 
 /* ---- drops: on every kill, roll for a rare, then a magic, then a normal head ---- */
 static const u16 ODDS[3][2][2] = {           /* [tier][hard enemy][special zone]: 1 in N kills */

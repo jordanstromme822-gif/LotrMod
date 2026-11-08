@@ -9,7 +9,7 @@ in the generated C++ instead: a changed bl gets the hook as its constant target,
 two plain instructions that the ROM patch replaced with a bl become a call block (the
 same shape the generator emits for a bl) plus an empty block. The hooks themselves are
 not recompiled; they run in the runtime's interpreter and call back into native code.
-Prints the shard files it changed; running it twice changes nothing.
+Prints the shard files it changed; running it again after a hook build only moves the targets.
 """
 import glob, os, re, sys
 
@@ -30,7 +30,8 @@ BL = [  # address of the bl's second half, hook symbol
 ]
 PAIRS = [(0x0802DBE0, "db90_stub"), (0x0803CC08, "pack_stub"), (0x0802CC60, "nav_stub"), (0x0802A854, "a_stub"),
          (0x0802CCC4, "mcur_stub"), (0x0802C5FC, "label_stub"),
-         (0x0803A6EC, "drop_stub"), (0x0803A746, "find_cap"), (0x0802EF32, "chest_cap"), (0x0803AF54, "gem_cap")]
+         (0x0803A6EC, "drop_stub"), (0x0803A746, "find_cap"), (0x0802EF32, "chest_cap"), (0x0803AF54, "gem_cap"),
+         (0x080307F0, "flip_r")]
 
 CALL = """    /* {S:08X}  LotrMod Orc Head slots: bl {name} */
     {{
@@ -78,7 +79,10 @@ def main(gen, symfile):
             new = pat.sub(lambda m: m.group(1) + "0x%08Xu; /* LotrMod Orc Head slots: %s */" % (sym[name], name), new)
         for s, name in PAIRS:
             b = block(new, s)
-            if not b or "LotrMod Orc Head slots" in new[b[0]:b[1]]:
+            if not b:
+                continue
+            if "LotrMod Orc Head slots" in new[b[0]:b[1]]:   # patched before: just point it at the hook's current address
+                new = re.sub(r"(uint32_t _blt_%08X = )0x[0-9A-F]+u;" % s, lambda m: m.group(1) + "0x%08Xu;" % sym[name], new)
                 continue
             r = s + 4
             new = new[:b[0]] + CALL.format(S=s, T=sym[name], R=r, R1=r | 1, name=name) + new[b[1]:]

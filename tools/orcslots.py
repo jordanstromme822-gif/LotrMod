@@ -35,8 +35,12 @@ How it works (details in docs/findings.md, "Orc Head slots" and "Orc Head tiers"
     items): tier, difficulty table and a 12-bit seed its bonuses come from.
   - Bonuses go on and off through the game's stat routine 0x0802DDC4. Loading and
     level-ups rebuild stats (0x0802AC24 at 0x08026014); the wrapper adds the slots.
-  - The slot count is saved in header byte 0x4B bits 5-7; the slot heads in EEPROM
-    blocks 0x32-0x34 (one per save slot), which the game never uses.
+  - The slot count is saved in header byte 0x4B bits 5-7; the slot heads in the save
+    file header, bytes 8 + 8k for save slot k (v122; v120-v121 used EEPROM blocks
+    0x32-0x34, which are the start of save slot 4).
+  - Save slot pages (v122): a second page of 4 save slots kept by the page; R or the
+    page's Page button flips on the save slot screens; the page's Undo puts back a
+    saved-over slot while the save screen or pause menu is open.
   - 2-player games: each GBA sends its player's slot heads once as link message 4
     (unused by the game); both GBAs put the bonuses on when it arrives.
 
@@ -113,10 +117,15 @@ BL_SITES = [
     (0x44AE0, "e7f796fc", "arrow_wrap"),
     (0x2AEAC, "03f02cfe", "same_wrap"),   # picked-up arrows join a matching quiver: never a regenerating one
     (0x2AF22, "03f0f1fd", "same_wrap"),
+    # save slot pages
+    (0x307F0, "c046c046", "flip_r"),      # R on the save slot screen (free since tools/nodelete.py): other page
 ]
 # link message 4 (never used by the game): send and receive cases
 LINK_CASES = [(0x3FE48, 0x0804006A, "send4"), (0x3F6AC, 0x0803FDAC, "recv4")]
 EXIT_PTR, EXIT_OLD = 0x6C8A8, 0x0802E875     # state 0x0A (Backpack) exit in the state table
+# more state table entries: (offset, original, hook)
+STATE_PTRS = [(0x6C898, 0x080306ED, "slot_upd"),   # state 9 (save slots) update: page flips and Undo requests
+              (0x6C8EC, 0x080397FD, "pause_upd")]  # state 0x10 (pause menu) update: Undo requests
 
 
 def patch(rom: bytearray) -> bytearray:
@@ -138,6 +147,11 @@ def patch(rom: bytearray) -> bytearray:
     if cur not in (EXIT_OLD, s["exit_hook"] | 1):
         raise SystemExit(f"unexpected state table entry at {EXIT_PTR:#x}")
     struct.pack_into("<I", rom, EXIT_PTR, s["exit_hook"] | 1)
+    for at, orig, name in STATE_PTRS:
+        cur = struct.unpack_from("<I", rom, at)[0]
+        if cur not in (orig, s[name] | 1):
+            raise SystemExit(f"unexpected state table entry at {at:#x}")
+        struct.pack_into("<I", rom, at, s[name] | 1)
     assert CODE_AT + len(code) <= 0x89864, "code runs into the German text bank"
     rom[CODE_AT:CODE_AT + len(code)] = code
     return rom

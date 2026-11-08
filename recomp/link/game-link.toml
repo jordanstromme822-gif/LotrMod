@@ -1960,101 +1960,121 @@ addr = 0x0807F43C
 mode = "thumb"
 
 [[extra_func]]
-addr = 0x0807F500
+addr = 0x0807F530
 mode = "thumb"
 
 [[extra_func]]
-addr = 0x0807F57C
+addr = 0x0807F5AC
 mode = "thumb"
 
 [[extra_func]]
-addr = 0x0807F644
+addr = 0x0807F678
 mode = "thumb"
 
 [[extra_func]]
-addr = 0x0807F7AC
+addr = 0x0807F7E0
 mode = "thumb"
 
 [[extra_func]]
-addr = 0x0807F84C
+addr = 0x0807F884
 mode = "thumb"
 
 [[extra_func]]
-addr = 0x0807F88C
+addr = 0x0807F930
 mode = "thumb"
 
 [[extra_func]]
-addr = 0x0807F8CC
+addr = 0x0807FA42
 mode = "thumb"
 
 [[extra_func]]
-addr = 0x0807F9FC
+addr = 0x0807FA50
 mode = "thumb"
 
 [[extra_func]]
-addr = 0x0807FA88
+addr = 0x0807FB08
 mode = "thumb"
 
 [[extra_func]]
-addr = 0x0807FBE0
+addr = 0x0807FB38
 mode = "thumb"
 
 [[extra_func]]
-addr = 0x0807FC58
+addr = 0x0807FC40
 mode = "thumb"
 
 [[extra_func]]
-addr = 0x0807FD04
+addr = 0x0807FC70
 mode = "thumb"
 
 [[extra_func]]
-addr = 0x0807FDCC
+addr = 0x0807FDA0
 mode = "thumb"
 
 [[extra_func]]
-addr = 0x0807FEC0
+addr = 0x0807FE2C
 mode = "thumb"
 
 [[extra_func]]
-addr = 0x0807FFA4
+addr = 0x0807FF84
 mode = "thumb"
 
 [[extra_func]]
-addr = 0x08080080
+addr = 0x0807FFFC
 mode = "thumb"
 
 [[extra_func]]
-addr = 0x080802A4
+addr = 0x080800A8
 mode = "thumb"
 
 [[extra_func]]
-addr = 0x08080314
+addr = 0x08080170
 mode = "thumb"
 
 [[extra_func]]
-addr = 0x08080364
+addr = 0x08080264
 mode = "thumb"
 
 [[extra_func]]
-addr = 0x08080394
+addr = 0x08080348
 mode = "thumb"
 
 [[extra_func]]
-addr = 0x080803D4
+addr = 0x08080424
 mode = "thumb"
 
 [[extra_func]]
-addr = 0x08080404
+addr = 0x08080648
 mode = "thumb"
 
 [[extra_func]]
-addr = 0x080806EC
+addr = 0x080806B8
 mode = "thumb"
 
 [[extra_func]]
-addr = 0x08080724
+addr = 0x08080708
 mode = "thumb"
 
 [[extra_func]]
-addr = 0x0808076C
+addr = 0x08080738
+mode = "thumb"
+
+[[extra_func]]
+addr = 0x08080778
+mode = "thumb"
+
+[[extra_func]]
+addr = 0x080807A8
+mode = "thumb"
+
+[[extra_func]]
+addr = 0x08080A90
+mode = "thumb"
+
+[[extra_func]]
+addr = 0x08080AC8
+mode = "thumb"
+
+[[extra_func]]
+addr = 0x08080B10
 mode = "thumb"
