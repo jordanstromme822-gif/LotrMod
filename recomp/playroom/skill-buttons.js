@@ -1,4 +1,4 @@
-// Play Room v108: skill buttons (icons inside, black when used, countdown), B's skill on L, B rules shared by player, Auto and P2 (bAct).
+// Play Room v109: skill buttons (icons inside, black when used, countdown), B's skill on L, B rules shared by player, Auto and P2 (bAct), B's longer pickup reach (__stepPick).
       const skIcons = [...document.querySelectorAll("#pad .sk")].sort((a, b) => a.dataset.slot - b.dataset.slot);   // A, B's skill (on L), R
       const skPos = (v) => (v[1] * 20) + "% " + (v[0] * 100 / 7).toFixed(3) + "%";   // sheet: 6 skills across, 8 heroes down
       // Used skills (Jordan, 2026-11-08): the pressed skill's icon turns black. If the game took Spirit for it and it's a
@@ -155,36 +155,61 @@
       setTimeout(() => { $("bootCover").classList.add("gone"); clearInterval(lift); }, 8000);
       // Watchdog: if no frames run, ask for a tap; only restart if a tap does not get it going.
 
+      // Longer pickup reach (Jordan, 2026-11-08): B with a takeable item a little beyond the feet (up to PICK_REACH
+      // pixels) walks the hero the last few steps to it and picks it up. Moving the stick stops it. True = B was used.
+      const PICK_REACH = 22;
+      window.__stepPick = () => {
+        if (stepping || !window.__bPick || window.__bPick()) return false;
+        const v0 = window.__bPick(false, PICK_REACH); if (!v0) return false;
+        stepping = true; const sec0 = sector; let n = 0;
+        const gi = (k, on) => { try { emu.gameManager.simulateInput(0, k, on); } catch (e) {} };
+        const restore = () => [4, 5, 6, 7].forEach((k) => gi(k, held[k]));
+        const L0 = qsHeld || lTouch; if (L0) { bNoL = true; sendL(); }
+        const done = (pick) => {
+          restore();
+          // The hero settles for a moment before R, or the game can miss it.
+          if (pick) { setTimeout(() => gi(11, 1), 70); setTimeout(() => gi(11, 0), 220); }
+          setTimeout(() => { stepping = false; if (bNoL) { bNoL = false; sendL(); } }, pick ? 270 : 0);
+        };
+        const tick = () => {
+          if (sector !== sec0 || inMenu()) { done(false); return; }
+          const v = window.__bPick(false, PICK_REACH + 4);
+          if (!v) { done(false); return; }
+          if ((Math.abs(v[0]) <= 5 && Math.abs(v[1]) <= 5) || n++ > 20) { done(true); return; }
+          const on = []; if (v[0] > 2) on.push(7); if (v[0] < -2) on.push(6); if (v[1] > 2) on.push(5); if (v[1] < -2) on.push(4);
+          [4, 5, 6, 7].forEach((k) => gi(k, on.includes(k) ? 1 : 0));
+          setTimeout(tick, 33);
+        };
+        tick(); return true;
+      };
         // What B does next to things (Jordan, 2026-11-08), the same for the player, Auto and P2: with a takeable item at
         // the feet (gear with backpack room, food when hurt, herbs with pouch room), an unopened chest (+0x85) or the
         // Spirit Shrine (player only) B works as R; otherwise B swings. rd = memory reader of that game, P = hero struct.
         // any = true: anything of the kind is there (R alone then does nothing).
-        const bAct = (rd, P, list, shrine, any) => {
+        // range: how far from the feet an item counts (10 = where the game picks it up). The answer is the item's offset
+        // from the hero ([dx, dy], [0, 0] for a chest or the Shrine), or false.
+        const bAct = (rd, P, list, shrine, any, range = 10) => {
           const hero = rd.r32(P); if (hero >>> 24 !== 2) return false;
           const at = (p) => [rd.r16(p + 0xae), rd.r16(p + 0xb2)], [x, y] = at(hero);
           for (const p of list) {
             const u = rd.r32(p + 0x14);
-            if (u === CHEST_UPD && !rd.r8(p + 0x85)) { const [bx, by] = at(p); if (bx - x >= -18 && bx - x <= 22 && Math.abs(by - y) <= 24) return true; continue; }
-            if (u === SHOP_UPD) { if (!shrine) continue; const [sx, sy] = at(p); if (Math.abs(sx - x) <= 30 && Math.abs(sy - y) <= 30) return true; continue; }
+            if (u === CHEST_UPD && !rd.r8(p + 0x85)) { const [bx, by] = at(p); if (bx - x >= -18 && bx - x <= 22 && Math.abs(by - y) <= 24) return [0, 0]; continue; }
+            if (u === SHOP_UPD) { if (!shrine) continue; const [sx, sy] = at(p); if (Math.abs(sx - x) <= 30 && Math.abs(sy - y) <= 30) return [0, 0]; continue; }
             if (u !== ITEM_UPD || rd.r8(p + 0x63) !== 3) continue;
-            const [ix, iy] = at(p); if (Math.abs(ix - x) > 10 || Math.abs(iy - y) > 10) continue;
-            const t = rd.r8(p + 0x60);
-            if (any && t >= 15) return true;
+            const [ix, iy] = at(p); if (Math.abs(ix - x) > range || Math.abs(iy - y) > range) continue;
+            const t = rd.r8(p + 0x60), off = [ix - x, iy - y];
+            if (any && t >= 15) return off;
             const food = t === 15 || t === 16 || t === 19, hb = rd.r8(P + 0x1AA);
             const pack = () => { for (let k = 0; k < 8; k++) if ((rd.r32(P + 0x5c + 4 * k) & 15) === 15) return true; return false; };
-            if (t >= 25 ? pack() : food ? rd.r16(P + 0x17C) < rd.r16(P + 0xD0) : t === 17 ? (hb >> 4) < 10 : t === 18 ? (hb & 15) < 10 : t >= 19) return true;
+            if (t >= 25 ? pack() : food ? rd.r16(P + 0x17C) < rd.r16(P + 0xD0) : t === 17 ? (hb >> 4) < 10 : t === 18 ? (hb & 15) < 10 : t >= 19) return off;
           }
           return false;
         };
         window.__bAct = bAct;
-        window.__bPick = (any) => {
+        window.__bPick = (any, range) => {
           try {
             if (iwram < 0 || inMenu()) return false;
             ew = findEw(); H8 = heap(); if (ew < 0) return false;
-            return bAct({ r8, r16, r32 }, playerAddr(), entities(), true, any);
+            return bAct({ r8, r16, r32 }, playerAddr(), entities(), true, any, range);
           } catch (e) { return false; }
         };
-        // Some enemies are scenery standing inside the walls (no floor around them); those never fight and aren't counted.
-        const onFloor = (p) => { const [ex, ey] = pos(p), { W, H, free } = grid, cx = ex >> 3, cy = ey >> 3;
-          for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) { const X = cx + dx, Y = cy + dy; if (X >= 0 && Y >= 0 && X < W && Y < H && free[X + Y * W]) return true; }
-          return false; };
