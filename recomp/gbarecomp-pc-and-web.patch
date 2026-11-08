@@ -47,10 +47,10 @@ index 69c2465..513faa3 100644
  // raw attributes so a game can distinguish HUD sprites from world objects.
 diff --git a/src/runtime/frame_smooth.h b/src/runtime/frame_smooth.h
 new file mode 100644
-index 0000000..120828b
+index 0000000..3b7245d
 --- /dev/null
 +++ b/src/runtime/frame_smooth.h
-@@ -0,0 +1,293 @@
+@@ -0,0 +1,367 @@
 +#pragma once
 +// 60 fps smoothing for games that draw a new picture every other VBlank.
 +//
@@ -93,7 +93,8 @@ index 0000000..120828b
 +
 +    bool enabled = true;
 +    int check_every = 1;
-+    uint64_t mids = 0, skipped = 0;
++    uint64_t mids = 0, skipped = 0, blends = 0;
++    bool blend_ = true;
 +
 +    // Called right after a frame is latched (emulation thread).
 +    void on_latch(uint16_t dispcnt, const uint8_t* io, const uint8_t* vram,
@@ -136,19 +137,26 @@ index 0000000..120828b
 +                last_check_failed_ = !same;
 +            }
 +            if (same) {
-+                io_mid_ = b.io;
-+                oam_mid_ = b.oam;
-+                vram_mid_ = b.vram;
-+                mid_scroll(prev_, b);
-+                mid_sprites(prev_, b);
++                // An odd step cannot be halved in whole pixels: the picture is
++                // drawn once with each half rounded down and once rounded up and
++                // the two are averaged, so every 60 fps step is the same size
++                // (a 3-pixel move shows as 1.5 + 1.5 instead of 1 + 2).
++                odd_ = false;
 +                for (int bg = 0; bg < 4; ++bg) {
-+                    gba::g_ws_margin_scroll_override[bg][0] = margin_[bg][0];
-+                    gba::g_ws_margin_scroll_override[bg][1] = margin_[bg][1];
++                    cd_[bg][0] = cd_[bg][1] = 0;
++                    if (!(b.dispcnt & (0x100 << bg))) continue;
++                    if ((r16(prev_.io, 0x10 + bg * 4) & 511) < 8 && (r16(b.io, 0x10 + bg * 4) & 511) < 8 &&
++                        (r16(prev_.io, 0x12 + bg * 4) & 511) < 8 && (r16(b.io, 0x12 + bg * 4) & 511) < 8)
++                        coarse_step(prev_, b, bg, cd_[bg][0], cd_[bg][1]);
 +                }
-+                gba::g_ws_margin_scroll_override_on = 1;
-+                ppu.render(fb, b.dispcnt, io_mid_.data(), vram_mid_.data(),
-+                           oam_mid_.data(), b.pal.data());
-+                gba::g_ws_margin_scroll_override_on = 0;
++                render_mid(ppu, fb, b, 0);
++                if (odd_ && blend_) {
++                    alt_.resize(bytes);
++                    render_mid(ppu, alt_.data(), b, 1);
++                    for (std::size_t i = 0; i < bytes; ++i)
++                        fb[i] = static_cast<uint8_t>((fb[i] + alt_[i] + 1) >> 1);
++                    ++blends;
++                }
 +                did = true;
 +                ++mids;
 +            } else {
@@ -165,7 +173,34 @@ index 0000000..120828b
 +    bool fresh_ = false;
 +    bool last_check_failed_ = true;
 +    int unchecked_ = 0;
-+    std::vector<uint8_t> last_fb_, check_, io_mid_, oam_mid_, vram_mid_;
++    std::vector<uint8_t> last_fb_, check_, io_mid_, oam_mid_, vram_mid_, alt_;
++    bool odd_ = false;
++    int up_ = 0;            // 0: halves rounded toward zero, 1: away from zero
++    int cd_[4][2] = {};     // camera step of each coarse layer (from its map)
++
++    // Half of d, rounded toward zero (up_ == 0) or away from zero (up_ == 1).
++    int half(int d) {
++        if (d & 1) odd_ = true;
++        const int h = d / 2;
++        return up_ ? d - h : h;
++    }
++
++    void render_mid(const gba::GbaPpu& ppu, uint8_t* out, const Snap& b, int up) {
++        up_ = up;
++        io_mid_ = b.io;
++        oam_mid_ = b.oam;
++        vram_mid_ = b.vram;
++        mid_scroll(prev_, b);
++        mid_sprites(prev_, b);
++        for (int bg = 0; bg < 4; ++bg) {
++            gba::g_ws_margin_scroll_override[bg][0] = margin_[bg][0];
++            gba::g_ws_margin_scroll_override[bg][1] = margin_[bg][1];
++        }
++        gba::g_ws_margin_scroll_override_on = 1;
++        ppu.render(out, b.dispcnt, io_mid_.data(), vram_mid_.data(),
++                   oam_mid_.data(), b.pal.data());
++        gba::g_ws_margin_scroll_override_on = 0;
++    }
 +    std::size_t last_bytes_ = 0;
 +    int margin_[4][2] = {};
 +
@@ -212,6 +247,42 @@ index 0000000..120828b
 +        return d;
 +    }
 +
++    static uint16_t map_at(const Snap& s, int bg, int x, int y) {
++        const uint16_t cnt = r16(s.io, 0x08 + bg * 2);
++        std::size_t o = static_cast<std::size_t>((cnt >> 8) & 31) * 0x800;
++        const int size = cnt >> 14;
++        x &= 63; y &= 63;
++        if (size == 0 || size == 2) x &= 31;
++        if (size == 0 || size == 1) y &= 31;
++        if (x >= 32) { o += 0x800; x -= 32; }
++        if (y >= 32) { o += (size == 3) ? 0x1000 : 0x800; y -= 32; }
++        o += static_cast<std::size_t>(y * 32 + x) * 2;
++        if (o + 1 >= s.vram.size()) return 0;
++        return static_cast<uint16_t>(s.vram[o] | (s.vram[o + 1] << 8));
++    }
++
++    // Camera step of a coarsely scrolled layer. The fine scroll alone is
++    // ambiguous by a whole tile (a 4-pixel move left and right look the same),
++    // so the map itself says whether the game redrew it one tile over: the
++    // shift that best lines up the new map with the old one is the real one.
++    static void coarse_step(const Snap& a, const Snap& b, int bg, int& dx, int& dy) {
++        const int sax = r16(a.io, 0x10 + bg * 4) & 511, sbx = r16(b.io, 0x10 + bg * 4) & 511;
++        const int say = r16(a.io, 0x12 + bg * 4) & 511, sby = r16(b.io, 0x12 + bg * 4) & 511;
++        int best = -1, bkx = 0, bky = 0, bcost = 1 << 30;
++        for (int ky = -1; ky <= 1; ++ky)
++            for (int kx = -1; kx <= 1; ++kx) {
++                int same = 0;
++                for (int y = 1; y < 20; ++y)
++                    for (int x = 1; x < 30; ++x)
++                        if (map_at(b, bg, x, y) == map_at(a, bg, x + kx, y + ky)) ++same;
++                const int ddx = sax - sbx - 8 * kx, ddy = say - sby - 8 * ky;
++                const int cost = std::abs(ddx) + std::abs(ddy);
++                if (same > best || (same == best && cost < bcost)) { best = same; bkx = kx; bky = ky; bcost = cost; }
++            }
++        dx = sax - sbx - 8 * bkx;
++        dy = say - sby - 8 * bky;
++    }
++
 +    int cam_dx_ = 0, cam_dy_ = 0;
 +
 +    // Halfway scroll for every layer. A layer whose halfway view would leave the
@@ -225,17 +296,19 @@ index 0000000..120828b
 +            const int ax = r16(a.io, ox) & 511, bx = r16(b.io, ox) & 511;
 +            const int ay = r16(a.io, oy) & 511, by = r16(b.io, oy) & 511;
 +            bool cx = false, cy = false;
-+            const int dx = axis_delta(ax, bx, cx), dy = axis_delta(ay, by, cy);
++            int dx = axis_delta(ax, bx, cx), dy = axis_delta(ay, by, cy);
++            if (cx && cy && (b.dispcnt & (0x100 << bg))) { dx = cd_[bg][0]; dy = cd_[bg][1]; }
 +            if (bg >= 1 && !cam_set && (b.dispcnt & (0x100 << bg)) && (cx || cy)) {
 +                cam_dx_ = dx; cam_dy_ = dy; cam_set = true;
 +            }
-+            int mx = bx + dx / 2, my = by + dy / 2;
++            const int hx = half(dx), hy = half(dy);
++            int mx = bx + hx, my = by + hy;
 +            margin_[bg][0] = mx;  // in the new frame's own map coordinates
 +            margin_[bg][1] = my;
 +            const bool use_a = (cx && (mx < 0 || mx > 7)) || (cy && (my < 0 || my > 7));
 +            if (use_a) {
-+                mx = ax - (dx - dx / 2);
-+                my = ay - (dy - dy / 2);
++                mx = ax - (dx - hx);
++                my = ay - (dy - hy);
 +                const uint16_t cnt = r16(a.io, 0x08 + bg * 2);
 +                const std::size_t base = static_cast<std::size_t>((cnt >> 8) & 31) * 0x800;
 +                static const std::size_t sizes[4] = {0x800, 0x1000, 0x1000, 0x2000};
@@ -252,6 +325,7 @@ index 0000000..120828b
 +                bool c1, c2;
 +                cam_dx_ = axis_delta(r16(a.io, 0x10 + bg * 4) & 511, r16(b.io, 0x10 + bg * 4) & 511, c1);
 +                cam_dy_ = axis_delta(r16(a.io, 0x12 + bg * 4) & 511, r16(b.io, 0x12 + bg * 4) & 511, c2);
++                if (c1 && c2) { cam_dx_ = cd_[bg][0]; cam_dy_ = cd_[bg][1]; }
 +                cam_set = true;
 +            }
 +        }
@@ -276,7 +350,7 @@ index 0000000..120828b
 +    }
 +
 +    void mid_sprites(const Snap& a, const Snap& b) {
-+        const int csx = -(cam_dx_ / 2), csy = -(cam_dy_ / 2);
++        const int csx = -half(cam_dx_), csy = -half(cam_dy_);
 +        struct Obj { int x, y, w, h, pal, dx, dy, grp; bool live, matched; };
 +        Obj o[128];
 +        bool used[128] = {};
@@ -330,7 +404,7 @@ index 0000000..120828b
 +                    if (o[k].live && o[k].matched && root(k) == g && o[k].dx == o[i].dx && o[k].dy == o[i].dy) ++c;
 +                if (c > bc) { bc = c; bx = o[i].dx; by = o[i].dy; }
 +            }
-+            const int sx = bc ? bx / 2 : csx, sy = bc ? by / 2 : csy;
++            const int sx = bc ? half(bx) : csx, sy = bc ? half(by) : csy;
 +            if (sx == 0 && sy == 0) continue;
 +            for (int i = 0; i < 128; ++i) {
 +                if (!o[i].live || root(i) != g) continue;
@@ -478,7 +552,7 @@ index 82ed5f8..3b7e886 100644
  }
 +namespace gbarecomp { bool HostWindow::saved_audio_enhanced(bool&) const { return false; } }
 diff --git a/src/runtime/runtime.cpp b/src/runtime/runtime.cpp
-index 1d17757..9ec71ce 100644
+index 1d17757..8464336 100644
 --- a/src/runtime/runtime.cpp
 +++ b/src/runtime/runtime.cpp
 @@ -19,6 +19,10 @@
@@ -576,7 +650,7 @@ index 1d17757..9ec71ce 100644
  int run_game(int argc, char** argv, const RunOptions& opts) {
      // Game runners install this before entering run_game(). Clear it on every
      // return path so a later game launched in the same process cannot call a
-@@ -2690,6 +2757,41 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
+@@ -2690,6 +2757,42 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
      struct ClearVblankInputHook {
          ~ClearVblankInputHook() { runtime_set_vblank_input_hook(nullptr); }
      } clear_vblank_input_hook;
@@ -587,6 +661,7 @@ index 1d17757..9ec71ce 100644
 +    smoother.check_every = 8;
 +#endif
 +    if (const char* e = std::getenv("GBARECOMP_SMOOTH_CHECK_EVERY")) smoother.check_every = std::max(1, std::atoi(e));
++    if (const char* e = std::getenv("GBARECOMP_SMOOTH_BLEND")) smoother.blend_ = !(e[0] == '0' && e[1] == '\0');
 +    if (smoother.enabled) {
 +        runtime_set_vblank_latch_hook([&]() {
 +            auto v = bus.vram_read_view();
@@ -618,7 +693,7 @@ index 1d17757..9ec71ce 100644
      // Structured TCP commands shared by every TCP session: engine touch
      // commands first, then the game's own extension.
      auto tcp_extension = [&](const std::string& request, std::string& reply) -> bool {
-@@ -4283,7 +4385,11 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
+@@ -4283,7 +4386,11 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
  #if defined(GBARECOMP_WEB_HOST)
              // The page re-presents its private staging copy; publishing here
              // would count paused frames as new ones.
@@ -630,7 +705,7 @@ index 1d17757..9ec71ce 100644
  #else
              // Keep the native window (and any runtime UI drawn over the
              // game renderer) alive while the guest is held still.
-@@ -4315,7 +4421,11 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
+@@ -4315,7 +4422,11 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
      // relies on the per-frame runner loop (which present-in-place bypasses).
      const char* pip_env = std::getenv("GBARECOMP_PRESENT_IN_PLACE");
      const bool present_in_place =
@@ -643,7 +718,7 @@ index 1d17757..9ec71ce 100644
  
      // ── Diagnostic replay: capture (default for interactive play) or playback.
      // Inputs are sampled at the present-in-place VBlank hook, the one frame
-@@ -4562,8 +4672,20 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
+@@ -4562,8 +4673,20 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
                                     bus.pal_ptr());
                      }
                  }
@@ -664,7 +739,7 @@ index 1d17757..9ec71ce 100644
                  if (phase_active) fp_t2 = FramePhaseRing::now_ns();
                  drain_host_audio();
                  // Windowed present-in-place stays inside one step_once() for
-@@ -4592,6 +4714,9 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
+@@ -4592,6 +4715,9 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
                  last_presented_frame = frame;
                  if (present_frame) {
                      ++frames_presented;
@@ -674,7 +749,7 @@ index 1d17757..9ec71ce 100644
                      if (args.frames >= 0 && frames_presented >= args.frames)
                          host_quit = true;
                      if (pacer) pacer->wait_for_next_frame(banked_frames);
-@@ -4906,7 +5031,11 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
+@@ -4906,7 +5032,11 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
      // Two timestamps only: normal render/audio/present work stays inside,
      // startup/state restore and exit saves/dumps stay outside the interval.
      const auto gameplay_begin = std::chrono::steady_clock::now();
@@ -686,7 +761,7 @@ index 1d17757..9ec71ce 100644
          // Paused: hold the guest still, keep the window alive (input pump,
          // re-present, ~100 Hz idle). Applies to windowed play only.
          service_host_pause();
-@@ -5003,6 +5132,9 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
+@@ -5003,6 +5133,9 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
                                     bus.pal_ptr());
                      }
                  }
@@ -696,7 +771,7 @@ index 1d17757..9ec71ce 100644
                  if (phase_active) fp_t1 = FramePhaseRing::now_ns();
                  if (present_frame) present_live_frame();
                  // Framedump (capture runs only) is attributed to present_us.
-@@ -5032,6 +5164,9 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
+@@ -5032,6 +5165,9 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
                  last_presented_frame = frame;
                  if (present_frame) {
                      ++frames_presented;
@@ -706,7 +781,7 @@ index 1d17757..9ec71ce 100644
                      if (args.frames >= 0 && frames_presented >= args.frames) {
                          host_quit = true;
                      }
-@@ -5063,7 +5198,12 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
+@@ -5063,7 +5199,12 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
                  static_cast<uint64_t>(args.frames)) {
              break;
          }

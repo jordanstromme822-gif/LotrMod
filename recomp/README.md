@@ -109,3 +109,15 @@ frames behind). Otherwise it rounds the clock count, at most 2. The game then ru
 plays sound 1% faster while more than 0.14 s is queued. `rotk_tick_stats()` (shim) exposes counts of
 ticks with 0/1/2 frames and resets; the page writes a "wide:" line to the private save-log doc every
 30 s (pictures/s, screen Hz, 0/1/2 counts, picture mode), at most 12 per session.
+
+### Wide view v82 (2026-11-08): even 60 fps steps
+
+- Heroes walk about 3 pixels per game frame (shown as 2 screen refreshes). The in-between picture used whole
+  pixels, so the steps came out 1 then 2. `frame_smooth.h` now draws the in-between picture twice (half step rounded
+  down, then up) and averages them, so the steps are 1.5 and 1.5. Camera-locked sprites (the hero) are the same in
+  both, so they stay sharp. `GBARECOMP_SMOOTH_BLEND=0` turns the averaging off.
+- Backward jump fix: the world layers scroll by redrawing the map one tile over, so a 4-pixel move left and right
+  looked the same from the fine scroll alone, and every few steps the in-between picture went the wrong way.
+  `coarse_step()` now compares the old and new tile maps to see which way the map was redrawn.
+- Checked natively with `GBARECOMP_INPUT_REPLAY` (walk script into Moria) and `GBARECOMP_SMOOTH_TEST`:
+  left/down walking measures 1.5/1.5/2/2 per refresh (was 2/1 and, left, wrong-way jumps).
