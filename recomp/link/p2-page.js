@@ -1,4 +1,4 @@
-// Play Room v100: the P2 helper (inside the page's main script; uses $, WideHost and startWide's engine).
+// Play Room v101: the P2 helper (inside the page's main script; uses $, WideHost and startWide's engine).
   // ---------------- P2 helper (Jordan, 2026-11-08) ----------------
   // A P2 button next to Auto. In the wide view it lists the saved heroes that aren't the one being played; picking one
   // restarts as a 2-player link game (the PC app's engine runs both games side by side): both games load their own
@@ -11,6 +11,8 @@
     if (!el) { if (!on) return; el = document.createElement("div"); el.id = "p2Load"; el.innerHTML = '<div class="spin"></div><div class="t"></div>'; ($("game") || document.body).appendChild(el); }
     if (on) el.querySelector(".t").textContent = text || "P2 is joining…";
     el.hidden = !on;
+    // No sound while P2 joins (Jordan, 2026-11-08).
+    try { const g = window.GbrHost && window.GbrHost.gain; if (g) g.gain.value = on ? 0 : 1.1; } catch (e) {}
   };
   const P2_HEROES = ["Frodo", "Legolas", "Aragorn", "Gandalf", "Eowyn", "Gimli", "Sam", "Smeagol"];
   // Saved-games file: slot k at 0x40 + 0x70 k, stored in 8-byte blocks with each block's bytes reversed.
