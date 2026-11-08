@@ -331,6 +331,7 @@
           setKeys(step.k); qUntil = now + step.ms;
         };
         setInterval(loop, 16);
+        window.__autoTick = () => { if (document.visibilityState === "hidden") loop(); };
         btn.addEventListener("pointerdown", (e) => { e.preventDefault(); e.stopPropagation(); setOn(!on, on ? "" : "Auto on"); });
         btn.addEventListener("click", (e) => e.preventDefault());
         window.addEventListener("keydown", (e) => { if ((e.key === "o" || e.key === "O") && !e.repeat && !btn.hidden) setOn(!on, on ? "" : "Auto on"); });
