@@ -155,3 +155,13 @@ the game's Multiplayer menu (`playroom/online-menu.js`); online games still run 
 Speed boosts now also speed up the walk cycle (`playroom/walk-speed.js`): measured walk speed is 3.0 px/tick,
 +25 speed 3.75, +100 about 5.06 (cap), and with the page's extra steps px per walk step stays ~3.0.
 Engines unchanged from v110.
+
+### Grab button, B only hits, Auto/P2 in the pause menu (Play Room v112, 2026-11-08)
+
+In play the Undo button is Grab (`playroom/grab-button.js`): it presses the game's R (pick up, open a chest or the
+Shrine, talk) with L let go, and walks to items up to 22 px away first. It reads Open next to an unopened chest or
+the Shrine, Full when the backpack is full, else Grab. B only hits; R in play only casts its skill (L held), and
+flips tabs in menus. Auto and P2 press the game's R themselves, so they still pick up and open chests. Undo forgets
+an item as soon as the screen changes (play, Skills, Attributes); its Backpack redraw flip (R then L) now runs
+behind a held picture with the sound off (`window.__wideHold`), since writing the game's own redraw flags did not
+redraw the items. Auto and P2 buttons show only in the game's pause menu (state 16). Engines unchanged.
