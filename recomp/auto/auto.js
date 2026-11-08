@@ -10,7 +10,7 @@
         const DEAD = new Set([0x11, 0x15, 4, 0x1b, 0x13]);
         const btn = $("autoBtn"), note = $("saveNote");
         let on = false, ew = -1, H8 = null, grid = null, gridT = 0, queue = [], qUntil = 0, keysDown = new Set();
-        let hist = [], stuck = 0, tries = new Map(), blocked = new Map(), skip = new Map(), macro = null, noEquip = new Set(), shrineAt = [1385, 1214], shopT = 0, lastLog = 0, idleSince = 0, unreachSince = 0, userUntil = 0, oldHeal = null, lastSeen = 0, kills = 0;
+        let hist = [], stuck = 0, tries = new Map(), blocked = new Map(), skip = new Map(), macro = null, noEquip = new Set(), shrineAt = [1385, 1214], shopT = 0, shopNear = 30, lastLog = 0, idleSince = 0, unreachSince = 0, userUntil = 0, oldHeal = null, lastSeen = 0, kills = 0;
         const rom = () => window.__romFull;
         const heap = () => emu.Module.HEAPU8;
         const findEw = () => {
@@ -75,14 +75,17 @@
           if (!packFull(P)) return true;
           const [k, ks] = cheapest(P); return k >= 0 && ks < sc;            // room can be made
         };
-        // Backpack item that should be worn now: wearable, level allows it, and better than what's in its slot.
-        const toEquip = (P) => {
+        // Backpack gear that a better item of the same kind (worn, or in the backpack and wearable at this level) makes useless.
+        // Jordan equips gear by hand, so Auto never equips; it only throws away the weaker copy.
+        const toDiscard = (P) => {
           const lvl = r8(P + 0x19C) + 1;
           for (let k = 0; k < 8; k++) {
             const it = r32(P + 0x5c + 4 * k); if (noEquip.has(it)) continue;
-            const s = gearSlot(P, it); if (s < 0 || reqLevel(it) > lvl) continue;
-            const cur = r32(P + 0x3c + 4 * s);
-            if (empty(cur) || score(it) > score(cur) + 0.01) return k;
+            const s = gearSlot(P, it); if (s < 0) continue;
+            const sc = score(it) + 0.01, cur = r32(P + 0x3c + 4 * s);
+            if (!empty(cur) && score(cur) > sc) return k;
+            for (let j = 0; j < 8; j++) { if (j === k) continue; const b = r32(P + 0x5c + 4 * j);
+              if (gearSlot(P, b) === s && reqLevel(b) <= lvl && score(b) > sc) return k; }
           }
           return -1;
         };
@@ -192,13 +195,13 @@
           const close = en.some((p) => near(p, 70)), low = hp * 10 < mhp * 4;
           const gems = r16(P + 0x184), herbs = r8(P + 0x1AA) >> 4;
           if (!tgt && !close) {
-            // Wear anything better that is in the backpack (through the game's own Backpack menu: Start, pick it, Equip).
-            const k = toEquip(P);
+            // Throw away weaker copies (Start, pick it, Discard). Gear is equipped by the player, never by Auto.
+            const k = toDiscard(P);
             if (k >= 0) {
               const it = r32(P + 0x5c + 4 * k);
-              macro = "equip"; slog("equip " + (it >>> 0).toString(16));
-              queue = [...tapSteps(3), { k: [], ms: 900 }, ...gridSteps(k), ...tapSteps(8), { k: [], ms: 250 }, ...tapSteps(8), { k: [], ms: 600 },
-                { k: [], ms: 10, run: () => { if (r32(P + 0x5c + 4 * k) === it) { noEquip.add(it); slog("equip failed"); } } }, ...tapSteps(0), { k: [], ms: 500, end: true }];
+              macro = "discard"; slog("discard weaker " + (it >>> 0).toString(16));
+              queue = [...tapSteps(3), { k: [], ms: 900 }, ...gridSteps(k), ...tapSteps(8), { k: [], ms: 250 }, ...tapSteps(5), ...tapSteps(8), { k: [], ms: 500 },
+                { k: [], ms: 10, run: () => { if (r32(P + 0x5c + 4 * k) === it) { noEquip.add(it); slog("discard failed"); } } }, ...tapSteps(0), { k: [], ms: 500, end: true }];
               return;
             }
           }
@@ -226,12 +229,16 @@
           if (!tgt && !close) goBox(40);
           // The Shrine is only in the entity list while the hero is near it, so its spot is remembered (Moria's is at 1385,1214).
           for (const p of shops) shrineAt = pos(p);
-          const shopGo = () => { if (herbs < 10 && gems >= 50 && now - shopT > 90000) {
+          const shopGo = (force) => { if (herbs < 10 && gems >= 50 && now - shopT > 90000) {
             const [sx, sy] = shrineAt;
-            if (Math.abs(sx - x) <= 30 && Math.abs(sy - y) <= 30) { if (shops.length) tgt = { kind: "shop", p: shops[0] }; return; }
-            const path = pathTo(prev, sx, sy, 3); if (path && (!tgt || path.length < tgt.len)) tgt = { kind: "go", p: "shrine", len: path.length, path };
+            if (Math.abs(sx - x) <= shopNear && Math.abs(sy - y) <= shopNear) { if (shops.length) tgt = { kind: "shop", p: shops[0] }; return; }
+            const path = pathTo(prev, sx, sy, shopNear < 30 ? 1 : 3); if (!path && now - lastLog > 20000) { lastLog = now; slog("no path to shrine from " + x + "," + y); } if (path && (force || !tgt || path.length < tgt.len)) tgt = { kind: "go", p: "shrine", len: path.length, path };
           } };
-          if (!tgt && !close && herbs <= 2) shopGo();                       // low on herbs: restock before going on
+          // Low on herbs, or passing close by: go restock first (pots and far enemies wait).
+          if (!close && !skip.has("shrine")) {
+            const near = Math.abs(shrineAt[0] - x) + Math.abs(shrineAt[1] - y) < 400;
+            if (!tgt || tgt.kind === "go") { if (herbs <= 2 || near) shopGo(true); }
+          }                       // low on herbs: restock before going on
           if (!tgt) for (const p of en) { const [ex, ey] = pos(p); const path = pathTo(prev, ex, ey, 2); if (path && (!tgt || path.length < tgt.len)) tgt = { kind: "go", p, len: path.length, path }; }
           if (!tgt) goBox(1e9);
           // Spirit Shrine: buy herbs until the hero carries 10 or the gems run out.
@@ -274,10 +281,13 @@
             shopT = now; macro = "shop";
             const g0 = gems;
             // R opens the shop, Left moves to the herb tab, A then A (Yes) buys one; repeat until the gems stop going down.
-            const buy = () => { const before = r16(P + 0x184); return [...tapSteps(8), { k: [], ms: 200 }, ...tapSteps(8), { k: [], ms: 400 },
-              { k: [], ms: 10, run: () => { const g = r16(P + 0x184); if (g < before && g >= 50 && (r8(P + 0x1AA) >> 4) < 10) queue.unshift(...buy()); } }]; };
-            queue = [...tapSteps(11), { k: [], ms: 900 }, ...tapSteps(6), { k: [], ms: 300 }, ...buy(), ...tapSteps(0), { k: [], ms: 400 }, ...tapSteps(0), { k: [], ms: 600 },
-              { k: [], ms: 10, run: () => slog("shrine: spent " + (g0 - r16(P + 0x184)) + " gems, herbs " + (r8(P + 0x1AA) >> 4)) }, { k: [], ms: 10, end: true }];
+            // Buying goes on only while the herb count goes up, so nothing else gets bought.
+            const buy = () => { const before = r8(P + 0x1AA) >> 4; return [...tapSteps(8), { k: [], ms: 200 }, ...tapSteps(8), { k: [], ms: 400 },
+              { k: [], ms: 10, run: () => { const h = r8(P + 0x1AA) >> 4; if (h > before && h < 10 && r16(P + 0x184) >= 50) queue.unshift(...buy()); } }]; };
+            // If R didn't open the shop (game state 20), stop here and walk right up to the Shrine before trying again.
+            const opened = { k: [], ms: 10, run: () => { if ((r32(0x030041B0) & 255) !== 20) { shopT = 0; shopNear = 10; slog("shrine didn't open at " + x + "," + y); queue = [{ k: [], ms: 10, end: true }]; } } };
+            queue = [...tapSteps(11), { k: [], ms: 900 }, opened, ...tapSteps(6), { k: [], ms: 300 }, ...buy(), ...tapSteps(0), { k: [], ms: 400 }, ...tapSteps(0), { k: [], ms: 600 },
+              { k: [], ms: 10, run: () => { shopNear = 30; slog("shrine: spent " + (g0 - r16(P + 0x184)) + " gems, herbs " + (r8(P + 0x1AA) >> 4)); } }, { k: [], ms: 10, end: true }];
           } else {
             const W = grid.W, c = tgt.path[Math.min(3, tgt.path.length - 1)], k = steer(x, y, (c % W) * 8 + 4, ((c / W) | 0) * 8 + 4);
             hist.push([x, y, now]); while (hist.length && now - hist[0][2] > 600) hist.shift();
@@ -285,7 +295,7 @@
               stuck++; hist = [];
               // Stuck on the same target again and again: leave it for a while and do something else.
               const n = (tries.get("s" + tgt.p) || 0) + 1; tries.set("s" + tgt.p, n);
-              if (n >= 5) { skip.set(tgt.p, now + 30000); tries.delete("s" + tgt.p); if (now - lastLog > 5000) { lastLog = now; slog("stuck at " + x + "," + y + ", skipping that target for 30 s"); } }
+              if (n >= 5) { skip.set(tgt.p, now + 30000); tries.delete("s" + tgt.p); if (now - lastLog > 5000) { lastLog = now; slog("stuck at " + x + "," + y + " going to " + (typeof tgt.p === "string" ? tgt.p : pos(tgt.p).join(",")) + ", skipping it for 30 s"); } }
               if (tgt.item) tries.set(tgt.p, (tries.get(tgt.p) || 0) + 1);
               // Mark the cells ahead as blocked for 15 s (a statue or other object the wall map doesn't know about), so the path goes around.
               const here = (x >> 3) + (y >> 3) * W;
