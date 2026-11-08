@@ -1,5 +1,5 @@
-// Play Room v103: skill buttons (icons inside, black when used, countdown) and B picks up (window.__bPick).
-      const skIcons = [...document.querySelectorAll("#pad .sk")];
+// Play Room v104: skill buttons (icons inside, black when used, countdown), B's skill on L, B picks up (window.__bPick).
+      const skIcons = [...document.querySelectorAll("#pad .sk")].sort((a, b) => a.dataset.slot - b.dataset.slot);   // A, B's skill (on L), R
       const skPos = (v) => (v[1] * 20) + "% " + (v[0] * 100 / 7).toFixed(3) + "%";   // sheet: 6 skills across, 8 heroes down
       // Used skills (Jordan, 2026-11-08): the pressed skill's icon turns black. If the game took Spirit for it and it's a
       // skill that lasts a while (times from the Skills page text, at the skill's level), a countdown runs on the button
@@ -33,7 +33,7 @@
           c.textContent = String(Math.ceil(left / 1000)); c.style.setProperty("--p", (left / a.total).toFixed(3));
         }
       }, 100);
-      [["b-a", 0], ["b-b", 1], ["b-r", 2]].forEach(([c, k]) => {
+      [["b-a", 0], ["b-r", 2]].forEach(([c, k]) => {
         const b = document.querySelector("#pad ." + c);
         if (b) b.addEventListener("pointerdown", () => { const el = skIcons[k]; if (document.body.classList.contains("qs-on") && el && el.classList.contains("show")) skillPressed(b, el.__v); });
       });
@@ -107,22 +107,44 @@
       };
       xBtns.forEach((b, k) => b.addEventListener("pointerdown", (e) => { e.preventDefault(); e.stopPropagation(); castExtra(k); }));
 
-        // B picks up too (Jordan, 2026-11-08): with an item at the hero's feet, B works as R unless it can't be taken
-        // (gear with a full backpack, a full Kingsfoil pouch); then B swings. Auto and P2 also pick up before swinging.
-        const herbRoom = (P, t) => t === 17 ? (r8(P + 0x1AA) >> 4) < 10 : t === 18 ? (r8(P + 0x1AA) & 15) < 10 : true;
-        window.__bPick = () => {
-          try {
-            if (iwram < 0 || inMenu() || document.body.classList.contains("qs-on")) return false;
-            ew = findEw(); H8 = heap(); if (ew < 0) return false;
-            const P = playerAddr(), hero = r32(P); if (hero >>> 24 !== 2) return false;
-            const [x, y] = pos(hero);
-            for (const p of entities()) {
-              if (r32(p + 0x14) !== ITEM_UPD || r8(p + 0x63) !== 3) continue;
-              const [ix, iy] = pos(p); if (Math.abs(ix - x) > 10 || Math.abs(iy - y) > 10) continue;
-              const t = r8(p + 0x60);
-              if (t >= 25 ? !packFull(P) : t >= 15 ? herbRoom(P, t) : false) return true;
+      document.querySelectorAll("#pad .btn[data-in]").forEach((el) => {
+        const id = +el.dataset.in;
+        // L and R are never swapped (Jordan undid the in-play swap, 2026-11-06).
+        const press = (on) => {
+          el.classList.toggle("on", !!on);
+          if (id === 10) {
+            // The skill on the game's B slot is cast with L (Jordan, 2026-11-08): L, then B for a moment (the game's own
+            // L + B Quick Skill), so the game checks Spirit and plays it. Without a skill there, L is just L.
+            lTouch = !!on; sendL();
+            const sk = skIcons[1];
+            if (on && !lCast && sk && sk.classList.contains("show") && !inMenu()) {
+              lCast = true; sendL(); skillPressed(el, sk.__v);
+              setTimeout(() => { try { emu.gameManager.simulateInput(0, 0, 1); } catch (e) {} }, 60);
+              setTimeout(() => { try { emu.gameManager.simulateInput(0, 0, 0); } catch (e) {} }, 200);
+              setTimeout(() => { lCast = false; sendL(); }, 240);
             }
-          } catch (e) {}
-          return false;
+            return;
+          }
+          // B also picks up (Jordan, 2026-11-08): with an item at the hero's feet that can be taken, B works as R. B never
+          // casts (its skill is on L), so L is let go while B is down even with Quick Skill on.
+          let sid = id;
+          if (id === 0) {
+            if (on) { el.__bAs = window.__bPick && window.__bPick() ? 11 : 0; if (qsHeld || lTouch) { bNoL = true; sendL(); } }
+            sid = el.__bAs || 0;
+            if (!on && bNoL) { try { emu.gameManager.simulateInput(0, sid, 0); } catch (e) {} setTimeout(() => { bNoL = false; sendL(); }, 50); return; }
+            if (on && bNoL) { setTimeout(() => { try { emu.gameManager.simulateInput(0, sid, 1); } catch (e) {} }, 40); return; }
+          }
+          try { emu.gameManager.simulateInput(0, sid, on); } catch (e) {}
         };
-        // Some enemies are scenery standing inside the walls (no floor around them); those never fight and aren't counted.
+        // Only the finger that pressed a button can let it go, so a stick drag passing over it never touches it.
+        let bp = null;
+        el.__release = () => { bp = null; press(0); };
+        el.addEventListener("pointerdown", (e) => { e.preventDefault(); e.stopPropagation(); if (pid !== null && e.pointerId === pid) return; bp = e.pointerId; try { el.setPointerCapture(e.pointerId); } catch (x) {} press(1); });
+        const rel = (e) => { if (bp !== null && e.pointerId === bp) el.__release(); };
+        el.addEventListener("lostpointercapture", rel);
+        window.addEventListener("pointerup", rel, true); window.addEventListener("pointercancel", rel, true);
+      });
+      // Lift the black cover once the game is past the white power-on screen (about 70 frames).
+      const lift = setInterval(() => { const f = frames(); if (f > 75) { $("bootCover").classList.add("gone"); clearInterval(lift); } }, 100);
+      setTimeout(() => { $("bootCover").classList.add("gone"); clearInterval(lift); }, 8000);
+      // Watchdog: if no frames run, ask for a tap; only restart if a tap does not get it going.
