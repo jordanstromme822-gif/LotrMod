@@ -1,0 +1,144 @@
+--- /tmp/rc/frame_smooth.v82.h	2026-11-08 05:45:30.627364988 +0000
++++ /tmp/rc/gbarecomp/src/runtime/frame_smooth.h	2026-11-08 06:11:49.295390969 +0000
+@@ -16,6 +16,7 @@
+ #include <cstdlib>
+ #include <cstring>
+ #include <vector>
++#include <cstdio>
+ 
+ #include "gba_ppu.h"
+ 
+@@ -57,7 +58,8 @@
+     // an in-between picture. Returns true if it did.
+     bool apply(const gba::GbaPpu& ppu, uint8_t* fb, std::size_t bytes) {
+         if (!enabled || !fresh_ || !latest_.valid) return false;
+-        fresh_ = false;
++        fresh_ = false; ++nframe_;
++        if (why_ < 0) why_ = std::getenv("GBARECOMP_SMOOTH_WHY") ? 1 : 0;
+         if (bytes != last_bytes_) {  // view size changed
+             prev_.valid = false;
+             last_fb_.clear();
+@@ -108,9 +110,11 @@
+                 ++mids;
+             } else {
+                 ++skipped;
++                if (why_) std::fprintf(stderr, "smooth: skip (raster) f%llu\n", (unsigned long long)nframe_);
+             }
+         } else if (prev_.valid) {
+             ++incompat;
++            if (why_) std::fprintf(stderr, "smooth: incompat %s f%llu\n", why_incompat(prev_, b), (unsigned long long)nframe_);
+         }
+         std::swap(prev_, latest_);
+         latest_.valid = false;
+@@ -118,6 +122,14 @@
+     }
+ 
+ private:
++    int why_ = -1; unsigned long long nframe_ = 0;
++    static const char* why_incompat(const Snap& a, const Snap& b) {
++        if (a.dispcnt != b.dispcnt) return "dispcnt";
++        if ((b.dispcnt & 7) != 0) return "bgmode";
++        if (std::memcmp(&a.io[0x08], &b.io[0x08], 8) != 0) return "bgcnt";
++        if (std::memcmp(&a.io[0x40], &b.io[0x40], 0x12) != 0) return "win/blend";
++        return "bigscroll";
++    }
+     Snap latest_, prev_;
+     bool fresh_ = false;
+     bool last_check_failed_ = true;
+@@ -141,6 +153,15 @@
+         vram_mid_ = b.vram;
+         mid_scroll(prev_, b);
+         mid_sprites(prev_, b);
++        // Fades: brightness (BLDY) and blend weights (BLDALPHA) halfway between the two pictures.
++        {
++            const int ay = r16(prev_.io, 0x54) & 31, by = r16(b.io, 0x54) & 31;
++            w16(io_mid_, 0x54, static_cast<uint16_t>((ay + by + up) >> 1));
++            const int a1 = r16(prev_.io, 0x52) & 31, b1 = r16(b.io, 0x52) & 31;
++            const int a2 = (r16(prev_.io, 0x52) >> 8) & 31, b2 = (r16(b.io, 0x52) >> 8) & 31;
++            w16(io_mid_, 0x52, static_cast<uint16_t>(((a1 + b1 + up) >> 1) | (((a2 + b2 + up) >> 1) << 8)));
++            if (((ay ^ by) & 1) || ((a1 ^ b1) & 1) || ((a2 ^ b2) & 1)) odd_ = true;
++        }
+         for (int bg = 0; bg < 4; ++bg) {
+             gba::g_ws_margin_scroll_override[bg][0] = margin_[bg][0];
+             gba::g_ws_margin_scroll_override[bg][1] = margin_[bg][1];
+@@ -173,7 +194,8 @@
+         if ((b.dispcnt & 7) != 0) return false;  // text-mode backgrounds only
+         // BG control, window, blend and brightness setup must be unchanged.
+         if (std::memcmp(&a.io[0x08], &b.io[0x08], 8) != 0) return false;
+-        if (std::memcmp(&a.io[0x40], &b.io[0x40], 0x16) != 0) return false;
++        // Windows and blend mode must match; the fade level (BLDALPHA, BLDY) may change and is drawn halfway.
++        if (std::memcmp(&a.io[0x40], &b.io[0x40], 0x12) != 0) return false;
+         for (int bg = 0; bg < 4; ++bg) {
+             if (!(b.dispcnt & (0x100 << bg))) continue;
+             bool c1, c2;
+@@ -298,16 +320,31 @@
+         if ((a0 & 0x0300) == 0x0300) { w *= 2; h *= 2; }  // double-size affine
+     }
+ 
++    // True when the sprite piece shows the same picture in both frames (same tile number
++    // and the same tile data in video memory: some games stream each pose into fixed tiles).
++    static bool same_gfx(const Snap& a, const Snap& b, uint16_t pa2, uint16_t a2, int w, int h, bool c256) {
++        if ((pa2 & 0x3FF) != (a2 & 0x3FF)) return false;
++        const bool one_d = (b.dispcnt & 0x40) != 0;
++        const int tb = c256 ? 64 : 32, tw = w / 8, th = h / 8, base = a2 & 0x3FF;
++        for (int ty = 0; ty < th; ++ty) {
++            const int t = one_d ? base + ty * tw * (c256 ? 2 : 1) : base + ty * 32;
++            const std::size_t off = 0x10000 + static_cast<std::size_t>(t & 0x3FF) * 32, n = static_cast<std::size_t>(tw) * tb;
++            if (off + n > a.vram.size() || off + n > b.vram.size()) return true;
++            if (std::memcmp(&a.vram[off], &b.vram[off], n) != 0) return false;
++        }
++        return true;
++    }
++
+     void mid_sprites(const Snap& a, const Snap& b) {
+         const int csx = -half(cam_dx_), csy = -half(cam_dy_);
+-        struct Obj { int x, y, w, h, pal, dx, dy, grp; bool live, matched; };
++        struct Obj { int x, y, w, h, pal, dx, dy, grp; bool live, matched, gchg; };
+         Obj o[128];
+         bool used[128] = {};
+         for (int i = 0; i < 128; ++i) {
+             const uint16_t a0 = r16(b.oam, i * 8), a1 = r16(b.oam, i * 8 + 2), a2 = r16(b.oam, i * 8 + 4);
+             Obj& s = o[i];
+             s.live = (a0 & 0x0300) != 0x0200;
+-            s.matched = false; s.grp = i; s.dx = s.dy = 0;
++            s.matched = false; s.gchg = false; s.grp = i; s.dx = s.dy = 0;
+             if (!s.live) continue;
+             s.x = a1 & 0x1FF; if (s.x >= 384) s.x -= 512;
+             s.y = a0 & 0xFF; if (s.y >= 224) s.y -= 256;
+@@ -324,7 +361,7 @@
+                 if (std::abs(dx) > 16 || std::abs(dy) > 16) continue;
+                 int d = dx * dx + dy * dy;
+                 if (std::memcmp(&a.oam[j * 8], &b.oam[i * 8], 6) == 0) d = -1;  // exact twin
+-                if (d < bestd) { bestd = d; best = j; s.dx = dx; s.dy = dy; }
++                if (d < bestd) { bestd = d; best = j; s.dx = dx; s.dy = dy; s.gchg = !same_gfx(a, b, p2, a2, s.w, s.h, (a0 & 0x2000) != 0); }
+             }
+             if (best >= 0) { used[best] = true; s.matched = true; }
+         }
+@@ -345,14 +382,26 @@
+         // Most common matched step per group.
+         for (int g = 0; g < 128; ++g) {
+             if (!o[g].live || root(g) != g) continue;
+-            int bx = 0, by = 0, bc = 0;
++            int bx = 0, by = 0, bc = 0, m = 0;
+             for (int i = 0; i < 128; ++i) {
+                 if (!o[i].live || !o[i].matched || root(i) != g) continue;
++                ++m;
+                 int c = 0;
+                 for (int k = 0; k < 128; ++k)
+                     if (o[k].live && o[k].matched && root(k) == g && o[k].dx == o[i].dx && o[k].dy == o[i].dy) ++c;
+                 if (c > bc) { bc = c; bx = o[i].dx; by = o[i].dy; }
+             }
++            // An animation change re-lays a character's pieces, so they "match" with
++            // scattered steps. Trust a step only when most pieces agree on it;
++            // otherwise the group just moves with the halfway camera (still in menus).
++            if (bc * 2 <= m) bc = 0;
++            // Camera still and the character changed pose: its pieces were re-laid for the
++            // new pose, not moved, so draw it where the new frame has it (no bobbing).
++            if (bc && cam_dx_ == 0 && cam_dy_ == 0) {
++                bool chg = false;
++                for (int i = 0; i < 128 && !chg; ++i) if (o[i].live && o[i].matched && root(i) == g && o[i].gchg) chg = true;
++                if (chg) continue;
++            }
+             const int sx = bc ? half(bx) : csx, sy = bc ? half(by) : csy;
+             if (sx == 0 && sy == 0) continue;
+             for (int i = 0; i < 128; ++i) {

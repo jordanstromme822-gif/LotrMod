@@ -1,0 +1,11 @@
+from g import *
+init(); load('nearshrine'); run(2)
+P=0x03003C00+0x1AC*(r8(0x03003F59)&1)
+b0=blk(P,0x1AC)
+hero=r32(P); h0=blk(hero,0x148)
+tap('START',6,60); tap('RT',6,30); tap('RT',6,30); tap('A',6,40); shot('eq0'); tap('A',6,40); shot('eq1')
+b1=blk(P,0x1AC); h1=blk(hero,0x148)
+print('P diff',[(hex(i),b0[i],b1[i]) for i in range(0x1AC) if b0[i]!=b1[i]])
+print('hero diff',[(hex(i),h0[i],h1[i]) for i in range(0x148) if h0[i]!=h1[i]])
+print('equip',[hex(r32(P+0x3c+4*i)) for i in range(8)])
+print('pack',[hex(r32(P+0x5c+4*i)) for i in range(8)])

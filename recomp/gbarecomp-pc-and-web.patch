@@ -1,0 +1,899 @@
+diff --git a/src/gba/gba_ppu.cpp b/src/gba/gba_ppu.cpp
+index d9d1604..3f50353 100644
+--- a/src/gba/gba_ppu.cpp
++++ b/src/gba/gba_ppu.cpp
+@@ -66,6 +66,9 @@ extern "C" int (*g_ws_obj_attr_x_provider)(int, std::uint16_t,
+ // still run first, so a game can re-place known-safe HUD sprites and clip the
+ // rest.
+ extern "C" int g_ws_obj_native_clip = 0;
++extern "C" const uint8_t* g_ws_render_io = nullptr;
++extern "C" int g_ws_margin_scroll_override_on = 0;
++extern "C" int g_ws_margin_scroll_override[4][2] = {};
+ extern "C" int (*g_ws_obj_attr_y_provider)(int, std::uint16_t,
+                                             std::uint16_t, std::uint16_t,
+                                             int*) = nullptr;
+@@ -2596,6 +2599,13 @@ void GbaPpu::render(uint8_t* rgb,
+                     const uint8_t* vram,
+                     const uint8_t* oam,
+                     const uint8_t* pal) const {
++    // Whole-frame re-renders (screenshots, 60 fps in-between pictures) tell
++    // margin providers which register page they are drawing with.
++    struct RenderIoScope {
++        const uint8_t* prev;
++        explicit RenderIoScope(const uint8_t* io) : prev(g_ws_render_io) { g_ws_render_io = io; }
++        ~RenderIoScope() { g_ws_render_io = prev; }
++    } render_io_scope(io);
+     if (!view_expanded()) {
+         // Faithful path â€” literally unchanged from before view expansion existed.
+         for (uint32_t y = 0; y < kScreenHeight; ++y) {
+diff --git a/src/gba/gba_ppu.h b/src/gba/gba_ppu.h
+index 69c2465..513faa3 100644
+--- a/src/gba/gba_ppu.h
++++ b/src/gba/gba_ppu.h
+@@ -358,6 +358,14 @@ extern "C" int g_ws_pillarbox_right;
+ // Optional per-game interpretation of the 9-bit OBJ X field in expanded-view
+ // rendering. Hardware-faithful signed decoding remains the default.
+ extern "C" int (*g_ws_obj_x_provider)(int raw_x, int* out_x);
++// Register page of a whole-frame GbaPpu::render() in progress (nullptr while
++// the emulated scanline renderer runs). Margin providers read scroll from it.
++extern "C" const std::uint8_t* g_ws_render_io;
++// Optional scroll for authored margins, per BG (x,y), in the coordinates of
++// the frame's own map (may leave 0..511 wrap meaning). Set by the 60 fps
++// in-between renderer while it draws; providers prefer it when on.
++extern "C" int g_ws_margin_scroll_override_on;
++extern "C" int g_ws_margin_scroll_override[4][2];
+ // Richer per-game OBJ placement hook for screen-space UI. Called only by the
+ // expanded renderer and before g_ws_obj_x_provider; receives the OAM index and
+ // raw attributes so a game can distinguish HUD sprites from world objects.
+diff --git a/src/runtime/frame_smooth.h b/src/runtime/frame_smooth.h
+new file mode 100644
+index 0000000..2c547c7
+--- /dev/null
++++ b/src/runtime/frame_smooth.h
+@@ -0,0 +1,369 @@
++#pragma once
++// 60 fps smoothing for games that draw a new picture every other VBlank.
++//
++// The game's own logic still runs at its normal rate. When a new picture
++// arrives, the host first shows an in-between picture rendered from the new
++// frame's video memory with every background scroll and every matched sprite
++// moved halfway back toward the previous picture; the next VBlank (where the
++// game would have repeated the picture) shows the new frame itself. This adds
++// one VBlank (~16.7 ms) of display delay and never touches emulated state.
++//
++// Safety: the in-between picture is only drawn when re-rendering the new
++// frame from the snapshot reproduces the real picture exactly (no mid-frame
++// raster effects), the display setup is unchanged and the camera moved a
++// small distance. Otherwise the real frame is shown untouched.
++#include <cstdint>
++#include <cstdlib>
++#include <cstring>
++#include <vector>
++
++#include "gba_ppu.h"
++
++namespace gbarecomp {
++
++class FrameSmoother {
++public:
++    struct Snap {
++        std::vector<uint8_t> io, vram, oam, pal;
++        uint16_t dispcnt = 0;
++        bool valid = false;
++        void take(uint16_t d, const uint8_t* i, const uint8_t* v, std::size_t vn,
++                  const uint8_t* o, const uint8_t* p) {
++            io.assign(i, i + 0x400);
++            vram.assign(v, v + vn);
++            oam.assign(o, o + 0x400);
++            pal.assign(p, p + 0x400);
++            dispcnt = d;
++            valid = true;
++        }
++    };
++
++    bool enabled = true;
++    int check_every = 1;
++    uint64_t mids = 0, skipped = 0, blends = 0, incompat = 0;
++    bool blend_ = true;
++
++    // Called right after a frame is latched (emulation thread).
++    void on_latch(uint16_t dispcnt, const uint8_t* io, const uint8_t* vram,
++                  std::size_t vram_size, const uint8_t* oam, const uint8_t* pal) {
++        if (!enabled) return;
++        latest_.take(dispcnt, io, vram, vram_size, oam, pal);
++        fresh_ = true;
++    }
++
++    void reset() { prev_.valid = false; fresh_ = false; last_fb_.clear(); }
++
++    // fb holds the latched (real) frame about to be shown. May replace it with
++    // an in-between picture. Returns true if it did.
++    bool apply(const gba::GbaPpu& ppu, uint8_t* fb, std::size_t bytes) {
++        if (!enabled || !fresh_ || !latest_.valid) return false;
++        fresh_ = false;
++        if (bytes != last_bytes_) {  // view size changed
++            prev_.valid = false;
++            last_fb_.clear();
++            last_bytes_ = bytes;
++        }
++        const bool repeat = last_fb_.size() == bytes &&
++                            std::memcmp(last_fb_.data(), fb, bytes) == 0;
++        if (repeat) return false;  // shows the real (already delayed) frame
++        last_fb_.assign(fb, fb + bytes);
++        Snap& b = latest_;
++        bool did = false;
++        if (prev_.valid && compatible(prev_, b)) {
++            // Re-rendering to prove there are no raster effects costs a whole
++            // picture. Where that is too expensive (browser build) only every
++            // check_every-th picture is verified; a failed check forces the
++            // next pictures to be verified again.
++            bool same = true;
++            if (check_every <= 1 || last_check_failed_ || ++unchecked_ >= check_every) {
++                unchecked_ = 0;
++                check_.resize(bytes);
++                ppu.render(check_.data(), b.dispcnt, b.io.data(), b.vram.data(),
++                           b.oam.data(), b.pal.data());
++                same = std::memcmp(check_.data(), fb, bytes) == 0;
++                last_check_failed_ = !same;
++            }
++            if (same) {
++                // An odd step cannot be halved in whole pixels: the picture is
++                // drawn once with each half rounded down and once rounded up and
++                // the two are averaged, so every 60 fps step is the same size
++                // (a 3-pixel move shows as 1.5 + 1.5 instead of 1 + 2).
++                odd_ = false;
++                for (int bg = 0; bg < 4; ++bg) {
++                    cd_[bg][0] = cd_[bg][1] = 0;
++                    if (!(b.dispcnt & (0x100 << bg))) continue;
++                    if ((r16(prev_.io, 0x10 + bg * 4) & 511) < 8 && (r16(b.io, 0x10 + bg * 4) & 511) < 8 &&
++                        (r16(prev_.io, 0x12 + bg * 4) & 511) < 8 && (r16(b.io, 0x12 + bg * 4) & 511) < 8)
++                        coarse_step(prev_, b, bg, cd_[bg][0], cd_[bg][1]);
++                }
++                render_mid(ppu, fb, b, 0);
++                if (odd_ && blend_) {
++                    alt_.resize(bytes);
++                    render_mid(ppu, alt_.data(), b, 1);
++                    for (std::size_t i = 0; i < bytes; ++i)
++                        fb[i] = static_cast<uint8_t>((fb[i] + alt_[i] + 1) >> 1);
++                    ++blends;
++                }
++                did = true;
++                ++mids;
++            } else {
++                ++skipped;
++            }
++        } else if (prev_.valid) {
++            ++incompat;
++        }
++        std::swap(prev_, latest_);
++        latest_.valid = false;
++        return did;
++    }
++
++private:
++    Snap latest_, prev_;
++    bool fresh_ = false;
++    bool last_check_failed_ = true;
++    int unchecked_ = 0;
++    std::vector<uint8_t> last_fb_, check_, io_mid_, oam_mid_, vram_mid_, alt_;
++    bool odd_ = false;
++    int up_ = 0;            // 0: halves rounded toward zero, 1: away from zero
++    int cd_[4][2] = {};     // camera step of each coarse layer (from its map)
++
++    // Half of d, rounded toward zero (up_ == 0) or away from zero (up_ == 1).
++    int half(int d) {
++        if (d & 1) odd_ = true;
++        const int h = d / 2;
++        return up_ ? d - h : h;
++    }
++
++    void render_mid(const gba::GbaPpu& ppu, uint8_t* out, const Snap& b, int up) {
++        up_ = up;
++        io_mid_ = b.io;
++        oam_mid_ = b.oam;
++        vram_mid_ = b.vram;
++        mid_scroll(prev_, b);
++        mid_sprites(prev_, b);
++        for (int bg = 0; bg < 4; ++bg) {
++            gba::g_ws_margin_scroll_override[bg][0] = margin_[bg][0];
++            gba::g_ws_margin_scroll_override[bg][1] = margin_[bg][1];
++        }
++        gba::g_ws_margin_scroll_override_on = 1;
++        ppu.render(out, b.dispcnt, io_mid_.data(), vram_mid_.data(),
++                   oam_mid_.data(), b.pal.data());
++        gba::g_ws_margin_scroll_override_on = 0;
++    }
++    std::size_t last_bytes_ = 0;
++    int margin_[4][2] = {};
++
++    static uint16_t r16(const std::vector<uint8_t>& v, std::size_t o) {
++        return static_cast<uint16_t>(v[o] | (v[o + 1] << 8));
++    }
++    static void w16(std::vector<uint8_t>& v, std::size_t o, uint16_t x) {
++        v[o] = static_cast<uint8_t>(x);
++        v[o + 1] = static_cast<uint8_t>(x >> 8);
++    }
++    // Signed difference a-b on a ring of `mod` values.
++    static int wrap_delta(int a, int b, int mod) {
++        int d = (a - b) % mod;
++        if (d < -mod / 2) d += mod;
++        if (d >= mod / 2) d -= mod;
++        return d;
++    }
++
++    static bool compatible(const Snap& a, const Snap& b) {
++        if (a.dispcnt != b.dispcnt) return false;
++        if ((b.dispcnt & 7) != 0) return false;  // text-mode backgrounds only
++        // BG control, window, blend and brightness setup must be unchanged.
++        if (std::memcmp(&a.io[0x08], &b.io[0x08], 8) != 0) return false;
++        if (std::memcmp(&a.io[0x40], &b.io[0x40], 0x16) != 0) return false;
++        for (int bg = 0; bg < 4; ++bg) {
++            if (!(b.dispcnt & (0x100 << bg))) continue;
++            bool c1, c2;
++            const int dx = axis_delta(r16(a.io, 0x10 + bg * 4) & 511, r16(b.io, 0x10 + bg * 4) & 511, c1);
++            const int dy = axis_delta(r16(a.io, 0x12 + bg * 4) & 511, r16(b.io, 0x12 + bg * 4) & 511, c2);
++            if (std::abs(dx) > 24 || std::abs(dy) > 24) return false;
++        }
++        return true;
++    }
++
++    // True camera move a->b on one axis of one layer, as (scroll_a - scroll_b).
++    // This game scrolls its world layers coarsely by redrawing the whole map one
++    // tile over and keeps the fine scroll in 0..7, so there the smallest move
++    // that matches modulo 8 is the real one.
++    static int axis_delta(int sa, int sb, bool& coarse) {
++        coarse = sa < 8 && sb < 8;
++        if (!coarse) return wrap_delta(sa, sb, 512);
++        int d = sa - sb;           // -7..7
++        if (d > 4) d -= 8; else if (d < -4) d += 8;
++        return d;
++    }
++
++    static uint16_t map_at(const Snap& s, int bg, int x, int y) {
++        const uint16_t cnt = r16(s.io, 0x08 + bg * 2);
++        std::size_t o = static_cast<std::size_t>((cnt >> 8) & 31) * 0x800;
++        const int size = cnt >> 14;
++        x &= 63; y &= 63;
++        if (size == 0 || size == 2) x &= 31;
++        if (size == 0 || size == 1) y &= 31;
++        if (x >= 32) { o += 0x800; x -= 32; }
++        if (y >= 32) { o += (size == 3) ? 0x1000 : 0x800; y -= 32; }
++        o += static_cast<std::size_t>(y * 32 + x) * 2;
++        if (o + 1 >= s.vram.size()) return 0;
++        return static_cast<uint16_t>(s.vram[o] | (s.vram[o + 1] << 8));
++    }
++
++    // Camera step of a coarsely scrolled layer. The fine scroll alone is
++    // ambiguous by a whole tile (a 4-pixel move left and right look the same),
++    // so the map itself says whether the game redrew it one tile over: the
++    // shift that best lines up the new map with the old one is the real one.
++    static void coarse_step(const Snap& a, const Snap& b, int bg, int& dx, int& dy) {
++        const int sax = r16(a.io, 0x10 + bg * 4) & 511, sbx = r16(b.io, 0x10 + bg * 4) & 511;
++        const int say = r16(a.io, 0x12 + bg * 4) & 511, sby = r16(b.io, 0x12 + bg * 4) & 511;
++        int best = -1, bkx = 0, bky = 0, bcost = 1 << 30;
++        for (int ky = -1; ky <= 1; ++ky)
++            for (int kx = -1; kx <= 1; ++kx) {
++                int same = 0;
++                for (int y = 1; y < 20; ++y)
++                    for (int x = 1; x < 30; ++x)
++                        if (map_at(b, bg, x, y) == map_at(a, bg, x + kx, y + ky)) ++same;
++                const int ddx = sax - sbx - 8 * kx, ddy = say - sby - 8 * ky;
++                const int cost = std::abs(ddx) + std::abs(ddy);
++                if (same > best || (same == best && cost < bcost)) { best = same; bkx = kx; bky = ky; bcost = cost; }
++            }
++        dx = sax - sbx - 8 * bkx;
++        dy = say - sby - 8 * bky;
++    }
++
++    int cam_dx_ = 0, cam_dy_ = 0;
++
++    // Halfway scroll for every layer. A layer whose halfway view would leave the
++    // area the game drew in the new frame is drawn from the previous frame's
++    // map instead (copied into vram_mid_).
++    void mid_scroll(const Snap& a, const Snap& b) {
++        cam_dx_ = cam_dy_ = 0;
++        bool cam_set = false;
++        for (int bg = 0; bg < 4; ++bg) {
++            const std::size_t ox = 0x10 + bg * 4, oy = ox + 2;
++            const int ax = r16(a.io, ox) & 511, bx = r16(b.io, ox) & 511;
++            const int ay = r16(a.io, oy) & 511, by = r16(b.io, oy) & 511;
++            bool cx = false, cy = false;
++            int dx = axis_delta(ax, bx, cx), dy = axis_delta(ay, by, cy);
++            if (cx && cy && (b.dispcnt & (0x100 << bg))) { dx = cd_[bg][0]; dy = cd_[bg][1]; }
++            if (bg >= 1 && !cam_set && (b.dispcnt & (0x100 << bg)) && (cx || cy)) {
++                cam_dx_ = dx; cam_dy_ = dy; cam_set = true;
++            }
++            const int hx = half(dx), hy = half(dy);
++            int mx = bx + hx, my = by + hy;
++            margin_[bg][0] = mx;  // in the new frame's own map coordinates
++            margin_[bg][1] = my;
++            const bool use_a = (cx && (mx < 0 || mx > 7)) || (cy && (my < 0 || my > 7));
++            if (use_a) {
++                mx = ax - (dx - hx);
++                my = ay - (dy - hy);
++                const uint16_t cnt = r16(a.io, 0x08 + bg * 2);
++                const std::size_t base = static_cast<std::size_t>((cnt >> 8) & 31) * 0x800;
++                static const std::size_t sizes[4] = {0x800, 0x1000, 0x1000, 0x2000};
++                const std::size_t len = sizes[cnt >> 14];
++                if (base + len <= vram_mid_.size())
++                    std::memcpy(&vram_mid_[base], &a.vram[base], len);
++            }
++            w16(io_mid_, ox, static_cast<uint16_t>(mx & 511));
++            w16(io_mid_, oy, static_cast<uint16_t>(my & 511));
++        }
++        if (!cam_set) {  // fall back to the first enabled world layer
++            for (int bg = 1; bg < 4 && !cam_set; ++bg) {
++                if (!(b.dispcnt & (0x100 << bg))) continue;
++                bool c1, c2;
++                cam_dx_ = axis_delta(r16(a.io, 0x10 + bg * 4) & 511, r16(b.io, 0x10 + bg * 4) & 511, c1);
++                cam_dy_ = axis_delta(r16(a.io, 0x12 + bg * 4) & 511, r16(b.io, 0x12 + bg * 4) & 511, c2);
++                if (c1 && c2) { cam_dx_ = cd_[bg][0]; cam_dy_ = cd_[bg][1]; }
++                cam_set = true;
++            }
++        }
++    }
++
++    // Sprites: each sprite of the new frame is matched to the nearest sprite of
++    // the previous frame with the same shape, size and palette (the game
++    // reorders its sprite list every frame). Pieces of one character (all
++    // touching, any palette) form a group that takes the most common matched step,
++    // so a character never comes apart. The group is drawn halfway between its
++    // old and new spot: a sprite that follows the camera (the hero, the HUD)
++    // stays put, a sprite fixed in the world moves with the halfway camera, and
++    // a walking enemy moves half its step. A group with no match moves with the
++    // halfway camera. Characters' own animation still changes at the game's rate.
++    static void obj_size(uint16_t a0, uint16_t a1, int& w, int& h) {
++        static const uint8_t W[3][4] = {{8, 16, 32, 64}, {16, 32, 32, 64}, {8, 8, 16, 32}};
++        static const uint8_t H[3][4] = {{8, 16, 32, 64}, {8, 8, 16, 32}, {16, 32, 32, 64}};
++        const int sh = (a0 >> 14) & 3, sz = (a1 >> 14) & 3;
++        if (sh == 3) { w = h = 8; return; }
++        w = W[sh][sz]; h = H[sh][sz];
++        if ((a0 & 0x0300) == 0x0300) { w *= 2; h *= 2; }  // double-size affine
++    }
++
++    void mid_sprites(const Snap& a, const Snap& b) {
++        const int csx = -half(cam_dx_), csy = -half(cam_dy_);
++        struct Obj { int x, y, w, h, pal, dx, dy, grp; bool live, matched; };
++        Obj o[128];
++        bool used[128] = {};
++        for (int i = 0; i < 128; ++i) {
++            const uint16_t a0 = r16(b.oam, i * 8), a1 = r16(b.oam, i * 8 + 2), a2 = r16(b.oam, i * 8 + 4);
++            Obj& s = o[i];
++            s.live = (a0 & 0x0300) != 0x0200;
++            s.matched = false; s.grp = i; s.dx = s.dy = 0;
++            if (!s.live) continue;
++            s.x = a1 & 0x1FF; if (s.x >= 384) s.x -= 512;
++            s.y = a0 & 0xFF; if (s.y >= 224) s.y -= 256;
++            obj_size(a0, a1, s.w, s.h);
++            s.pal = (a0 & 0x2000) ? 16 : (a2 >> 12);
++            int bestd = 1 << 30, best = -1;
++            for (int j = 0; j < 128; ++j) {
++                if (used[j]) continue;
++                const uint16_t p0 = r16(a.oam, j * 8), p1 = r16(a.oam, j * 8 + 2), p2 = r16(a.oam, j * 8 + 4);
++                if ((p0 & 0x0300) == 0x0200) continue;
++                if ((p0 & 0xE300) != (a0 & 0xE300) || (p1 & 0xC000) != (a1 & 0xC000) ||
++                    (p2 & 0xF000) != (a2 & 0xF000)) continue;
++                const int dx = wrap_delta(p1 & 0x1FF, a1 & 0x1FF, 512), dy = wrap_delta(p0 & 0xFF, a0 & 0xFF, 256);
++                if (std::abs(dx) > 16 || std::abs(dy) > 16) continue;
++                int d = dx * dx + dy * dy;
++                if (std::memcmp(&a.oam[j * 8], &b.oam[i * 8], 6) == 0) d = -1;  // exact twin
++                if (d < bestd) { bestd = d; best = j; s.dx = dx; s.dy = dy; }
++            }
++            if (best >= 0) { used[best] = true; s.matched = true; }
++        }
++        // Group touching pieces with the same palette (union-find).
++        auto root = [&](int i) { while (o[i].grp != i) i = o[i].grp = o[o[i].grp].grp; return i; };
++        for (int i = 0; i < 128; ++i) {
++            if (!o[i].live) continue;
++            for (int j = i + 1; j < 128; ++j) {
++                // Any touching pieces (any palette): a hero's weapon, shadow or effect sprites use other palettes
++                // and must move with the body, or the in-between picture tears the character apart.
++                if (!o[j].live) continue;
++                if (o[i].x > o[j].x + o[j].w + 4 || o[j].x > o[i].x + o[i].w + 4 ||
++                    o[i].y > o[j].y + o[j].h + 4 || o[j].y > o[i].y + o[i].h + 4) continue;
++                const int ri = root(i), rj = root(j);
++                if (ri != rj) o[rj].grp = ri;
++            }
++        }
++        // Most common matched step per group.
++        for (int g = 0; g < 128; ++g) {
++            if (!o[g].live || root(g) != g) continue;
++            int bx = 0, by = 0, bc = 0;
++            for (int i = 0; i < 128; ++i) {
++                if (!o[i].live || !o[i].matched || root(i) != g) continue;
++                int c = 0;
++                for (int k = 0; k < 128; ++k)
++                    if (o[k].live && o[k].matched && root(k) == g && o[k].dx == o[i].dx && o[k].dy == o[i].dy) ++c;
++                if (c > bc) { bc = c; bx = o[i].dx; by = o[i].dy; }
++            }
++            const int sx = bc ? half(bx) : csx, sy = bc ? half(by) : csy;
++            if (sx == 0 && sy == 0) continue;
++            for (int i = 0; i < 128; ++i) {
++                if (!o[i].live || root(i) != g) continue;
++                const uint16_t a0 = r16(b.oam, i * 8), a1 = r16(b.oam, i * 8 + 2);
++                const int x = ((a1 & 0x1FF) + sx) & 0x1FF, y = ((a0 & 0xFF) + sy) & 0xFF;
++                w16(oam_mid_, i * 8, static_cast<uint16_t>((a0 & ~0xFF) | y));
++                w16(oam_mid_, i * 8 + 2, static_cast<uint16_t>((a1 & ~0x1FF) | x));
++            }
++        }
++    }
++};
++
++}  // namespace gbarecomp
+diff --git a/src/runtime/host_platform.cpp b/src/runtime/host_platform.cpp
+index 07f5de5..1d2f79f 100644
+--- a/src/runtime/host_platform.cpp
++++ b/src/runtime/host_platform.cpp
+@@ -1,3 +1,9 @@
++#if defined(__EMSCRIPTEN__)
++#include <emscripten.h>
++#if !defined(__EMSCRIPTEN_PTHREADS__)
++extern "C" int g_web_presented;
++#endif
++#endif
+ #include "host_platform.h"
+ 
+ #include <cstdio>
+@@ -51,6 +57,11 @@ void FramePacer::reset() {
+ }
+ 
+ void FramePacer::wait_for_next_frame(uint64_t frames) {
++#if defined(__EMSCRIPTEN__) && !defined(__EMSCRIPTEN_PTHREADS__)
++    // Single-threaded browser build: the page's frame loop does the pacing;
++    // this only marks that a picture was shown.
++    { (void)frames; g_web_presented = 1; return; }
++#endif
+     if (uncapped_) {
+         next_ = clock::now();  // keep the deadline current for re-cap
+         return;
+diff --git a/src/runtime/host_window_web.cpp b/src/runtime/host_window_web.cpp
+index 82ed5f8..3b7e886 100644
+--- a/src/runtime/host_window_web.cpp
++++ b/src/runtime/host_window_web.cpp
+@@ -1,3 +1,7 @@
++#if defined(__EMSCRIPTEN__) && !defined(__EMSCRIPTEN_PTHREADS__)
++#include <emscripten.h>
++#define GBR_WEB_SINGLE 1
++#endif
+ #include "host_window.h"
+ #include "host_web_shared.h"
+ #include "host_overlay.h"
+@@ -17,6 +21,11 @@
+ #include <thread>
+ #include <vector>
+ 
++#if defined(GBR_WEB_SINGLE)
++#define GBR_SLEEP(ms) ((void)0)  /* never blocks: the page answers synchronously */
++#else
++#define GBR_SLEEP(ms) std::this_thread::sleep_for(std::chrono::milliseconds(ms))
++#endif
+ namespace gbarecomp {
+ namespace {
+ using namespace web;
+@@ -199,7 +208,7 @@ void draw_engine_long_press(const Backend& b,const Geometry& g,HostOverlay& ov)
+ }
+ 
+ void request_page_settings() {
+-    MAIN_THREAD_ASYNC_EM_ASM({ globalThis.GbrHost?.requestSettings?.(); });
++    MAIN_THREAD_ASYNC_EM_ASM({ var h=globalThis.GbrHost; if(h&&h.requestSettings) h.requestSettings(); });
+ }
+ 
+ // Page pointer events -> TouchHub (drawable pixels; view space from the layout
+@@ -281,7 +290,7 @@ bool HostWindow::open(int scale,int w,int h,const char*,const char* screen,bool
+     // Setup only: the page remains free to finish the worklet handshake.
+     const auto deadline=std::chrono::steady_clock::now()+std::chrono::seconds(15);
+     while(!backend(impl_)->shared.control.audioReady.load() && std::chrono::steady_clock::now()<deadline)
+-        std::this_thread::sleep_for(std::chrono::milliseconds(2));
++        GBR_SLEEP(2);
+     uint32_t pending=0;
+     if(backend(impl_)->shared.control.audioReady.compare_exchange_strong(pending,2)) {
+         // A missing audio device never takes video down. A late READY from the
+@@ -306,7 +315,7 @@ void HostWindow::close() {
+             impl_=nullptr; open_=false;
+             return;
+         }
+-        std::this_thread::sleep_for(std::chrono::milliseconds(2));
++        GBR_SLEEP(2);
+     }
+     if(c.detached.load(std::memory_order_acquire)==DetachSafeToFree) {
+         delete b;
+@@ -346,6 +355,10 @@ void HostWindow::present(const uint8_t* rgb,unsigned sampled_w,unsigned sampled_
+     if(!sampled_w)sampled_w=b.width;
+     if(!sampled_h)sampled_h=b.height;
+     if(sampled_w==unsigned(b.width)&&sampled_h==unsigned(b.height)) { present(rgb);return; }
++#if defined(GBR_WEB_SINGLE)
++    // The page reads each slot's own size: show the wide view at full size.
++    if(dimensions(int(sampled_w),int(sampled_h))) { b.width=int(sampled_w); b.height=int(sampled_h); present(rgb); return; }
++#endif
+     // The browser shared-memory protocol has fixed logical-size slots. Keep
+     // its portable native-density fallback until an enhanced-slot ABI exists.
+     // Read the supplied sampled stride; never reinterpret it as native RGB.
+@@ -448,7 +461,7 @@ void HostWindow::configure_touch(bool policy,std::uint32_t claims,int pad_defaul
+     hub.set_timing(350,game_long_press?450:650);
+     // The page owns the virtual pad (capability, default, saved choice) and
+     // publishes touchControls/padVisible back through the control block.
+-    MAIN_THREAD_ASYNC_EM_ASM({ globalThis.GbrHost?.configureTouch?.($0!==0,$1,$2!==0); },
++    MAIN_THREAD_ASYNC_EM_ASM({ var h=globalThis.GbrHost; if(h&&h.configureTouch) h.configureTouch($0!==0,$1,$2!==0); },
+                              policy?1:0,pad_default,emulate?1:0);
+     std::fprintf(stderr,"host_web: touch policy=%s claims=0x%x pad_default=%d emulation=%s\n",
+                  policy?"game":"none",unsigned(claims),pad_default,emulate?"on":"off");
+@@ -461,7 +474,7 @@ void HostWindow::set_touch_pad_visible(bool visible) {
+     if(!impl_)return;
+     auto& c=backend(impl_)->shared.control;
+     c.padVisible=visible && c.touchControls.load();
+-    MAIN_THREAD_ASYNC_EM_ASM({ globalThis.GbrHost?.setPadVisible?.($0!==0); },visible?1:0);
++    MAIN_THREAD_ASYNC_EM_ASM({ var h=globalThis.GbrHost; if(h&&h.setPadVisible) h.setPadVisible($0!==0); },visible?1:0);
+ }
+ void HostWindow::set_view_margins(std::uint32_t l,std::uint32_t r,std::uint32_t t,std::uint32_t bo) {
+     if(!impl_)return;
+@@ -477,7 +490,7 @@ bool HostWindow::wait_for_foreground() {
+     TouchHub::instance().cancel_all(touch_clock_ms());
+     report_paused(true); reset_audio();
+     while(c.hidden.load() && !c.quit.load())
+-        std::this_thread::sleep_for(std::chrono::milliseconds(5));
++        GBR_SLEEP(5);
+     b.backgrounded=false;
+     const bool resumed=!c.quit.load();
+     // A new playback epoch: nothing queued before the page was hidden replays.
+@@ -489,7 +502,7 @@ void HostWindow::haptic_pulse(int duration_ms,float strength) {
+     if(!impl_ || duration_ms<=0 || !(strength>0.0f)) return;
+     // navigator.vibrate lives on the page (Window), has no amplitude control
+     // and is absent on some browsers (then this is a no-op, reported once).
+-    MAIN_THREAD_ASYNC_EM_ASM({ globalThis.GbrHost?.haptic?.($0); },std::clamp(duration_ms,1,5000));
++    MAIN_THREAD_ASYNC_EM_ASM({ var h=globalThis.GbrHost; if(h&&h.haptic) h.haptic($0); },std::clamp(duration_ms,1,5000));
+ }
+ void host_haptic_pulse(int duration_ms,float strength) {
+     if(g_haptic_window) g_haptic_window->haptic_pulse(duration_ms,strength);
+@@ -498,6 +511,7 @@ void host_request_settings_menu() { g_settings_menu_requested.store(true); }
+ 
+ void web_notify_storage_write(WebStorageWrite kind,bool ok) {
+     // Async proxy: only integers cross, so nothing can be freed before it runs.
+-    MAIN_THREAD_ASYNC_EM_ASM({ globalThis.GbrSaves?.onWrite($0,$1); },static_cast<int>(kind),ok?1:0);
++    MAIN_THREAD_ASYNC_EM_ASM({ var h=globalThis.GbrSaves; if(h&&h.onWrite) h.onWrite($0,$1); },static_cast<int>(kind),ok?1:0);
+ }
+ }
++namespace gbarecomp { bool HostWindow::saved_audio_enhanced(bool&) const { return false; } }
+diff --git a/src/runtime/runtime.cpp b/src/runtime/runtime.cpp
+index 1d17757..5b43ec6 100644
+--- a/src/runtime/runtime.cpp
++++ b/src/runtime/runtime.cpp
+@@ -19,6 +19,10 @@
+ // codegen) + Phase B (dispatch wire-up) land — at which point
+ // step_once() becomes a real `runtime_dispatch` driver.
+ 
++#if defined(__EMSCRIPTEN__) && !defined(__EMSCRIPTEN_PTHREADS__)
++#include <emscripten.h>
++#define GBR_WEB_SINGLE 1
++#endif
+ #include "runtime.h"
+ #include "suspend_guard.h"
+ #include "multiplayer_launch.h"
+@@ -29,6 +33,7 @@
+ #include "gba_bios.h"
+ #include "gba_bus.h"
+ #include "gba_ppu.h"
++#include "frame_smooth.h"
+ #include "gba_rom_header.h"
+ #include "host_platform.h"
+ #include "host_window.h"
+@@ -85,6 +90,53 @@
+ #include <thread>
+ #include <vector>
+ 
++// Play log (PC app): every 15 s one line in play-log.txt (or $GBARECOMP_PLAY_LOG; "0" turns it off) with the
++// picture rate, late pictures, the 60 fps in-between counters and the current level, so stutter can be diagnosed
++// from the file while someone plays.
++namespace {
++struct PlayLog {
++    std::FILE* f = nullptr;
++    bool tried = false;
++    std::chrono::steady_clock::time_point t0, last;
++    uint64_t pics = 0, late20 = 0, late34 = 0, m0 = 0, b0 = 0, s0 = 0, i0 = 0;
++    double worst = 0;
++    int lvl_last = -1;
++    void tick(const gbarecomp::FrameSmoother& sm, const uint8_t* iwram) {
++        if (!tried) {
++            tried = true;
++            const char* e = std::getenv("GBARECOMP_PLAY_LOG");
++            if (e && e[0] == '0' && !e[1]) return;
++            f = std::fopen(e && e[0] ? e : "play-log.txt", "a");
++            if (!f) return;
++            t0 = last = std::chrono::steady_clock::now();
++            std::fprintf(f, "--- start ---\n"); std::fflush(f);
++            m0 = sm.mids; b0 = sm.blends; s0 = sm.skipped; i0 = sm.incompat;
++            return;
++        }
++        if (!f) return;
++        const auto now = std::chrono::steady_clock::now();
++        const double ms = std::chrono::duration<double, std::milli>(now - last).count();
++        last = now; ++pics;
++        if (ms > 20) ++late20;
++        if (ms > 34) ++late34;
++        if (ms > worst) worst = ms;
++        const int lvl = iwram ? iwram[0x41F8] : -1;
++        const double secs = std::chrono::duration<double>(now - t0).count();
++        if (secs < 15 && lvl == lvl_last) return;
++        if (lvl_last < 0) { lvl_last = lvl; return; }
++        std::fprintf(f, "%.0fs level %d: %.1f pics/s, late >20ms %llu, >34ms %llu, worst %.0f ms, in-between %llu (blended %llu), skipped %llu, big moves %llu\n",
++                     secs, lvl_last, pics / secs, (unsigned long long)late20, (unsigned long long)late34, worst,
++                     (unsigned long long)(sm.mids - m0), (unsigned long long)(sm.blends - b0),
++                     (unsigned long long)(sm.skipped - s0), (unsigned long long)(sm.incompat - i0));
++        std::fflush(f);
++        lvl_last = lvl; t0 = now; pics = late20 = late34 = 0; worst = 0;
++        m0 = sm.mids; b0 = sm.blends; s0 = sm.skipped; i0 = sm.incompat;
++    }
++};
++PlayLog g_play_log;
++}  // namespace
++
++
+ // Authoritative IRQ-entry counter, incremented in runtime_irq (runtime_arm.cpp)
+ // at the actual vectoring site. The TCP `counters` command surfaces it via
+ // ctx.irq_entries (the run-loop local never increments — IRQs are taken in
+@@ -100,6 +152,7 @@ void runtime_mark_present_stack_base();
+ void runtime_set_host_service_hook(std::function<void()>);
+ void runtime_set_frame_start_hook(std::function<void()>);
+ void runtime_set_vblank_input_hook(std::function<void()>);
++void runtime_set_vblank_latch_hook(std::function<void()>);
+ 
+ #ifndef GBARECOMP_DEFAULT_GAME_CONFIG
+ #define GBARECOMP_DEFAULT_GAME_CONFIG "game.toml"
+@@ -1352,6 +1405,67 @@ extern "C" unsigned g_ws_extra_left  = 0;
+ extern "C" unsigned g_ws_extra_right = 0;
+ extern "C" unsigned g_ws_view_width  = 240;
+ 
++#if defined(GBR_WEB_SINGLE)
++// Single-threaded browser build: the page drives the guest one displayed frame
++// per animation frame. run_game's stack frame stays in place (the main loop
++// unwinds with a JS exception and the stack pointer is never moved back).
++static std::function<bool()> g_web_iter;
++static double g_web_t0 = 0;
++static uint64_t g_web_frames = 0;
++extern "C" int g_web_presented;
++int g_web_presented = 0;
++extern "C" int g_web_paused;
++int g_web_paused = 0;
++// Ticks that ran 0, 1, 2 or 3 game frames, and timing resets (read by the page for its log).
++extern "C" int g_web_tick_stats[12];
++int g_web_tick_stats[12] = {};
++static double g_web_last = 0, g_web_avg = 0;
++// One game frame per display refresh when the display runs at about 60 Hz and the
++// phone keeps up: the picture then advances by exactly one frame every refresh, so
++// motion is even (the game runs 0.45% fast; the page soaks that up in the sound).
++// Otherwise (120 Hz display, or a phone that is falling behind) the number of
++// frames follows the clock, rounded, with at most 2 per refresh. A wall-clock count
++// alone gave 2-0 patterns from timer jitter, which showed as stutter and shaking.
++static void web_single_tick() {
++    if (g_web_paused) { g_web_t0 = 0; g_web_last = 0; return; }
++    const double now = emscripten_get_now();
++    const double period = 1000.0 * 280896.0 / 16777216.0;
++    if (g_web_t0 == 0) { g_web_t0 = now - period; g_web_frames = 0; g_web_avg = 0; }
++    if (g_web_last > 0) {
++        const double iv = now - g_web_last;
++        if (iv < 200) g_web_avg = g_web_avg > 0 ? g_web_avg * 0.95 + iv * 0.05 : iv;
++    }
++    g_web_last = now;
++    double debt = (now - g_web_t0) / period - static_cast<double>(g_web_frames);
++    if (debt > 4) { g_web_t0 = now - period; g_web_frames = 0; debt = 1; ++g_web_tick_stats[4]; }
++    int64_t due;
++    const bool locked = g_web_avg > 15.6 && g_web_avg < 17.8;
++    if (locked) {
++        due = debt > 2.5 ? 2 : 1;
++        if (debt < -1) { g_web_t0 = now - static_cast<double>(g_web_frames) * period; }
++    } else {
++        due = static_cast<int64_t>(debt + 0.5);
++        if (due < 0) due = 0;
++        if (due > 2) due = 2;
++    }
++    ++g_web_tick_stats[due];
++    for (int64_t k = 0; k < due; ++k) {
++        g_web_presented = 0;
++        int guard = 0;
++        while (!g_web_presented) {
++            if (!g_web_iter()) { emscripten_cancel_main_loop(); EM_ASM({ var h=globalThis.GbrHost; if(h&&h.ended) h.ended(); }); return; }
++            if (++guard > 20000) break;
++        }
++        ++g_web_frames;
++    }
++}
++template <class F> [[noreturn]] static void web_single_run(F& f) {
++    g_web_iter = [&f]() { return f(); };
++    emscripten_set_main_loop(web_single_tick, 0, 1);
++    __builtin_unreachable();
++}
++#endif
++
+ int run_game(int argc, char** argv, const RunOptions& opts) {
+     // Game runners install this before entering run_game(). Clear it on every
+     // return path so a later game launched in the same process cannot call a
+@@ -2690,6 +2804,42 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
+     struct ClearVblankInputHook {
+         ~ClearVblankInputHook() { runtime_set_vblank_input_hook(nullptr); }
+     } clear_vblank_input_hook;
++    // 60 fps smoothing (on by default; GBARECOMP_SMOOTH=0 turns it off).
++    FrameSmoother smoother;
++    if (const char* e = std::getenv("GBARECOMP_SMOOTH")) smoother.enabled = !(e[0] == '0' && e[1] == '\0');
++#if defined(GBR_WEB_SINGLE)
++    smoother.check_every = 8;
++#endif
++    if (const char* e = std::getenv("GBARECOMP_SMOOTH_CHECK_EVERY")) smoother.check_every = std::max(1, std::atoi(e));
++    if (const char* e = std::getenv("GBARECOMP_SMOOTH_BLEND")) smoother.blend_ = !(e[0] == '0' && e[1] == '\0');
++    if (smoother.enabled) {
++        runtime_set_vblank_latch_hook([&]() {
++            auto v = bus.vram_read_view();
++            smoother.on_latch(bus.io().read16(0x000), bus.io().raw(), v.data(), v.size(),
++                              bus.oam_ptr(), bus.pal_ptr());
++            // Test capture for headless runs: GBARECOMP_SMOOTH_TEST=<dir>[,start,count]
++            static const char* tdir = std::getenv("GBARECOMP_SMOOTH_TEST");
++            if (tdir && ppu.has_latched_framebuffer()) {
++                static std::string dir; static uint64_t t0 = 0, tn = 60;
++                if (dir.empty()) { std::string t(tdir); auto c = t.find(','); dir = t.substr(0, c);
++                    if (c != std::string::npos) { t0 = std::strtoull(t.c_str() + c + 1, nullptr, 0);
++                        auto c2 = t.find(',', c + 1); if (c2 != std::string::npos) tn = std::strtoull(t.c_str() + c2 + 1, nullptr, 0); } }
++                const uint64_t f = ppu.frame_count();
++                if (f >= t0 && f < t0 + tn) {
++                    std::vector<uint8_t> fb(ppu.latched_framebuffer(), ppu.latched_framebuffer() + ppu.render_bytes());
++                    char p[512];
++                    std::snprintf(p, sizeof p, "%s/r_%06llu.png", dir.c_str(), (unsigned long long)f);
++                    write_png(p, fb.data(), ppu.render_width(), ppu.render_height());
++                    const bool mid = smoother.apply(ppu, fb.data(), fb.size());
++                    std::snprintf(p, sizeof p, "%s/s_%06llu%s.png", dir.c_str(), (unsigned long long)f, mid ? "m" : "");
++                    write_png(p, fb.data(), ppu.render_width(), ppu.render_height());
++                }
++            }
++        });
++    }
++    struct ClearVblankLatchHook {
++        ~ClearVblankLatchHook() { runtime_set_vblank_latch_hook(nullptr); }
++    } clear_vblank_latch_hook;
+     // Structured TCP commands shared by every TCP session: engine touch
+     // commands first, then the game's own extension.
+     auto tcp_extension = [&](const std::string& request, std::string& reply) -> bool {
+@@ -4283,7 +4433,11 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
+ #if defined(GBARECOMP_WEB_HOST)
+             // The page re-presents its private staging copy; publishing here
+             // would count paused frames as new ones.
++#if defined(GBR_WEB_SINGLE)
++            break;  // the page stops calling the frame loop while paused
++#else
+             std::this_thread::sleep_for(std::chrono::milliseconds(5));
++#endif
+ #else
+             // Keep the native window (and any runtime UI drawn over the
+             // game renderer) alive while the guest is held still.
+@@ -4315,7 +4469,11 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
+     // relies on the per-frame runner loop (which present-in-place bypasses).
+     const char* pip_env = std::getenv("GBARECOMP_PRESENT_IN_PLACE");
+     const bool present_in_place =
+-        (pip_env ? pip_env[0] != '0' : true) && !ws_sidecar_enabled();
++        (pip_env ? pip_env[0] != '0' : true) && !ws_sidecar_enabled()
++#if defined(GBR_WEB_SINGLE)
++        && false  // presenting from inside guest code cannot yield to the page
++#endif
++        ;
+ 
+     // ── Diagnostic replay: capture (default for interactive play) or playback.
+     // Inputs are sampled at the present-in-place VBlank hook, the one frame
+@@ -4562,8 +4720,27 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
+                                    bus.pal_ptr());
+                     }
+                 }
++                if (present_frame && !fast_forward_active)
++                    smoother.apply(ppu, live_fb.data(), ppu.render_bytes());
++                else if (fast_forward_active) smoother.reset();
++#if !defined(GBR_WEB_SINGLE)
++                if (present_frame) g_play_log.tick(smoother, bus.iwram_ptr());
++#endif
++#if defined(GBR_WEB_SINGLE)
++                g_web_tick_stats[5] = (int)smoother.mids; g_web_tick_stats[6] = (int)smoother.skipped;
++                g_web_tick_stats[7] = (int)smoother.blends; g_web_tick_stats[8] = (int)smoother.incompat;
++#endif
+                 if (phase_active) fp_t1 = FramePhaseRing::now_ns();
+                 if (present_frame) present_live_frame();
++                if (framedump_dir && frame >= framedump_start &&
++                    framedump_written < framedump_max) {
++                    char p[512];
++                    std::snprintf(p, sizeof(p), "%s/f_%06llu.png", framedump_dir,
++                                  static_cast<unsigned long long>(frame));
++                    write_png(p, live_fb.data(), ppu.render_width(),
++                              ppu.render_height());
++                    if (++framedump_written >= framedump_max) host_quit = true;
++                }
+                 if (phase_active) fp_t2 = FramePhaseRing::now_ns();
+                 drain_host_audio();
+                 // Windowed present-in-place stays inside one step_once() for
+@@ -4592,6 +4769,9 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
+                 last_presented_frame = frame;
+                 if (present_frame) {
+                     ++frames_presented;
++#if defined(GBR_WEB_SINGLE)
++                    g_web_presented = 1;
++#endif
+                     if (args.frames >= 0 && frames_presented >= args.frames)
+                         host_quit = true;
+                     if (pacer) pacer->wait_for_next_frame(banked_frames);
+@@ -4906,7 +5086,11 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
+     // Two timestamps only: normal render/audio/present work stays inside,
+     // startup/state restore and exit saves/dumps stay outside the interval.
+     const auto gameplay_begin = std::chrono::steady_clock::now();
++#if defined(GBR_WEB_SINGLE)
++    auto web_iter = [&]() -> bool { for (;;) {
++#else
+     for (uint64_t i = 0; i < step_budget && !host_quit; ++i) {
++#endif
+         // Paused: hold the guest still, keep the window alive (input pump,
+         // re-present, ~100 Hz idle). Applies to windowed play only.
+         service_host_pause();
+@@ -5003,6 +5187,16 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
+                                    bus.pal_ptr());
+                     }
+                 }
++                if (present_frame && !fast_forward_active)
++                    smoother.apply(ppu, live_fb.data(), ppu.render_bytes());
++                else if (fast_forward_active) smoother.reset();
++#if !defined(GBR_WEB_SINGLE)
++                if (present_frame) g_play_log.tick(smoother, bus.iwram_ptr());
++#endif
++#if defined(GBR_WEB_SINGLE)
++                g_web_tick_stats[5] = (int)smoother.mids; g_web_tick_stats[6] = (int)smoother.skipped;
++                g_web_tick_stats[7] = (int)smoother.blends; g_web_tick_stats[8] = (int)smoother.incompat;
++#endif
+                 if (phase_active) fp_t1 = FramePhaseRing::now_ns();
+                 if (present_frame) present_live_frame();
+                 // Framedump (capture runs only) is attributed to present_us.
+@@ -5032,6 +5226,9 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
+                 last_presented_frame = frame;
+                 if (present_frame) {
+                     ++frames_presented;
++#if defined(GBR_WEB_SINGLE)
++                    g_web_presented = 1;
++#endif
+                     if (args.frames >= 0 && frames_presented >= args.frames) {
+                         host_quit = true;
+                     }
+@@ -5063,7 +5260,12 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
+                 static_cast<uint64_t>(args.frames)) {
+             break;
+         }
++#if defined(GBR_WEB_SINGLE)
++        return !host_quit; } return false; };
++    web_single_run(web_iter);  // never returns
++#else
+     }
++#endif
+     const double gameplay_seconds = std::chrono::duration<double>(
+         std::chrono::steady_clock::now() - gameplay_begin).count();
+     const uint64_t gameplay_end_frame = ppu.frame_count();
+diff --git a/src/runtime/runtime_bus_bridge.cpp b/src/runtime/runtime_bus_bridge.cpp
+index fa45091..0f755a4 100644
+--- a/src/runtime/runtime_bus_bridge.cpp
++++ b/src/runtime/runtime_bus_bridge.cpp
+@@ -83,6 +83,9 @@ std::function<void()> g_frame_start_hook;
+ // before the VBlank IRQ is requested, so the guest's per-frame input read sees
+ // the policy's answer for this frame. Null preserves the established path.
+ std::function<void()> g_vblank_input_hook;
++// Optional presentation snapshot (60 fps smoothing): runs right after the
++// finished frame is latched, so it sees the exact state that frame used.
++std::function<void()> g_vblank_latch_hook;
+ static const bool g_phase_prof = [] {
+     const char* e = std::getenv("GBARECOMP_PHASE_PROF");
+     bool on = (e != nullptr) && !(e[0] == '0' && e[1] == '\0');
+@@ -662,6 +665,7 @@ static void tick_devices(gba::GbaBus* bus, gba::GbaPpu* ppu, uint32_t cycles) {
+         }
+         if (events.vblank_started) {
+             GBA_DEVICE_PHASE(5,ppu->mark_framebuffer_latched());
++            if (!g_session_execution && g_vblank_latch_hook) g_vblank_latch_hook();
+             ++g_runtime_vblank_starts;
+             GBA_DEVICE_PHASE(5,bus->io().run_timed_dma(1));   // VBlank-timed DMA
+             if (!g_session_execution && g_vblank_input_hook) g_vblank_input_hook();
+@@ -1098,6 +1102,10 @@ void runtime_set_frame_start_hook(std::function<void()> h) {
+     g_frame_start_hook = std::move(h);
+ }
+ 
++void runtime_set_vblank_latch_hook(std::function<void()> h) {
++    g_vblank_latch_hook = std::move(h);
++}
++
+ void runtime_set_vblank_input_hook(std::function<void()> h) {
+     g_vblank_input_hook = std::move(h);
+ }

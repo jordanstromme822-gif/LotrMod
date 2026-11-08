@@ -1,0 +1,242 @@
+[game]
+name = "The Lord of the Rings: The Return of the King"
+short_name = "rotk"
+
+[program]
+name = "The Lord of the Rings: The Return of the King (USA, Europe)"
+id = "BLRE"
+load_address = 0x08000000
+size = 0x01000000
+entry_pc = 0x08000000
+
+[identity]
+sha1 = "ec3d126d37ea6e2ad7030d8a99cf87c6e46c03fd"
+
+[bios]
+path = "gbarecomp/bios/gba_bios.bin"
+hle = true
+
+[rom]
+path = "roms/rotk.gba"
+sha1 = "ec3d126d37ea6e2ad7030d8a99cf87c6e46c03fd"
+
+[save]
+type = "eeprom"
+size = 512
+path = "saves/rotk.sav"
+
+[runtime]
+window_title = "RotkRecomp"
+
+[video]
+view_width = 240
+
+[[code_copy]]
+runtime_start = 0x03000050
+source_start = 0x08FF9FE8
+size = 0x00000040
+note = "IWRAM copy found by comparing live IWRAM with the ROM"
+
+[[code_copy]]
+runtime_start = 0x030000A0
+source_start = 0x08FFA038
+size = 0x00000560
+note = "IWRAM copy found by comparing live IWRAM with the ROM"
+
+[[code_copy]]
+runtime_start = 0x03000610
+source_start = 0x08FFA5A8
+size = 0x00000520
+note = "IWRAM copy found by comparing live IWRAM with the ROM"
+
+[[code_copy]]
+runtime_start = 0x03000BE0
+source_start = 0x08FFAB78
+size = 0x0000057C
+note = "IWRAM copy found by comparing live IWRAM with the ROM"
+
+[[code_copy]]
+runtime_start = 0x03001D1C
+source_start = 0x08000194
+size = 0x000001F4
+note = "IWRAM copy found by comparing live IWRAM with the ROM"
+
+[[code_copy]]
+runtime_start = 0x03002C30
+source_start = 0x0800E208
+size = 0x000000F8
+note = "IWRAM copy found by comparing live IWRAM with the ROM"
+
+[[code_copy]]
+runtime_start = 0x03002D38
+source_start = 0x0800CD64
+size = 0x000004D4
+note = "IWRAM copy found by comparing live IWRAM with the ROM"
+
+[[code_copy]]
+runtime_start = 0x030035E0
+source_start = 0x080002DC
+size = 0x00000350
+note = "IWRAM copy found by comparing live IWRAM with the ROM"
+
+[[code_copy]]
+runtime_start = 0x03003940
+source_start = 0x0800D1D4
+size = 0x000001F8
+note = "IWRAM copy found by comparing live IWRAM with the ROM"
+
+[[code_copy]]
+runtime_start = 0x03005FD8
+source_start = 0x0800D598
+size = 0x000000E0
+note = "IWRAM copy found by comparing live IWRAM with the ROM"
+
+[[code_copy]]
+runtime_start = 0x030060E8
+source_start = 0x0800D3D4
+size = 0x000001BC
+note = "IWRAM copy found by comparing live IWRAM with the ROM"
+
+[[code_copy]]
+runtime_start = 0x03006A24
+source_start = 0x0800DFC8
+size = 0x000001E4
+note = "IWRAM copy found by comparing live IWRAM with the ROM"
+
+[[code_copy]]
+runtime_start = 0x03006C18
+source_start = 0x0800D680
+size = 0x000000D4
+note = "IWRAM copy found by comparing live IWRAM with the ROM"
+
+[[code_copy]]
+runtime_start = 0x03006DEC
+source_start = 0x0800D760
+size = 0x00000864
+note = "IWRAM copy found by comparing live IWRAM with the ROM"
+
+[[code_copy]]
+runtime_start = 0x03007690
+source_start = 0x0800E17C
+size = 0x0000008C
+note = "IWRAM copy found by comparing live IWRAM with the ROM"
+
+[[extra_func]]
+addr = 0x03000004
+mode = "arm"
+
+[[extra_func]]
+addr = 0x03000094
+mode = "arm"
+
+[[extra_func]]
+addr = 0x030002EC
+mode = "arm"
+
+[[extra_func]]
+addr = 0x03000320
+mode = "arm"
+
+[[extra_func]]
+addr = 0x030003E8
+mode = "arm"
+
+[[extra_func]]
+addr = 0x03000434
+mode = "arm"
+
+[[extra_func]]
+addr = 0x030004B4
+mode = "arm"
+
+[[extra_func]]
+addr = 0x03000578
+mode = "arm"
+
+[[extra_func]]
+addr = 0x03000BF0
+mode = "arm"
+
+[[extra_func]]
+addr = 0x03001134
+mode = "arm"
+
+[[extra_func]]
+addr = 0x03003628
+mode = "arm"
+
+[[extra_func]]
+addr = 0x03003694
+mode = "arm"
+
+[[extra_func]]
+addr = 0x030036A0
+mode = "arm"
+
+[[extra_func]]
+addr = 0x030036BC
+mode = "arm"
+
+[[extra_func]]
+addr = 0x030036D4
+mode = "arm"
+
+[[extra_func]]
+addr = 0x03003900
+mode = "arm"
+
+[[extra_func]]
+addr = 0x080170AC
+mode = "thumb"
+
+[[extra_func]]
+addr = 0x080170CC
+mode = "thumb"
+
+[[extra_func]]
+addr = 0x0802A0E8
+mode = "thumb"
+
+[[extra_func]]
+addr = 0x0802A20C
+mode = "thumb"
+
+[[extra_func]]
+addr = 0x0804C150
+mode = "thumb"
+
+[[extra_func]]
+addr = 0x0804CBA4
+mode = "thumb"
+
+[[extra_func]]
+addr = 0x0804D1E4
+mode = "thumb"
+
+[[extra_func]]
+addr = 0x0804D1FC
+mode = "thumb"
+
+[[extra_func]]
+addr = 0x0804D214
+mode = "thumb"
+
+[[extra_func]]
+addr = 0x0804D35C
+mode = "thumb"
+
+[[extra_func]]
+addr = 0x0804D65C
+mode = "thumb"
+
+[[extra_func]]
+addr = 0x0804D7CC
+mode = "thumb"
+
+[[extra_func]]
+addr = 0x0804D818
+mode = "thumb"
+
+[[extra_func]]
+addr = 0x0804D824
+mode = "thumb"

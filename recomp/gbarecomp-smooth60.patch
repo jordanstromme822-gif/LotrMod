@@ -1,0 +1,394 @@
+diff --git a/src/gba/gba_ppu.cpp b/src/gba/gba_ppu.cpp
+index d9d1604..3f50353 100644
+--- a/src/gba/gba_ppu.cpp
++++ b/src/gba/gba_ppu.cpp
+@@ -66,6 +66,9 @@ extern "C" int (*g_ws_obj_attr_x_provider)(int, std::uint16_t,
+ // still run first, so a game can re-place known-safe HUD sprites and clip the
+ // rest.
+ extern "C" int g_ws_obj_native_clip = 0;
++extern "C" const uint8_t* g_ws_render_io = nullptr;
++extern "C" int g_ws_margin_scroll_override_on = 0;
++extern "C" int g_ws_margin_scroll_override[4][2] = {};
+ extern "C" int (*g_ws_obj_attr_y_provider)(int, std::uint16_t,
+                                             std::uint16_t, std::uint16_t,
+                                             int*) = nullptr;
+@@ -2596,6 +2599,13 @@ void GbaPpu::render(uint8_t* rgb,
+                     const uint8_t* vram,
+                     const uint8_t* oam,
+                     const uint8_t* pal) const {
++    // Whole-frame re-renders (screenshots, 60 fps in-between pictures) tell
++    // margin providers which register page they are drawing with.
++    struct RenderIoScope {
++        const uint8_t* prev;
++        explicit RenderIoScope(const uint8_t* io) : prev(g_ws_render_io) { g_ws_render_io = io; }
++        ~RenderIoScope() { g_ws_render_io = prev; }
++    } render_io_scope(io);
+     if (!view_expanded()) {
+         // Faithful path â€” literally unchanged from before view expansion existed.
+         for (uint32_t y = 0; y < kScreenHeight; ++y) {
+diff --git a/src/gba/gba_ppu.h b/src/gba/gba_ppu.h
+index 69c2465..513faa3 100644
+--- a/src/gba/gba_ppu.h
++++ b/src/gba/gba_ppu.h
+@@ -358,6 +358,14 @@ extern "C" int g_ws_pillarbox_right;
+ // Optional per-game interpretation of the 9-bit OBJ X field in expanded-view
+ // rendering. Hardware-faithful signed decoding remains the default.
+ extern "C" int (*g_ws_obj_x_provider)(int raw_x, int* out_x);
++// Register page of a whole-frame GbaPpu::render() in progress (nullptr while
++// the emulated scanline renderer runs). Margin providers read scroll from it.
++extern "C" const std::uint8_t* g_ws_render_io;
++// Optional scroll for authored margins, per BG (x,y), in the coordinates of
++// the frame's own map (may leave 0..511 wrap meaning). Set by the 60 fps
++// in-between renderer while it draws; providers prefer it when on.
++extern "C" int g_ws_margin_scroll_override_on;
++extern "C" int g_ws_margin_scroll_override[4][2];
+ // Richer per-game OBJ placement hook for screen-space UI. Called only by the
+ // expanded renderer and before g_ws_obj_x_provider; receives the OAM index and
+ // raw attributes so a game can distinguish HUD sprites from world objects.
+diff --git a/src/runtime/frame_smooth.h b/src/runtime/frame_smooth.h
+new file mode 100644
+index 0000000..28465d6
+--- /dev/null
++++ b/src/runtime/frame_smooth.h
+@@ -0,0 +1,219 @@
++#pragma once
++// 60 fps smoothing for games that draw a new picture every other VBlank.
++//
++// The game's own logic still runs at its normal rate. When a new picture
++// arrives, the host first shows an in-between picture rendered from the new
++// frame's video memory with every background scroll and every matched sprite
++// moved halfway back toward the previous picture; the next VBlank (where the
++// game would have repeated the picture) shows the new frame itself. This adds
++// one VBlank (~16.7 ms) of display delay and never touches emulated state.
++//
++// Safety: the in-between picture is only drawn when re-rendering the new
++// frame from the snapshot reproduces the real picture exactly (no mid-frame
++// raster effects), the display setup is unchanged and the camera moved a
++// small distance. Otherwise the real frame is shown untouched.
++#include <cstdint>
++#include <cstdlib>
++#include <cstring>
++#include <vector>
++
++#include "gba_ppu.h"
++
++namespace gbarecomp {
++
++class FrameSmoother {
++public:
++    struct Snap {
++        std::vector<uint8_t> io, vram, oam, pal;
++        uint16_t dispcnt = 0;
++        bool valid = false;
++        void take(uint16_t d, const uint8_t* i, const uint8_t* v, std::size_t vn,
++                  const uint8_t* o, const uint8_t* p) {
++            io.assign(i, i + 0x400);
++            vram.assign(v, v + vn);
++            oam.assign(o, o + 0x400);
++            pal.assign(p, p + 0x400);
++            dispcnt = d;
++            valid = true;
++        }
++    };
++
++    bool enabled = true;
++    uint64_t mids = 0, skipped = 0;
++
++    // Called right after a frame is latched (emulation thread).
++    void on_latch(uint16_t dispcnt, const uint8_t* io, const uint8_t* vram,
++                  std::size_t vram_size, const uint8_t* oam, const uint8_t* pal) {
++        if (!enabled) return;
++        latest_.take(dispcnt, io, vram, vram_size, oam, pal);
++        fresh_ = true;
++    }
++
++    void reset() { prev_.valid = false; fresh_ = false; last_fb_.clear(); }
++
++    // fb holds the latched (real) frame about to be shown. May replace it with
++    // an in-between picture. Returns true if it did.
++    bool apply(const gba::GbaPpu& ppu, uint8_t* fb, std::size_t bytes) {
++        if (!enabled || !fresh_ || !latest_.valid) return false;
++        fresh_ = false;
++        if (bytes != last_bytes_) {  // view size changed
++            prev_.valid = false;
++            last_fb_.clear();
++            last_bytes_ = bytes;
++        }
++        const bool repeat = last_fb_.size() == bytes &&
++                            std::memcmp(last_fb_.data(), fb, bytes) == 0;
++        if (repeat) return false;  // shows the real (already delayed) frame
++        last_fb_.assign(fb, fb + bytes);
++        Snap& b = latest_;
++        bool did = false;
++        if (prev_.valid && compatible(prev_, b)) {
++            check_.resize(bytes);
++            ppu.render(check_.data(), b.dispcnt, b.io.data(), b.vram.data(),
++                       b.oam.data(), b.pal.data());
++            if (std::memcmp(check_.data(), fb, bytes) == 0) {
++                io_mid_ = b.io;
++                oam_mid_ = b.oam;
++                vram_mid_ = b.vram;
++                mid_scroll(prev_, b);
++                mid_sprites(prev_, b);
++                for (int bg = 0; bg < 4; ++bg) {
++                    gba::g_ws_margin_scroll_override[bg][0] = margin_[bg][0];
++                    gba::g_ws_margin_scroll_override[bg][1] = margin_[bg][1];
++                }
++                gba::g_ws_margin_scroll_override_on = 1;
++                ppu.render(fb, b.dispcnt, io_mid_.data(), vram_mid_.data(),
++                           oam_mid_.data(), b.pal.data());
++                gba::g_ws_margin_scroll_override_on = 0;
++                did = true;
++                ++mids;
++            } else {
++                ++skipped;
++            }
++        }
++        std::swap(prev_, latest_);
++        latest_.valid = false;
++        return did;
++    }
++
++private:
++    Snap latest_, prev_;
++    bool fresh_ = false;
++    std::vector<uint8_t> last_fb_, check_, io_mid_, oam_mid_, vram_mid_;
++    std::size_t last_bytes_ = 0;
++    int margin_[4][2] = {};
++
++    static uint16_t r16(const std::vector<uint8_t>& v, std::size_t o) {
++        return static_cast<uint16_t>(v[o] | (v[o + 1] << 8));
++    }
++    static void w16(std::vector<uint8_t>& v, std::size_t o, uint16_t x) {
++        v[o] = static_cast<uint8_t>(x);
++        v[o + 1] = static_cast<uint8_t>(x >> 8);
++    }
++    // Signed difference a-b on a ring of `mod` values.
++    static int wrap_delta(int a, int b, int mod) {
++        int d = (a - b) % mod;
++        if (d < -mod / 2) d += mod;
++        if (d >= mod / 2) d -= mod;
++        return d;
++    }
++
++    static bool compatible(const Snap& a, const Snap& b) {
++        if (a.dispcnt != b.dispcnt) return false;
++        if ((b.dispcnt & 7) != 0) return false;  // text-mode backgrounds only
++        // BG control, window, blend and brightness setup must be unchanged.
++        if (std::memcmp(&a.io[0x08], &b.io[0x08], 8) != 0) return false;
++        if (std::memcmp(&a.io[0x40], &b.io[0x40], 0x16) != 0) return false;
++        for (int bg = 0; bg < 4; ++bg) {
++            if (!(b.dispcnt & (0x100 << bg))) continue;
++            bool c1, c2;
++            const int dx = axis_delta(r16(a.io, 0x10 + bg * 4) & 511, r16(b.io, 0x10 + bg * 4) & 511, c1);
++            const int dy = axis_delta(r16(a.io, 0x12 + bg * 4) & 511, r16(b.io, 0x12 + bg * 4) & 511, c2);
++            if (std::abs(dx) > 24 || std::abs(dy) > 24) return false;
++        }
++        return true;
++    }
++
++    // True camera move a->b on one axis of one layer, as (scroll_a - scroll_b).
++    // This game scrolls its world layers coarsely by redrawing the whole map one
++    // tile over and keeps the fine scroll in 0..7, so there the smallest move
++    // that matches modulo 8 is the real one.
++    static int axis_delta(int sa, int sb, bool& coarse) {
++        coarse = sa < 8 && sb < 8;
++        if (!coarse) return wrap_delta(sa, sb, 512);
++        int d = sa - sb;           // -7..7
++        if (d > 4) d -= 8; else if (d < -4) d += 8;
++        return d;
++    }
++
++    int cam_dx_ = 0, cam_dy_ = 0;
++
++    // Halfway scroll for every layer. A layer whose halfway view would leave the
++    // area the game drew in the new frame is drawn from the previous frame's
++    // map instead (copied into vram_mid_).
++    void mid_scroll(const Snap& a, const Snap& b) {
++        cam_dx_ = cam_dy_ = 0;
++        bool cam_set = false;
++        for (int bg = 0; bg < 4; ++bg) {
++            const std::size_t ox = 0x10 + bg * 4, oy = ox + 2;
++            const int ax = r16(a.io, ox) & 511, bx = r16(b.io, ox) & 511;
++            const int ay = r16(a.io, oy) & 511, by = r16(b.io, oy) & 511;
++            bool cx = false, cy = false;
++            const int dx = axis_delta(ax, bx, cx), dy = axis_delta(ay, by, cy);
++            if (bg >= 1 && !cam_set && (b.dispcnt & (0x100 << bg)) && (cx || cy)) {
++                cam_dx_ = dx; cam_dy_ = dy; cam_set = true;
++            }
++            int mx = bx + dx / 2, my = by + dy / 2;
++            margin_[bg][0] = mx;  // in the new frame's own map coordinates
++            margin_[bg][1] = my;
++            const bool use_a = (cx && (mx < 0 || mx > 7)) || (cy && (my < 0 || my > 7));
++            if (use_a) {
++                mx = ax - (dx - dx / 2);
++                my = ay - (dy - dy / 2);
++                const uint16_t cnt = r16(a.io, 0x08 + bg * 2);
++                const std::size_t base = static_cast<std::size_t>((cnt >> 8) & 31) * 0x800;
++                static const std::size_t sizes[4] = {0x800, 0x1000, 0x1000, 0x2000};
++                const std::size_t len = sizes[cnt >> 14];
++                if (base + len <= vram_mid_.size())
++                    std::memcpy(&vram_mid_[base], &a.vram[base], len);
++            }
++            w16(io_mid_, ox, static_cast<uint16_t>(mx & 511));
++            w16(io_mid_, oy, static_cast<uint16_t>(my & 511));
++        }
++        if (!cam_set) {  // fall back to the first enabled world layer
++            for (int bg = 1; bg < 4 && !cam_set; ++bg) {
++                if (!(b.dispcnt & (0x100 << bg))) continue;
++                bool c1, c2;
++                cam_dx_ = axis_delta(r16(a.io, 0x10 + bg * 4) & 511, r16(b.io, 0x10 + bg * 4) & 511, c1);
++                cam_dy_ = axis_delta(r16(a.io, 0x12 + bg * 4) & 511, r16(b.io, 0x12 + bg * 4) & 511, c2);
++                cam_set = true;
++            }
++        }
++    }
++
++    // Sprites: the camera move is the main source of judder, so every sprite
++    // that belongs to the world is shifted with the halfway camera. Sprites
++    // that stayed exactly in place on screen while the camera moved (the HUD)
++    // are left alone. Characters' own steps still change at the game's rate.
++    void mid_sprites(const Snap& a, const Snap& b) {
++        const int cdx = cam_dx_, cdy = cam_dy_;
++        // Screen shift of world sprites in the in-between picture:
++        // pos_mid = pos_B + (scroll_B - scroll_mid) = pos_B - (d/2).
++        const int sx = -(cdx / 2), sy = -(cdy / 2);
++        if (sx == 0 && sy == 0) return;
++        for (int i = 0; i < 128; ++i) {
++            const uint16_t a0 = r16(b.oam, i * 8), a1 = r16(b.oam, i * 8 + 2);
++            if ((a0 & 0x0300) == 0x0200) continue;  // hidden
++            // HUD test: identical entry somewhere in the previous frame.
++            bool hud = false;
++            for (int j = 0; j < 128 && !hud; ++j)
++                hud = std::memcmp(&a.oam[j * 8], &b.oam[i * 8], 6) == 0;
++            if (hud) continue;
++            const int x = ((a1 & 0x1FF) + sx) & 0x1FF, y = ((a0 & 0xFF) + sy) & 0xFF;
++            w16(oam_mid_, i * 8, static_cast<uint16_t>((a0 & ~0xFF) | y));
++            w16(oam_mid_, i * 8 + 2, static_cast<uint16_t>((a1 & ~0x1FF) | x));
++        }
++    }
++};
++
++}  // namespace gbarecomp
+diff --git a/src/runtime/runtime.cpp b/src/runtime/runtime.cpp
+index 1d17757..9d0314c 100644
+--- a/src/runtime/runtime.cpp
++++ b/src/runtime/runtime.cpp
+@@ -29,6 +29,7 @@
+ #include "gba_bios.h"
+ #include "gba_bus.h"
+ #include "gba_ppu.h"
++#include "frame_smooth.h"
+ #include "gba_rom_header.h"
+ #include "host_platform.h"
+ #include "host_window.h"
+@@ -100,6 +101,7 @@ void runtime_mark_present_stack_base();
+ void runtime_set_host_service_hook(std::function<void()>);
+ void runtime_set_frame_start_hook(std::function<void()>);
+ void runtime_set_vblank_input_hook(std::function<void()>);
++void runtime_set_vblank_latch_hook(std::function<void()>);
+ 
+ #ifndef GBARECOMP_DEFAULT_GAME_CONFIG
+ #define GBARECOMP_DEFAULT_GAME_CONFIG "game.toml"
+@@ -2690,6 +2692,37 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
+     struct ClearVblankInputHook {
+         ~ClearVblankInputHook() { runtime_set_vblank_input_hook(nullptr); }
+     } clear_vblank_input_hook;
++    // 60 fps smoothing (on by default; GBARECOMP_SMOOTH=0 turns it off).
++    FrameSmoother smoother;
++    if (const char* e = std::getenv("GBARECOMP_SMOOTH")) smoother.enabled = !(e[0] == '0' && e[1] == '\0');
++    if (smoother.enabled) {
++        runtime_set_vblank_latch_hook([&]() {
++            auto v = bus.vram_read_view();
++            smoother.on_latch(bus.io().read16(0x000), bus.io().raw(), v.data(), v.size(),
++                              bus.oam_ptr(), bus.pal_ptr());
++            // Test capture for headless runs: GBARECOMP_SMOOTH_TEST=<dir>[,start,count]
++            static const char* tdir = std::getenv("GBARECOMP_SMOOTH_TEST");
++            if (tdir && ppu.has_latched_framebuffer()) {
++                static std::string dir; static uint64_t t0 = 0, tn = 60;
++                if (dir.empty()) { std::string t(tdir); auto c = t.find(','); dir = t.substr(0, c);
++                    if (c != std::string::npos) { t0 = std::strtoull(t.c_str() + c + 1, nullptr, 0);
++                        auto c2 = t.find(',', c + 1); if (c2 != std::string::npos) tn = std::strtoull(t.c_str() + c2 + 1, nullptr, 0); } }
++                const uint64_t f = ppu.frame_count();
++                if (f >= t0 && f < t0 + tn) {
++                    std::vector<uint8_t> fb(ppu.latched_framebuffer(), ppu.latched_framebuffer() + ppu.render_bytes());
++                    char p[512];
++                    std::snprintf(p, sizeof p, "%s/r_%06llu.png", dir.c_str(), (unsigned long long)f);
++                    write_png(p, fb.data(), ppu.render_width(), ppu.render_height());
++                    const bool mid = smoother.apply(ppu, fb.data(), fb.size());
++                    std::snprintf(p, sizeof p, "%s/s_%06llu%s.png", dir.c_str(), (unsigned long long)f, mid ? "m" : "");
++                    write_png(p, fb.data(), ppu.render_width(), ppu.render_height());
++                }
++            }
++        });
++    }
++    struct ClearVblankLatchHook {
++        ~ClearVblankLatchHook() { runtime_set_vblank_latch_hook(nullptr); }
++    } clear_vblank_latch_hook;
+     // Structured TCP commands shared by every TCP session: engine touch
+     // commands first, then the game's own extension.
+     auto tcp_extension = [&](const std::string& request, std::string& reply) -> bool {
+@@ -4562,8 +4595,20 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
+                                    bus.pal_ptr());
+                     }
+                 }
++                if (present_frame && !fast_forward_active)
++                    smoother.apply(ppu, live_fb.data(), ppu.render_bytes());
++                else if (fast_forward_active) smoother.reset();
+                 if (phase_active) fp_t1 = FramePhaseRing::now_ns();
+                 if (present_frame) present_live_frame();
++                if (framedump_dir && frame >= framedump_start &&
++                    framedump_written < framedump_max) {
++                    char p[512];
++                    std::snprintf(p, sizeof(p), "%s/f_%06llu.png", framedump_dir,
++                                  static_cast<unsigned long long>(frame));
++                    write_png(p, live_fb.data(), ppu.render_width(),
++                              ppu.render_height());
++                    if (++framedump_written >= framedump_max) host_quit = true;
++                }
+                 if (phase_active) fp_t2 = FramePhaseRing::now_ns();
+                 drain_host_audio();
+                 // Windowed present-in-place stays inside one step_once() for
+@@ -5003,6 +5048,9 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
+                                    bus.pal_ptr());
+                     }
+                 }
++                if (present_frame && !fast_forward_active)
++                    smoother.apply(ppu, live_fb.data(), ppu.render_bytes());
++                else if (fast_forward_active) smoother.reset();
+                 if (phase_active) fp_t1 = FramePhaseRing::now_ns();
+                 if (present_frame) present_live_frame();
+                 // Framedump (capture runs only) is attributed to present_us.
+diff --git a/src/runtime/runtime_bus_bridge.cpp b/src/runtime/runtime_bus_bridge.cpp
+index fa45091..0f755a4 100644
+--- a/src/runtime/runtime_bus_bridge.cpp
++++ b/src/runtime/runtime_bus_bridge.cpp
+@@ -83,6 +83,9 @@ std::function<void()> g_frame_start_hook;
+ // before the VBlank IRQ is requested, so the guest's per-frame input read sees
+ // the policy's answer for this frame. Null preserves the established path.
+ std::function<void()> g_vblank_input_hook;
++// Optional presentation snapshot (60 fps smoothing): runs right after the
++// finished frame is latched, so it sees the exact state that frame used.
++std::function<void()> g_vblank_latch_hook;
+ static const bool g_phase_prof = [] {
+     const char* e = std::getenv("GBARECOMP_PHASE_PROF");
+     bool on = (e != nullptr) && !(e[0] == '0' && e[1] == '\0');
+@@ -662,6 +665,7 @@ static void tick_devices(gba::GbaBus* bus, gba::GbaPpu* ppu, uint32_t cycles) {
+         }
+         if (events.vblank_started) {
+             GBA_DEVICE_PHASE(5,ppu->mark_framebuffer_latched());
++            if (!g_session_execution && g_vblank_latch_hook) g_vblank_latch_hook();
+             ++g_runtime_vblank_starts;
+             GBA_DEVICE_PHASE(5,bus->io().run_timed_dma(1));   // VBlank-timed DMA
+             if (!g_session_execution && g_vblank_input_hook) g_vblank_input_hook();
+@@ -1098,6 +1102,10 @@ void runtime_set_frame_start_hook(std::function<void()> h) {
+     g_frame_start_hook = std::move(h);
+ }
+ 
++void runtime_set_vblank_latch_hook(std::function<void()> h) {
++    g_vblank_latch_hook = std::move(h);
++}
++
+ void runtime_set_vblank_input_hook(std::function<void()> h) {
+     g_vblank_input_hook = std::move(h);
+ }
