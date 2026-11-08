@@ -10,7 +10,7 @@
         const DEAD = new Set([0x11, 0x15, 4, 0x1b, 0x13]);
         const btn = $("autoBtn"), note = $("saveNote");
         let on = false, ew = -1, H8 = null, grid = null, gridT = 0, queue = [], qUntil = 0, keysDown = new Set();
-        let hist = [], stuck = 0, tries = new Map(), blocked = new Map(), skip = new Map(), macro = null, noEquip = new Set(), shrineAt = [1385, 1214], shopT = 0, shopNear = 30, lastLog = 0, idleSince = 0, unreachSince = 0, userUntil = 0, oldHeal = null, lastSeen = 0, kills = 0;
+        let hist = [], stuck = 0, tries = new Map(), blocked = new Map(), skip = new Map(), macro = null, noEquip = new Set(), shrineAt = [1385, 1214], shopT = 0, shopNear = 30, shopDone = false, lastLog = 0, idleSince = 0, unreachSince = 0, userUntil = 0, oldHeal = null, lastSeen = 0, kills = 0;
         const rom = () => window.__romFull;
         const heap = () => emu.Module.HEAPU8;
         const findEw = () => {
@@ -165,7 +165,7 @@
         const setOn = (v, msg) => {
           if (on === v) return; on = v;
           btn.classList.toggle("on", on); btn.setAttribute("aria-pressed", on ? "true" : "false");
-          queue = []; setKeys([]); hist = []; stuck = 0; tries.clear(); blocked.clear(); skip.clear(); noEquip.clear(); macro = null; idleSince = unreachSince = 0; kills = 0;
+          queue = []; setKeys([]); hist = []; stuck = 0; tries.clear(); blocked.clear(); skip.clear(); noEquip.clear(); shopDone = false; macro = null; idleSince = unreachSince = 0; kills = 0;
           try { H8 = heap(); ew = findEw(); setHeal(on); } catch (e) {}
           if (msg) show(msg, 3500);
         };
@@ -229,7 +229,7 @@
           if (!tgt && !close) goBox(40);
           // The Shrine is only in the entity list while the hero is near it, so its spot is remembered (Moria's is at 1385,1214).
           for (const p of shops) shrineAt = pos(p);
-          const shopGo = (force) => { if (herbs < 10 && gems >= 50 && now - shopT > 90000) {
+          const shopGo = (force) => { if (!shopDone && herbs < 10 && gems >= 50 && now - shopT > 90000) {
             const [sx, sy] = shrineAt;
             if (Math.abs(sx - x) <= shopNear && Math.abs(sy - y) <= shopNear) { if (shops.length) tgt = { kind: "shop", p: shops[0] }; return; }
             const path = pathTo(prev, sx, sy, shopNear < 30 ? 1 : 3); if (!path && now - lastLog > 20000) { lastLog = now; slog("no path to shrine from " + x + "," + y); } if (path && (force || !tgt || path.length < tgt.len)) tgt = { kind: "go", p: "shrine", len: path.length, path };
@@ -287,7 +287,7 @@
             // If R didn't open the shop (game state 20), stop here and walk right up to the Shrine before trying again.
             const opened = { k: [], ms: 10, run: () => { if ((r32(0x030041B0) & 255) !== 20) { shopT = 0; shopNear = 10; slog("shrine didn't open at " + x + "," + y); queue = [{ k: [], ms: 10, end: true }]; } } };
             queue = [...tapSteps(11), { k: [], ms: 900 }, opened, ...tapSteps(6), { k: [], ms: 300 }, ...buy(), ...tapSteps(0), { k: [], ms: 400 }, ...tapSteps(0), { k: [], ms: 600 },
-              { k: [], ms: 10, run: () => { shopNear = 30; slog("shrine: spent " + (g0 - r16(P + 0x184)) + " gems, herbs " + (r8(P + 0x1AA) >> 4)); } }, { k: [], ms: 10, end: true }];
+              { k: [], ms: 10, run: () => { shopNear = 30; if (r16(P + 0x184) < g0) shopDone = true; slog("shrine: spent " + (g0 - r16(P + 0x184)) + " gems, herbs " + (r8(P + 0x1AA) >> 4)); } }, { k: [], ms: 10, end: true }];
           } else {
             const W = grid.W, c = tgt.path[Math.min(3, tgt.path.length - 1)], k = steer(x, y, (c % W) * 8 + 4, ((c / W) | 0) * 8 + 4);
             hist.push([x, y, now]); while (hist.length && now - hist[0][2] > 600) hist.shift();
