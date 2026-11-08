@@ -129,3 +129,10 @@ so they "matched" the old pieces with a fake step and the in-between picture dre
 pixels off. Now a step is trusted only when most pieces agree, and when the camera is still and a
 piece's graphics changed (tile number or streamed tile data), the group is drawn where the new frame
 has it. Patch: `smooth-v87-steady-poses.patch` (on top of the v82 smoothing).
+
+## v92 smooth fades (2026-11-08)
+
+Jordan asked for Smooth 60 everywhere. A native walk (walk2.input, `GBARECOMP_SMOOTH_WHY=1` prints why a
+picture got no in-between frame) showed levels already smoothed; fades were the gap (80 skipped for
+brightness/blend changes). The in-between picture now uses halfway BLDY/BLDALPHA, so fades step evenly
+(80 -> 15 skipped). Patch file updated (same name, cumulative on top of v82).
