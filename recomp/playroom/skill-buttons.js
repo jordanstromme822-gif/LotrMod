@@ -1,4 +1,4 @@
-// Play Room v105: skill buttons (icons inside, black when used, countdown), B's skill on L, B picks up (window.__bPick).
+// Play Room v106: skill buttons (icons inside, black when used, countdown), B's skill on L, B picks up, R doesn't (window.__bPick).
       const skIcons = [...document.querySelectorAll("#pad .sk")].sort((a, b) => a.dataset.slot - b.dataset.slot);   // A, B's skill (on L), R
       const skPos = (v) => (v[1] * 20) + "% " + (v[0] * 100 / 7).toFixed(3) + "%";   // sheet: 6 skills across, 8 heroes down
       // Used skills (Jordan, 2026-11-08): the pressed skill's icon turns black. If the game took Spirit for it and it's a
@@ -128,6 +128,12 @@
           // B also picks up (Jordan, 2026-11-08): with an item at the hero's feet that can be taken, B works as R. B never
           // casts (its skill is on L), so L is let go while B is down even with Quick Skill on.
           let sid = id;
+          // R no longer picks up (Jordan, 2026-11-08): with an item at the hero's feet, R alone does nothing (B picks up).
+          // With L held (Quick Skill) R still casts its skill, and R still opens chests and the Shrine.
+          if (id === 11) {
+            if (on) el.__rBlock = !(qsHeld || lTouch || lCast) && !!(window.__bPick && window.__bPick(true));
+            if (el.__rBlock) { if (!on) el.__rBlock = false; return; }
+          }
           if (id === 0) {
             if (on) { el.__bAs = window.__bPick && window.__bPick() ? 11 : 0; if (qsHeld || lTouch) { bNoL = true; sendL(); } }
             sid = el.__bAs || 0;
@@ -152,7 +158,8 @@
         // B picks up too (Jordan, 2026-11-08): with an item at the hero's feet, B works as R unless it can't be taken
         // (gear with a full backpack, a full Kingsfoil pouch); then B swings. Auto and P2 also pick up before swinging.
         const herbRoom = (P, t) => t === 17 ? (r8(P + 0x1AA) >> 4) < 10 : t === 18 ? (r8(P + 0x1AA) & 15) < 10 : true;
-        window.__bPick = () => {
+        // any = true: is there any item at the hero's feet (R no longer picks up, Jordan 2026-11-08).
+        window.__bPick = (any) => {
           try {
             if (iwram < 0 || inMenu()) return false;
             ew = findEw(); H8 = heap(); if (ew < 0) return false;
@@ -162,6 +169,7 @@
               if (r32(p + 0x14) !== ITEM_UPD || r8(p + 0x63) !== 3) continue;
               const [ix, iy] = pos(p); if (Math.abs(ix - x) > 10 || Math.abs(iy - y) > 10) continue;
               const t = r8(p + 0x60);
+              if (any && t >= 15) return true;
               const food = t === 15 || t === 16 || t === 19;   // eaten on the spot: only worth it when hurt
               if (t >= 25 ? !packFull(P) : food ? r16(P + 0x17C) < r16(P + 0xD0) : t >= 15 ? herbRoom(P, t) : false) return true;
             }
@@ -169,3 +177,4 @@
           return false;
         };
         // Some enemies are scenery standing inside the walls (no floor around them); those never fight and aren't counted.
+        const onFloor = (p) => { const [ex, ey] = pos(p), { W, H, free } = grid, cx = ex >> 3, cy = ey >> 3;
