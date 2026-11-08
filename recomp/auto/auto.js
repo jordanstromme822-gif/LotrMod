@@ -1,4 +1,4 @@
-// Play Room v96 Moria Auto (inside the page's play script).
+// Play Room v98 Moria Auto (inside the page's play script).
       // Auto mode for the Moria bonus map (Jordan, 2026-11-08). A button at the top left turns it on: the hero walks to the
       // nearest enemy (around walls, using the level's own collision map) and uses the main attack (B), picks up herbs and
       // food, turns the game's Auto Healing option on, and picks up gear only when it beats what the hero wears (gear the
@@ -22,7 +22,8 @@
         const r8 = (a) => { const o = at(a); return o >= 0 ? H8[o] : 0; };
         const r16 = (a) => { const o = at(a); return o >= 0 ? H8[o] | H8[o + 1] << 8 : 0; };
         const r32 = (a) => { const o = at(a); return o >= 0 ? (H8[o] | H8[o + 1] << 8 | H8[o + 2] << 16 | H8[o + 3] << 24) >>> 0 : 0; };
-        const w8 = (a, v) => { const o = at(a); if (o >= 0) H8[o] = v; };
+        // In a P2 game the same change is made in P2's game too (window.__mirrorIw), so the two games stay identical.
+        const w8 = (a, v) => { const o = at(a); if (o >= 0) { H8[o] = v; if ((a >>> 24) === 3) try { window.__mirrorIw && window.__mirrorIw(a & 0x7fff); } catch (e) {} } };
         const rr8 = (a) => rom()[a - 0x08000000];
         const rr32 = (a) => { const R = rom(), o = a - 0x08000000; return (R[o] | R[o + 1] << 8 | R[o + 2] << 16 | R[o + 3] << 24) >>> 0; };
         const playerAddr = () => 0x03003C00 + 0x1AC * (r8(0x03003F59) & 1);
@@ -176,6 +177,30 @@
           try { H8 = heap(); ew = findEw(); setHeal(on); } catch (e) {}
           if (msg) show(msg, 3500);
         };
+        // Casting: put the skill on the R slot (+0x193), press L + R (the game's Quick Skill Select checks Spirit and
+        // plays it), put the old skill back. The Spirit each skill used is remembered; a skill that used none is
+        // skipped for a minute (passive, or it can't be used here).
+        const skillCost = new Map(), noSkill = new Map();
+        let castT = 0;
+        const pickSkill = (P, now) => {
+          const hero = r8(P + 0x19F), sp = r16(P + 0x17E), msp = r16(P + 0xD2) || 1;
+          let best = -1, bc = -1;
+          for (let s = 0; s < 6; s++) {
+            if ((r8(P + 0x16A + s) << 24 >> 24) <= 0) continue;
+            const key = hero * 8 + s; if ((noSkill.get(key) || 0) > now) continue;
+            const cost = skillCost.has(key) ? skillCost.get(key) : Math.round(msp * 0.3);
+            if (sp < cost) continue;
+            if (cost > bc) { bc = cost; best = s; }
+          }
+          return best;
+        };
+        const castSteps = (P, s, face, now) => {
+          const key = r8(P + 0x19F) * 8 + s; let old = 0, sp0 = 0;
+          return [{ k: face, ms: 40 }, { k: [10], ms: 80, run: () => { w8(0x03005820, r8(0x03005820) | 8); w8(P + 0x19A, r8(P + 0x19A) | 2); old = r8(P + 0x193); sp0 = r16(P + 0x17E); w8(P + 0x193, s); } },
+            { k: [10, 11], ms: 140 }, { k: [10], ms: 60 },
+            { k: [], ms: 350, run: () => { if (r8(P + 0x193) === s) w8(P + 0x193, old); const d = sp0 - r16(P + 0x17E); if (d > 3) skillCost.set(key, d); else noSkill.set(key, now + 60000); casts[s] = (casts[s] || 0) + 1; } }];
+        };
+        let casts = {};
         const decide = (now) => {
           const P = playerAddr(), hero = r32(P), hp = r16(P + 0x17C), mhp = r16(P + 0xD0);
           { const pk = packNow(P); if (!known) known = new Set(pk); for (const it of pk) if (!empty(it) && !known.has(it)) { known.add(it); fresh.add(it); } }
@@ -281,6 +306,11 @@
           idleSince = unreachSince = 0;
           if (tgt.kind === "hit") {
             const [ex, ey] = pos(tgt.p);
+            // Skills (Jordan, 2026-11-08): against an elite or two or more enemies close by, cast a learned active
+            // skill when there's Spirit for it (Spirit +0x17E, max +0xD2), the dearest one first.
+            const group = en.filter((p) => near(p, 56)).length >= 2;
+            const sk = (elite(tgt.p) || group) && now - castT > 1200 ? pickSkill(P, now) : -1;
+            if (sk >= 0) { castT = now; queue = castSteps(P, sk, steer(x, y, ex, ey), now); return; }
             queue = [{ k: steer(x, y, ex, ey), ms: 40 }, { k: [0], ms: 70 }, { k: [], ms: 70 }];
           } else if (tgt.kind === "pick") {
             tries.set(tgt.p, (tries.get(tgt.p) || 0) + 1);
@@ -356,5 +386,5 @@
         window.addEventListener("keydown", (e) => { if ((e.key === "o" || e.key === "O") && !e.repeat && !btn.hidden) setOn(!on, on ? "" : "Auto on"); });
         // Touching the controls pauses auto for a moment so the player can take over.
         $("pad").addEventListener("pointerdown", () => { if (on) userUntil = performance.now() + 1500; }, true);
-        window.__auto = { get on() { return on; }, set: setOn, kills: () => kills, picks: () => picks, get macro() { return macro; } };
+        window.__auto = { get on() { return on; }, set: setOn, kills: () => kills, picks: () => picks, casts: () => casts, costs: () => [...skillCost], get macro() { return macro; } };
       })();

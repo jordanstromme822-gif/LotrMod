@@ -1,4 +1,4 @@
-// Play Room v97: the P2 helper (inside the page's main script; uses $, WideHost and startWide's engine).
+// Play Room v98: the P2 helper (inside the page's main script; uses $, WideHost and startWide's engine).
   // ---------------- P2 helper (Jordan, 2026-11-08) ----------------
   // A P2 button next to Auto. In the wide view it lists the saved heroes that aren't the one being played; picking one
   // restarts as a 2-player link game (the PC app's engine runs both games side by side): both games load their own
@@ -63,6 +63,8 @@
     btn.addEventListener("pointerdown", (e) => { e.preventDefault(); e.stopPropagation(); if (!panel.hidden) close(); else open(); });
     btn.addEventListener("click", (e) => e.preventDefault());
     btn.classList.toggle("on", linkOn); btn.setAttribute("aria-pressed", linkOn ? "true" : "false");
+    // Page changes to game memory (skill slots, options) are copied into P2's game so both stay identical.
+    if (linkOn) window.__mirrorIw = (off) => { const H8 = M.HEAPU8; H8[M._rotk_link_iwram(1) + off] = H8[M._rotk_link_iwram(0) + off]; };
     // The button shows while a hero is loaded in a level (state 1) or the game is paused, and always in a P2 game.
     setInterval(() => {
       let vis = linkOn;
