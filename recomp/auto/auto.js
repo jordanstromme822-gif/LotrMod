@@ -10,7 +10,7 @@
         const DEAD = new Set([0x11, 0x15, 4, 0x1b, 0x13]);
         const btn = $("autoBtn"), note = $("saveNote");
         let on = false, ew = -1, H8 = null, grid = null, gridT = 0, queue = [], qUntil = 0, keysDown = new Set();
-        let hist = [], stuck = 0, tries = new Map(), blocked = new Map(), skip = new Map(), macro = null, noEquip = new Set(), shrineAt = [1385, 1214], shopT = 0, shopNear = 30, shopDone = false, lastLog = 0, idleSince = 0, unreachSince = 0, userUntil = 0, oldHeal = null, lastSeen = 0, kills = 0;
+        let hist = [], stuck = 0, tries = new Map(), blocked = new Map(), skip = new Map(), macro = null, noEquip = new Set(), shrineAt = [1385, 1214], shopT = 0, shopNear = 30, shopDone = false, known = null, fresh = new Set(), dropOff = false, lastLog = 0, idleSince = 0, unreachSince = 0, userUntil = 0, oldHeal = null, lastSeen = 0, kills = 0;
         const rom = () => window.__romFull;
         const heap = () => emu.Module.HEAPU8;
         const findEw = () => {
@@ -77,18 +77,25 @@
         };
         // Backpack gear that a better item of the same kind (worn, or in the backpack and wearable at this level) makes useless.
         // Jordan equips gear by hand, so Auto never equips; it only throws away the weaker copy.
+        // Only a copy that Auto just picked up can push an older item out: the older backpack item of the same
+        // kind that is weaker than the new one is thrown away. Worn gear and anything else are never touched.
         const toDiscard = (P) => {
+          if (dropOff) return -1;
           const lvl = r8(P + 0x19C) + 1;
           for (let k = 0; k < 8; k++) {
-            const it = r32(P + 0x5c + 4 * k); if (noEquip.has(it)) continue;
+            const it = r32(P + 0x5c + 4 * k); if (noEquip.has(it) || fresh.has(it)) continue;
             const s = gearSlot(P, it); if (s < 0) continue;
-            const sc = score(it) + 0.01, cur = r32(P + 0x3c + 4 * s);
-            if (!empty(cur) && score(cur) > sc) return k;
             for (let j = 0; j < 8; j++) { if (j === k) continue; const b = r32(P + 0x5c + 4 * j);
-              if (gearSlot(P, b) === s && reqLevel(b) <= lvl && score(b) > sc) return k; }
+              if (fresh.has(b) && gearSlot(P, b) === s && reqLevel(b) <= lvl && score(b) > score(it) + 0.01) return k; }
           }
           return -1;
         };
+        const packNow = (P) => { const a = []; for (let k = 0; k < 8; k++) a.push(r32(P + 0x5c + 4 * k)); return a; };
+        // After a discard exactly the chosen slot must be empty and every other slot unchanged; if not, the menu
+        // cursor was somewhere else, so Auto stops discarding for this run instead of risking more items.
+        const checkDrop = (P, before, k) => { const now = packNow(P);
+          const ok = empty(now[k]) && now.every((x, j) => j === k || x === before[j]);
+          if (!ok) { dropOff = true; slog("discard touched the wrong slot, Auto stops discarding"); } };
         // Menu macros: button taps sent while the game is in a menu. Backpack grid is 4 x 2 and the cursor starts on slot 0.
         const tapSteps = (id, n) => { const out = []; for (let i = 0; i < (n === undefined ? 1 : n); i++) out.push({ k: [id], ms: 160 }, { k: [], ms: 340 }); return out; };
         const gridSteps = (k) => [...tapSteps(7, k & 3), ...tapSteps(5, k >> 2)];
@@ -165,12 +172,13 @@
         const setOn = (v, msg) => {
           if (on === v) return; on = v;
           btn.classList.toggle("on", on); btn.setAttribute("aria-pressed", on ? "true" : "false");
-          queue = []; setKeys([]); hist = []; stuck = 0; tries.clear(); blocked.clear(); skip.clear(); noEquip.clear(); shopDone = false; macro = null; idleSince = unreachSince = 0; kills = 0;
+          queue = []; setKeys([]); hist = []; stuck = 0; tries.clear(); blocked.clear(); skip.clear(); noEquip.clear(); shopDone = false; known = null; fresh.clear(); dropOff = false; macro = null; idleSince = unreachSince = 0; kills = 0;
           try { H8 = heap(); ew = findEw(); setHeal(on); } catch (e) {}
           if (msg) show(msg, 3500);
         };
         const decide = (now) => {
           const P = playerAddr(), hero = r32(P), hp = r16(P + 0x17C), mhp = r16(P + 0xD0);
+          { const pk = packNow(P); if (!known) known = new Set(pk); for (const it of pk) if (!empty(it) && !known.has(it)) { known.add(it); fresh.add(it); } }
           if (!hero || !hp || hp > 5000) { setKeys([]); return; }                  // knocked out or loading
           if (!grid || now - gridT > 2000) { grid = buildGrid(); gridT = now; if (!grid) return; }
           const [x, y] = pos(hero), list = entities();
@@ -200,8 +208,9 @@
             if (k >= 0) {
               const it = r32(P + 0x5c + 4 * k);
               macro = "discard"; slog("discard weaker " + (it >>> 0).toString(16));
+              const before = packNow(P);
               queue = [...tapSteps(3), { k: [], ms: 900 }, ...gridSteps(k), ...tapSteps(8), { k: [], ms: 250 }, ...tapSteps(5), ...tapSteps(8), { k: [], ms: 500 },
-                { k: [], ms: 10, run: () => { if (r32(P + 0x5c + 4 * k) === it) { noEquip.add(it); slog("discard failed"); } } }, ...tapSteps(0), { k: [], ms: 500, end: true }];
+                { k: [], ms: 10, run: () => { if (r32(P + 0x5c + 4 * k) === it) { noEquip.add(it); slog("discard failed"); } else checkDrop(P, before, k); } }, ...tapSteps(0), { k: [], ms: 500, end: true }];
               return;
             }
           }
@@ -259,10 +268,11 @@
             tries.set(tgt.p, (tries.get(tgt.p) || 0) + 1);
             if (tgt.gear && packFull(P)) {
               // No room: throw away the least valuable backpack item first (Start, pick it, Discard).
-              const [k] = cheapest(P);
+              const [k] = dropOff ? [-1] : cheapest(P);
               if (k >= 0) {
+                const before = packNow(P);
                 macro = "discard"; slog("discard " + (r32(P + 0x5c + 4 * k) >>> 0).toString(16) + " for " + (r32(tgt.p + 0x88) >>> 0).toString(16));
-                queue = [...tapSteps(3), { k: [], ms: 900 }, ...gridSteps(k), ...tapSteps(8), { k: [], ms: 250 }, ...tapSteps(5), ...tapSteps(8), { k: [], ms: 500 }, ...tapSteps(0), { k: [], ms: 500, end: true }];
+                queue = [...tapSteps(3), { k: [], ms: 900 }, ...gridSteps(k), ...tapSteps(8), { k: [], ms: 250 }, ...tapSteps(5), ...tapSteps(8), { k: [], ms: 500 }, { k: [], ms: 10, run: () => checkDrop(P, before, k) }, ...tapSteps(0), { k: [], ms: 500, end: true }];
                 return;
               }
             }
