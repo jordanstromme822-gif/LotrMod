@@ -41,6 +41,10 @@ How it works (details in docs/findings.md, "Orc Head slots" and "Orc Head tiers"
   - Save slot pages (v122): a second page of 4 save slots kept by the page; R or the
     page's Page button flips on the save slot screens; the page's Undo puts back a
     saved-over slot while the save screen or pause menu is open.
+  - Arrow slots (v123): Legolas gets 2 arrow-only slots under the Orc Head slots. Picked-up
+    arrows that don't go on the worn quiver fill them before the backpack; the page's L
+    button (ACYC) puts on the next quiver. The page keeps them per save slot (the EEPROM
+    is full). Off in 2-player games.
   - 2-player games: each GBA sends its player's slot heads once as link message 4
     (unused by the game); both GBAs put the bonuses on when it arrives.
 
@@ -119,6 +123,8 @@ BL_SITES = [
     (0x2AF22, "03f0f1fd", "same_wrap"),
     # save slot pages
     (0x307F0, "c046c046", "flip_r"),      # R on the save slot screen (free since tools/nodelete.py): other page
+    # arrow slots (Legolas)
+    (0x2AD0E, "00f0abf8", "apick_wrap"),  # picked-up arrows: worn quiver, then the arrow slots, then the backpack
 ]
 # link message 4 (never used by the game): send and receive cases
 LINK_CASES = [(0x3FE48, 0x0804006A, "send4"), (0x3F6AC, 0x0803FDAC, "recv4")]

@@ -27,6 +27,8 @@ BL = [  # address of the bl's second half, hook symbol
     # regenerating quivers
     (0x080249A4, "arrow_wrap"), (0x08024A0E, "arrow_wrap"), (0x08024BF0, "arrow_wrap"), (0x08044AE2, "arrow_wrap"),
     (0x0802AEAE, "same_wrap"), (0x0802AF24, "same_wrap"),
+    # arrow slots (Legolas)
+    (0x0802AD10, "apick_wrap"),
 ]
 PAIRS = [(0x0802DBE0, "db90_stub"), (0x0803CC08, "pack_stub"), (0x0802CC60, "nav_stub"), (0x0802A854, "a_stub"),
          (0x0802CCC4, "mcur_stub"), (0x0802C5FC, "label_stub"),

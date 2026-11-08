@@ -81,7 +81,7 @@ typedef int (*fn6)(int, int, int, int, int, int);
 #define ULOCKPG (*(volatile u8 *)0x0203F00B)
 #define PBUF    ((volatile u8 *)0x0203F010)           /* 4 x 0x70: page 2 headers, as in RAM */
 #define PHEAD   ((volatile u16 (*)[4])0x0203F1D0)     /* page 2 slot heads (like SAVED) */
-#define UBUF    ((volatile u8 *)0x0203F200)           /* 0x70 header + 8 bytes of heads */
+#define UBUF    ((volatile u8 *)0x0203F200)           /* 0x70 header + 8 bytes of heads + 2 arrow slot words */
 #define HDRS    0x03005630
 #define GSTATE  (*(volatile u8 *)0x030041B0)
 #define SLOTSUB (*(volatile u8 *)0x030041C0)
@@ -202,6 +202,25 @@ static int is_arrow(u32 w) { return (w & 0xF) == 7; }
 static int is_regen(u32 w) { return is_arrow(w) && (w & 0x800000); }
 static u32 with_count(u32 w, int n) { return (w & 0xFF00FFFFu) | ((u32)(n & 0xFF) << 16); }
 
+/* ---------------- arrow slots (Legolas; Jordan, 2026-11-08) ----------------
+   Two slots under the Orc Head slots that hold only arrows. Picked-up arrows that don't go on the worn quiver
+   fill them before the backpack; the page's L puts on the next quiver (worn -> slots -> worn). The EEPROM has
+   no room left, so the slots of each save slot are kept by the page on the player's account (AKEEP). */
+#define ASLOT   ((volatile u32 (*)[2])0x0203F2A0)    /* [player][2]: the arrows in the 2 slots (not an arrow word = empty) */
+#define ASAVED  ((volatile u32 (*)[2])0x0203F2B0)    /* [save slot][2]: of the page of slots shown (like SAVED) */
+#define AKEEP   ((volatile u32 (*)[4][2])0x0203F2D0) /* [page][save slot][2]: kept by the page */
+#define AGEN    (*(volatile u16 *)0x0203F310)        /* bumped on every AKEEP write: the page saves it */
+#define AREADY  (*(volatile u8 *)0x0203F312)         /* the page has put the stored AKEEP in */
+#define ACYC    (*(volatile u8 *)0x0203F313)         /* the page's L button (Legolas, in play): next quiver */
+#define NOARROW 0xFFFFFFFFu
+#define AFIRST  24                                  /* cursor values 24, 25 are the arrow slots */
+#define HERO_ID(p) (*(volatile u8 *)(HERO + (p) * HERO_SZ + 0x19F))
+#define AE68(it, p)            ((fn4)0x0802AE69)((int)(it), p, 0, 0)
+#define ITEMSTATS(it, sl, p, r) ((fn4)0x0802DB91)((int)(it), sl, p, r)
+#define WEAPONFLAGS(p)         ((fn4)0x0802D8E1)(p, 0, 0, 0)
+static int is_leg(int p) { return p < 2 && HERO_ID(p) == 1; }
+static void a_norm(int p) { for (int k = 0; k < 2; k++) if (!is_arrow(ASLOT[p][k])) ASLOT[p][k] = NOARROW; }
+
 /* keep QMAX/QWORD in step with what the hero wears (called every gameplay and Backpack frame) */
 static void q_sync(int p)
 {
@@ -211,6 +230,8 @@ static void q_sync(int p)
         u32 off = with_count(QWORD[p], 0x80 | mx);
         for (int j = 8; j < 16; j++)
             if (it[j] == QWORD[p]) { it[j] = off; break; }
+        for (int k = 0; k < 2; k++)
+            if (ASLOT[p][k] == QWORD[p]) { ASLOT[p][k] = off; break; }
         DEBTW[p] = off; DEBTN[p] = cur < mx ? mx - cur : 0; DEBTT[p] = QCLK;
         QMAX[p] = 0;
     }
@@ -267,6 +288,54 @@ int same_wrap(u32 a, u32 b)
     return SAME_ITEM(a, b);
 }
 
+/* the page's L: the worn quiver goes to the end of the arrow slots and the first one is put on, with the game's own
+   item stat steps (take off, put on, weapon flags) */
+static void a_cycle(int p)
+{
+    u32 *it = inv(p);
+    q_sync(p);
+    a_norm(p);
+    u32 w0 = it[2], n0 = w0, n1 = ASLOT[p][0], n2 = ASLOT[p][1];
+    if ((!is_arrow(w0) && (w0 & 0xF) != 0xF) || (!is_arrow(n1) && !is_arrow(n2))) { SOUND(5); return; }
+    for (int k = 0; k < 2; k++) { u32 t = n0; n0 = n1; n1 = n2; n2 = t; if (is_arrow(n0)) break; }
+    ASLOT[p][0] = is_arrow(n1) ? n1 : NOARROW;
+    ASLOT[p][1] = is_arrow(n2) ? n2 : NOARROW;
+    if (is_arrow(w0)) ITEMSTATS(w0, 2, p, 1);
+    it[2] = n0;
+    ITEMSTATS(n0, 2, p, 0);
+    WEAPONFLAGS(p);
+    q_sync(p);
+    if ((it[2] >> 16) & 0xFF) HFLAGS(p) |= ARROWS_ON;
+    *(volatile u32 *)(0x03003F70 + p * 0x7C + 0x70) |= 0x4000;   /* the game's arrow count label */
+    *(volatile u8 *)(0x03003F70 + p * 0x7C + 0x79) = 0x14;
+    SOUND(2);
+}
+
+/* picking up arrows (0x0802ACE8 -> 0x0802AE68): with no worn quiver the game puts them on, a matching worn quiver
+   takes them as before; otherwise a matching arrow slot, then an empty arrow slot, then the backpack */
+int apick_wrap(u32 *item, int p)
+{
+    u32 w = *item, *it = inv(p);
+    if (LINKED || !is_leg(p) || !is_arrow(w) || !is_arrow(it[2]) || same_wrap(it[2], w)) return AE68(item, p);
+    a_norm(p);
+    int n = (w >> 16) & 0xFF;
+    if (!is_regen(w))
+        for (int k = 0; k < 2 && n; k++) {
+            u32 a = ASLOT[p][k];
+            if (!is_arrow(a) || !same_wrap(a, w)) continue;
+            int c = (a >> 16) & 0xFF, m = 99 - c;
+            if (m <= 0) continue;
+            if (m > n) m = n;
+            ASLOT[p][k] = with_count(a, c + m);
+            n -= m;
+        }
+    w = with_count(w, n); *item = w;
+    if (!n) return 1;
+    for (int k = 0; k < 2; k++)
+        if (!is_arrow(ASLOT[p][k])) { ASLOT[p][k] = w; *item = with_count(w, 0); return 1; }
+    return AE68(item, p);
+}
+
 /* is this word a regenerating quiver, and its live count and max */
 static int q_info(u32 w, int *cur)
 {
@@ -306,6 +375,10 @@ int gp_hook(int a, int b, int c, int d)
         SPAWN(*(int *)(h + 0xAC) + (8 << 16), *(int *)(h + 0xB0), 84, (int)item_of(*(volatile u16 *)0x0203FE72), 0x708);
         *(volatile u16 *)0x0203FE70 = 0;
     }
+    if (*(volatile u16 *)0x0203FE74) {                 /* add item word 0x0203FE78 as if picked up */
+        *(volatile u32 *)0x0203FE7C = ((fn4)0x0802ACE9)(*(volatile u32 *)0x0203FE78, 0, 0, 0);
+        *(volatile u16 *)0x0203FE74 = 0;
+    }
 #endif
     if (LINKED && !SENT) {
         int p = LOCAL_P;
@@ -315,6 +388,7 @@ int gp_hook(int a, int b, int c, int d)
     for (int p = 0; p < 4; p++)                        /* heads that came from the other GBA: both GBAs, same frame */
         if (CONFV[p] == 2) { CONFV[p] = 1; set_applied(p, CONF[p], cnt(p)); }
     if (DUPELOCK && !SESSV) { SESSPG = PAGE; SESSV = 1; } else if (!DUPELOCK) SESSV = 0;
+    if (ACYC) { ACYC = 0; if (!LINKED && is_leg(LOCAL_P)) a_cycle(LOCAL_P); }
     QCLK++;
     q_frame(0);
     if (LINKED) q_frame(1);
@@ -322,13 +396,14 @@ int gp_hook(int a, int b, int c, int d)
 }
 
 /* ---- saves: the slot heads of save slot s live in EEPROM block 0x32 + s ---- */
-static int hdr_slot(u32 h) { for (int s = 0; s < 3; s++) if (h == SLOT_HDR + s * 0x70) return s; return -1; }
+static int hdr_slot(u32 h) { for (int s = 0; s < 4; s++) if (h == SLOT_HDR + s * 0x70) return s; return -1; }
 
 void pack_c(u8 *h, int p)
 {
     int n = cnt(p), s = hdr_slot((u32)h);
     h[0x4B] = (h[0x4B] & 0x1F) | (n << 5);
     if (s >= 0) for (int i = 0; i < 4; i++) SAVED[s][i] = (i < n ? CODE[p][i] : 0xFFFF) ^ EE_KEY;
+    if (s >= 0 && p < 2) { a_norm(p); ASAVED[s][0] = ASLOT[p][0]; ASAVED[s][1] = ASLOT[p][1]; }
     q_sync(p);                                         /* worn regenerating quiver: packed full (header + 8 = off hand) */
     if (QMAX[p] && h[8] == (QWORD[p] & 0xFF)) h[10] = 0x80 | QMAX[p];
 }
@@ -342,6 +417,7 @@ void unpack_c(const u8 *h, int p)
     APPN[p] = 0;
     SENT = 0;
     if (p < 2) { QMAX[p] = 0; DEBTN[p] = 0; }          /* its quiver comes in packed: full */
+    if (p < 2) { ASLOT[p][0] = s >= 0 ? ASAVED[s][0] : NOARROW; ASLOT[p][1] = s >= 0 ? ASAVED[s][1] : NOARROW; a_norm(p); }
 }
 
 /* ---- a second page of 4 save slots (Jordan, 2026-11-08: "8 in total") ----
@@ -365,9 +441,11 @@ int save_wrap(int src, int slot)
     if (PAGE) {
         cpy(PBUF + slot * 0x70, (const volatile u8 *)src, 0x70);
         for (int i = 0; i < 4; i++) PHEAD[slot][i] = SAVED[slot][i];
+        AKEEP[1][slot][0] = ASAVED[slot][0]; AKEEP[1][slot][1] = ASAVED[slot][1]; AGEN++;
         PGEN++;
         return 0;
     }
+    AKEEP[0][slot][0] = ASAVED[slot][0]; AKEEP[0][slot][1] = ASAVED[slot][1]; AGEN++;
     int r = SLOT_WRITE(src, slot);
     cpy(SAVEHDR + 8 + 8 * slot, (const volatile u8 *)SAVED[slot], 8);
     volatile u16 *hw = (volatile u16 *)SAVEHDR;        /* the game's header checksum, then all 8 header blocks */
@@ -380,6 +458,7 @@ int save_wrap(int src, int slot)
 
 int load_wrap(int dst, int slot)
 {
+    ASAVED[slot][0] = AKEEP[PAGE & 1][slot][0]; ASAVED[slot][1] = AKEEP[PAGE & 1][slot][1];
     if (PAGE) {
         if (!PREADY) empty_page();
         cpy((volatile u8 *)dst, PBUF + slot * 0x70, 0x70);
@@ -420,13 +499,15 @@ static void undo_apply(void)
 {
     int cur = PAGE, sl = USLOT & 3;
     u16 keep[4];
+    u32 akeep0 = ASAVED[sl][0], akeep1 = ASAVED[sl][1];
     for (int i = 0; i < 4; i++) keep[i] = SAVED[sl][i];
     PAGE = UPAGE & 1;
     for (int i = 0; i < 4; i++) SAVED[sl][i] = ((volatile u16 *)(UBUF + 0x70))[i];
+    ASAVED[sl][0] = ((volatile u32 *)(UBUF + 0x78))[0]; ASAVED[sl][1] = ((volatile u32 *)(UBUF + 0x78))[1];
     save_wrap((int)UBUF, sl);
     PAGE = cur;
     if ((UPAGE & 1) == cur) cpy((volatile u8 *)(HDRS + sl * 0x70), UBUF, 0x70);
-    else for (int i = 0; i < 4; i++) SAVED[sl][i] = keep[i];
+    else { for (int i = 0; i < 4; i++) SAVED[sl][i] = keep[i]; ASAVED[sl][0] = akeep0; ASAVED[sl][1] = akeep1; }
     DUPELOCK = ULOCK; SESSPG = ULOCKPG; SESSV = ULOCK ? 1 : 0;   /* the undone save no longer ties the session to that slot */
     if (GSTATE == 9 && (UPAGE & 1) == cur) redraw();
 }
@@ -541,6 +622,16 @@ static void desc(int cur)
     int p = LOCAL_P, c = cur - FIRST;
     CLEARTEXT(1, 15, 10, 15, 10, 0);
     TEXTCOLOR(0, 3, 0);
+    if (cur >= AFIRST) {                             /* an arrow slot: the game's own description */
+        u32 w = ASLOT[p][cur - AFIRST];
+        if (!is_arrow(w)) return;
+        u16 x = 0x79, y = 0x50, tile = 0x13;
+        char buf[0xC8];
+        for (int i = 0; i < 0xC8; i++) buf[i] = 0;
+        int r = itemdesc_wrap(buf, p, w, &x, &y, &tile);
+        if (r) DRAWTEXT(tile, x, 0x68, 0x76, r, 0);
+        return;
+    }
     if (c >= cnt(p)) return;                         /* empty: the faded head says it all */
     u16 x = 0x79, y = 0x50, tile = 0x13;
     char buf[0xC8];
@@ -551,30 +642,38 @@ static void desc(int cur)
     DRAWTEXT(tile, x, 0x68, 0x76, buf, 0);
 }
 
+static int shape_of(int n) { return n >= AFIRST ? 13 + n - AFIRST : 12 + n - FIRST; }
 static void place_cursor(u8 *ui, int n)
 {
-    int c = n - FIRST;
+    int c = n - FIRST, y = 80;
+    if (n >= AFIRST) { c = n - AFIRST + 1; y = 104; }   /* arrow slots: under Orc Head slots 2 and 3 */
     *(int *)(ui + 0xAC) = (120 + 30 * c) << 16;
-    *(int *)(ui + 0xB0) = 80 << 16;
+    *(int *)(ui + 0xB0) = y << 16;
     *(u32 *)(ui + 0xE8) |= 0x80;
     ui[0x62] = n;
-    CURSHAPE(12 + c);
+    CURSHAPE(shape_of(n));
 }
 
 /* ---- cursor movement (Backpack, no menu open): returns the cursor the game should go on with ---- */
 int nav_c(int proposed)
 {
     u8 *ui = UI;
-    int old = ui[0x62], k = KEYS(LOCAL_P), n = proposed;
-    if (old >= FIRST) {
+    int old = ui[0x62], k = KEYS(LOCAL_P), n = proposed, ar = is_leg(LOCAL_P);
+    if (old >= AFIRST) {                 /* arrow slots: up to Orc Head slots 2/3, down to the grid's top row */
+        int c = old - AFIRST;
+        if (k & 0x40) n = FIRST + 1 + c;
+        else if (k & 0x80) n = 9 + c;
+        else if (k & 0x30) n = AFIRST + (c ^ 1);
+        else n = old;
+    } else if (old >= FIRST) {
         int c = old - FIRST;
         if (k & 0x40) n = 12 + c;
-        else if (k & 0x80) n = 8 + c;
+        else if (k & 0x80) n = ar ? AFIRST + (c >= 2) : 8 + c;
         else if (k & 0x20) n = FIRST + ((c + 3) & 3);
         else if (k & 0x10) n = FIRST + ((c + 1) & 3);
         else n = old;
     } else if (old >= 12 && old <= 15 && (k & 0x80)) n = FIRST + old - 12;
-    else if (old >= 8 && old <= 11 && (k & 0x40)) n = FIRST + old - 8;
+    else if (old >= 8 && old <= 11 && (k & 0x40)) n = ar ? AFIRST + (old >= 10) : FIRST + old - 8;
     if (n < FIRST || n == old) return n;
     place_cursor(ui, n);                 /* the game then sees no change and stops */
     desc(n);
@@ -586,7 +685,7 @@ int nav_c(int proposed)
 void a_c(int cur, int p)
 {
     if (LINKED) { QUIET = 1; SOUND(5); return; }          /* not in 2-player games */
-    if (cur - FIRST >= cnt(p)) return;                    /* empty: the game's own code plays its error sound */
+    if (cur >= AFIRST ? !is_arrow(ASLOT[p][cur - AFIRST]) : cur - FIRST >= cnt(p)) return;   /* empty: the game's error sound */
     QUIET = 1;
     CLEARTEXT(1, 15, 10, 15, 10, 0);
     MENU[4] = 1;
@@ -625,6 +724,29 @@ void menu_wrap(void)
     u8 *ui = UI;
     int cur = ui[0x62], p = LOCAL_P, sel = MENU[3], j;
     u32 *it = inv(p);
+    if (cur >= AFIRST) {                                   /* an arrow slot: Unequip into the backpack, or Discard */
+        int k = cur - AFIRST;
+        if (sel == 0) {
+            for (j = 8; j < 16 && (it[j] & 0xF) != 0xF; j++) ;
+            if (j == 16) { error_text("Your backpack is full!"); return; }
+            it[j] = ASLOT[p][k];
+            ASLOT[p][k] = NOARROW;
+            MKSPRITE(j);
+        } else if (SETTINGS & 1) {
+            ASLOT[p][k] = NOARROW;
+        } else {
+            CLEARTEXT(1, 15, 10, 15, 10, 0);
+            MENU[4] = 3;
+            TEXTCOLOR(0, 3, 0);
+            DRAWTEXT(0x13, 0x79, 0x50, 0x76, TEXT(0x142), 0);
+            MENUOPT(MENU[5], MENU[5]);
+            MENUOPT(0, MENU[5]);
+            return;
+        }
+        SOUND(3);
+        MENU[4] = 2;
+        return;
+    }
     if (cur >= FIRST) {
         int c = cur - FIRST;
         if (sel == 0) {                                    /* Unequip: back into the backpack */
@@ -667,14 +789,15 @@ void menu_wrap(void)
 /* ---- "Are you sure?" Yes ---- */
 void discard_wrap(int cur, int p)
 {
-    if (cur >= FIRST) remove_slot(p, cur - FIRST);
+    if (cur >= AFIRST) ASLOT[p][cur - AFIRST] = NOARROW;
+    else if (cur >= FIRST) remove_slot(p, cur - FIRST);
     else DISCARD(cur, p);
 }
 
 /* ---- menu closed: description of the cursor ---- */
 void desc_wrap(int cur)
 {
-    if (cur >= FIRST) { CURSHAPE(12 + cur - FIRST); desc(cur); }
+    if (cur >= FIRST) { CURSHAPE(shape_of(cur)); desc(cur); }
     else GAMEDESC(cur);
 }
 
@@ -690,6 +813,40 @@ static int row_empty(const u16 *m, int r)
     const u32 *w = (const u32 *)(m + r * 32);
     for (int i = 0; i < 16; i++) if (w[i]) return 0;
     return 1;
+}
+
+/* arrow slots: blue boxes (OBJ palette 2, tiles 940-955), the arrows' pictures (palettes 4/5, tiles 960-983) or a
+   faded blue quiver (palette 6, already blended with the box colour, tiles 984-995). OBJ palettes 0, 2, 4-6 are unused on this screen (the game puts its
+   own back when it returns to play). */
+extern const u8 arrow_tiles[3840], abox_tiles[512], aquiv_tiles[384];
+extern const u16 arrow_pal[160], abox_pal[16], aquiv_pal[16];
+#define OBJT(t) ((volatile u32 *)(0x06010000 + (t) * 32))
+#define OBJP(n) ((volatile u32 *)(0x05000200 + (n) * 32))
+static void cp32(volatile u32 *d, const u32 *s, int n) { for (int i = 0; i < n; i++) d[i] = s[i]; }
+static void draw_arrows(int p)
+{
+    u16 a[4];
+    cp32(OBJT(940), (const u32 *)abox_tiles, 128);
+    cp32(OBJT(984), (const u32 *)aquiv_tiles, 96);
+    cp32(OBJP(2), (const u32 *)abox_pal, 8);
+    cp32(OBJP(6), (const u32 *)aquiv_pal, 8);
+    for (int k = 0; k < 2; k++) {
+        u32 w = ASLOT[p][k];
+        int x = 150 + 30 * k, t = (w >> 8) & 0xFF, base = 984, pal = 6, fade = 0;
+        if (is_arrow(w) && t < 10) {
+            base = 960 + 12 * k; pal = 4 + k; fade = 0;
+            cp32(OBJT(base), (const u32 *)(arrow_tiles + 384 * t), 96);
+            cp32(OBJP(pal), (const u32 *)(arrow_pal + 16 * t), 8);
+        }
+        a[0] = 104 | (1 << 14) | fade; a[1] = x | (1 << 14); a[2] = base | (1 << 10) | (pal << 12); a[3] = 0;
+        OAMADD(OAM_COUNT, a);
+        a[0] = 112 | (1 << 14) | fade; a[1] = x | (2 << 14); a[2] = (base + 4) | (1 << 10) | (pal << 12);
+        OAMADD(OAM_COUNT, a);
+    }
+    for (int k = 0; k < 2; k++) {
+        a[0] = 102; a[1] = (148 + 30 * k) | (2 << 14); a[2] = 940 | (1 << 10) | (2 << 12); a[3] = 0;
+        OAMADD(OAM_COUNT, a);
+    }
 }
 
 #define SUBSTATE  (*(volatile u32 *)0x030041C0)
@@ -722,10 +879,10 @@ void frame_hook(void)
     u32 *dst = (u32 *)0x0600D800;
     const u32 *s32 = (const u32 *)src;
     for (int i = 0; i < 10 * 16; i++) dst[i] = s32[i];
-    u8 rows[8]; int n = 0;
+    u8 rows[8]; int n = 0, leg = is_leg(LOCAL_P);
     for (int r = 10; r < 18; r++) rows[n++] = r;
     static const u8 order[] = {12, 11, 17, 16, 15, 14, 13};
-    while (n > 6) {
+    while (n > (leg ? 5 : 6)) {
         int drop = -1;
         for (int o = 0; o < 7 && drop < 0; o++)
             for (int i = 0; i < n; i++)
@@ -734,13 +891,22 @@ void frame_hook(void)
         for (int i = drop; i < n - 1; i++) rows[i] = rows[i + 1];
         n--;
     }
-    for (int i = 10 * 16; i < 13 * 16; i++) dst[i] = 0;
-    for (int d = 0; d < 6; d++) {
-        u32 *o = dst + (13 + d) * 16;
-        if (d < n) { const u32 *q = s32 + rows[d] * 16; for (int i = 0; i < 16; i++) o[i] = q[i]; }
-        else for (int i = 0; i < 16; i++) o[i] = 0;
+    if (leg) {                                           /* Legolas: the arrow slots take rows 13-15, so the text goes
+                                                            to the bottom of the left side (rows 14-18) */
+        vu16 *d16 = (vu16 *)dst;
+        for (int r = 10; r < 20; r++)
+            for (int x = 0; x < 32; x++) d16[r * 32 + x] = (x < 15 && r < 14) ? src[r * 32 + x] : 0;
+        for (int d = 0; d < n; d++)
+            for (int x = 0; x < 15; x++) d16[(14 + d) * 32 + x] = src[rows[d] * 32 + 15 + x];
+    } else {
+        for (int i = 10 * 16; i < 13 * 16; i++) dst[i] = 0;
+        for (int d = 0; d < 6; d++) {
+            u32 *o = dst + (13 + d) * 16;
+            if (d < n) { const u32 *q = s32 + rows[d] * 16; for (int i = 0; i < 16; i++) o[i] = q[i]; }
+            else for (int i = 0; i < 16; i++) o[i] = 0;
+        }
+        for (int i = 19 * 16; i < 20 * 16; i++) dst[i] = 0;
     }
-    for (int i = 19 * 16; i < 20 * 16; i++) dst[i] = 0;
     BG1CNT = (BG1CNT & ~0x1F00) | (0x1B << 8);
 
     /* Orc Head pictures: tiles 1000-1011, palette 7 */
@@ -761,6 +927,7 @@ void frame_hook(void)
         a[0] = 88 | (1 << 14) | fade; a[1] = x | (2 << 14); a[2] = 1004 | (1 << 10) | (7 << 12);
         OAMADD(OAM_COUNT, a);
     }
+    if (leg) draw_arrows(p);
     OAMFINISH();
 }
 

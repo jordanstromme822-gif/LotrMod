@@ -10,7 +10,8 @@ tools/orcslots/build.py and regenerate with a ROM that has orcslots.bin at 0x7F0
 """
 import sys
 
-DATA = {"seven", "ODDS", "TIER_NAME", "frame_hook.order", "orc_tiles", "orc_pal", "slot_pal"}
+DATA = {"seven", "ODDS", "TIER_NAME", "frame_hook.order", "orc_tiles", "orc_pal", "slot_pal",
+        "arrow_tiles", "arrow_pal", "abox_tiles", "abox_pal", "aquiv_tiles", "aquiv_pal"}
 MARK = "# ---- LotrMod hooks (orcslots/linkfuncs.py) ----"
 
 sym, toml = sys.argv[1], sys.argv[2]

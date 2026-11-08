@@ -81,7 +81,7 @@ unpack_stub:
     ldr r3, =0x08046DC5
     bx r3
 
-@ 0x08047F18: title screen clears the players; clear the counts too.
+@ 0x08047F18: title screen clears the players; clear the counts and arrow slots too.
     .global clear_stub
     .thumb_func
 clear_stub:
@@ -89,6 +89,12 @@ clear_stub:
     mov r12, r0
     movs r0, #0
     str r0, [r3]
+    ldr r3, =0x0203F2A0      @ and the arrow slots of both players
+    mvns r0, r0
+    str r0, [r3]
+    str r0, [r3, #4]
+    str r0, [r3, #8]
+    str r0, [r3, #12]
     mov r0, r12
     ldr r3, =0x08032D9D
     bx r3
