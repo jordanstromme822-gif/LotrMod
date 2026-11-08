@@ -1,4 +1,4 @@
-// Play Room v102: the P2 helper (inside the page's main script; uses $, WideHost and startWide's engine).
+// Play Room v103: the P2 helper (inside the page's main script; uses $, WideHost and startWide's engine).
   // ---------------- P2 helper (Jordan, 2026-11-08) ----------------
   // A P2 button next to Auto. In the wide view it lists the saved heroes that aren't the one being played; picking one
   // restarts as a 2-player link game (the PC app's engine runs both games side by side): both games load their own
@@ -233,7 +233,7 @@
     // random delay, stands beside P1 and attacks from the side opposite P1, uses its learned skills on elites and
     // groups, backs off behind P1 when its health is low (with a note on screen), and picks up gear only when it is
     // an upgrade for P2, then wears it. P2 never discards, sells or uses the Forge.
-    const seen = new Map(), skillCost2 = new Map(), noSkill2 = new Map(), noGear = new Set();
+    const seen = new Map(), skillCost2 = new Map(), noSkill2 = new Map(), noGear = new Set(), p2Tries = new Map();
     let plan = null, lastNote = 0, retreatT = 0, retreatCool = 0, castT2 = 0, castPend = null, eqPend = null, side = 1, lastGoalKey = "";
     const p2casts = {}, p2eq = [];
     const w8both = (a, v) => { const o = a & 0x7fff, H8 = M.HEAPU8; H8[M._rotk_link_iwram(0) + o] = v; H8[M._rotk_link_iwram(1) + o] = v; };
@@ -392,6 +392,14 @@
       const nearFood = want.some((p) => food(m.r8(p + 0x60)) && dist(p) < 40);
       if (veryLow && close && !nearFood && now > retreatCool) { if (!retreatT) { retreatT = now; say2("P2 is low on health!"); } }
       if (retreatT && (!veryLow || now - retreatT > 4000)) { retreatT = 0; retreatCool = now + 8000; }
+      // Picking up beats swinging (Jordan, 2026-11-08): an item at P2's feet is taken first if there's room for it.
+      for (const p of items) {
+        if (!at(p, 8) || (p2Tries.get(p) || 0) > 6) continue;
+        const t = m.r8(p + 0x60);
+        const ok = food(t) ? hp < mhp : gear(t) ? true : t === 17 ? (m.r8(P + 0x1AA) >> 4) < 10 : t === 18 ? (m.r8(P + 0x1AA) & 15) < 10 : true;
+        if (ok) { p2Tries.set(p, (p2Tries.get(p) || 0) + 1); seq([[K.R, 4], [0, 6]], f); return; }
+      }
+      if (p2Tries.size > 64) p2Tries.clear();
       if (!retreatT) {
         // Hit an enemy next to P2 (elites first); skills on elites and groups.
         for (const p of en) {
@@ -546,30 +554,3 @@
     window.__p2 = { get boot() { return boot && boot.phase; }, get macro() { return macro && macro.phase; }, get keys() { return p2keys; }, get wrote() { return wrote; }, state: () => [state(0), sub(0), state(1), sub(1)], lastSave: () => lastSave, get dbg() { return dbg; }, casts: p2casts, costs: skillCost2, eq: p2eq };
     return ctl;
   }
-
-// startWide's in-page join (no reload):
-      // P2 joins in this page (Jordan, 2026-11-08: no reload): start the 2-player engine from the saved games,
-      // pause the 1-player one, and point everything at the new engine.
-      let p2Ctl = null;
-      const join = async (cfg) => {
-        const cur = readSave() || save;
-        p2Loading(true);
-        let M2;
-        try { M2 = await makeEngine(cfg, cur); } catch (e) { log.push("join: " + e); p2Loading(false); return false; }
-        try { M._rotk_pause(1); } catch (e) {}
-        M = M2; window.__wideM = M; window.__mp = { iwram: () => M._rotk_iwram(), frame: () => H.frames, M, wide: true };
-        try { sessionStorage.setItem("rotk-p2", JSON.stringify(cfg)); } catch (e) {}
-        try { M._rotk_main(); } catch (e) { if (e !== "unwind" && !(e && e.name === "ExitStatus")) { log.push("join start: " + e); p2Loading(false); say("The 2-player game didn't start. Reload the page to play on."); return false; } }
-        [100, 1000, 3000].forEach((t) => setTimeout(() => { try { window.__refindIwram && window.__refindIwram(); } catch (e) {} }, t));
-        if (p2Ctl) p2Ctl.dispose();
-        p2Ctl = wideP2({ M, H, readSave, save: cur, link: cfg, setBoot, keepSave, join, prefetch: () => fetchEngine(true) });
-        return true;
-      };
-      p2Ctl = wideP2({ M, H, readSave, save: save || new Uint8Array(512), link, setBoot, keepSave, join, prefetch: () => fetchEngine(true) });
-
-/* CSS:
-  #p2Load { position: absolute; inset: 0; z-index: 24; background: #0b0a08; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; color: #f3e6c4; font: 600 16px var(--ui); }
-  #p2Load[hidden] { display: none; }
-  #p2Load .spin { width: 44px; height: 44px; border-radius: 50%; border: 4px solid rgba(216,178,90,0.25); border-top-color: #d8b25a; animation: p2spin 0.9s linear infinite; }
-  @keyframes p2spin { to { transform: rotate(360deg); } }
-*/
