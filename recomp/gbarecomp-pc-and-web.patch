@@ -47,10 +47,10 @@ index 69c2465..513faa3 100644
  // raw attributes so a game can distinguish HUD sprites from world objects.
 diff --git a/src/runtime/frame_smooth.h b/src/runtime/frame_smooth.h
 new file mode 100644
-index 0000000..3b7245d
+index 0000000..2c547c7
 --- /dev/null
 +++ b/src/runtime/frame_smooth.h
-@@ -0,0 +1,367 @@
+@@ -0,0 +1,369 @@
 +#pragma once
 +// 60 fps smoothing for games that draw a new picture every other VBlank.
 +//
@@ -93,7 +93,7 @@ index 0000000..3b7245d
 +
 +    bool enabled = true;
 +    int check_every = 1;
-+    uint64_t mids = 0, skipped = 0, blends = 0;
++    uint64_t mids = 0, skipped = 0, blends = 0, incompat = 0;
 +    bool blend_ = true;
 +
 +    // Called right after a frame is latched (emulation thread).
@@ -162,6 +162,8 @@ index 0000000..3b7245d
 +            } else {
 +                ++skipped;
 +            }
++        } else if (prev_.valid) {
++            ++incompat;
 +        }
 +        std::swap(prev_, latest_);
 +        latest_.valid = false;
@@ -552,7 +554,7 @@ index 82ed5f8..3b7e886 100644
  }
 +namespace gbarecomp { bool HostWindow::saved_audio_enhanced(bool&) const { return false; } }
 diff --git a/src/runtime/runtime.cpp b/src/runtime/runtime.cpp
-index 1d17757..8464336 100644
+index 1d17757..3e31bb2 100644
 --- a/src/runtime/runtime.cpp
 +++ b/src/runtime/runtime.cpp
 @@ -19,6 +19,10 @@
@@ -598,8 +600,8 @@ index 1d17757..8464336 100644
 +extern "C" int g_web_paused;
 +int g_web_paused = 0;
 +// Ticks that ran 0, 1, 2 or 3 game frames, and timing resets (read by the page for its log).
-+extern "C" int g_web_tick_stats[5];
-+int g_web_tick_stats[5] = {0, 0, 0, 0, 0};
++extern "C" int g_web_tick_stats[12];
++int g_web_tick_stats[12] = {};
 +static double g_web_last = 0, g_web_avg = 0;
 +// One game frame per display refresh when the display runs at about 60 Hz and the
 +// phone keeps up: the picture then advances by exactly one frame every refresh, so
@@ -718,13 +720,17 @@ index 1d17757..8464336 100644
  
      // ── Diagnostic replay: capture (default for interactive play) or playback.
      // Inputs are sampled at the present-in-place VBlank hook, the one frame
-@@ -4562,8 +4673,20 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
+@@ -4562,8 +4673,24 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
                                     bus.pal_ptr());
                      }
                  }
 +                if (present_frame && !fast_forward_active)
 +                    smoother.apply(ppu, live_fb.data(), ppu.render_bytes());
 +                else if (fast_forward_active) smoother.reset();
++#if defined(GBR_WEB_SINGLE)
++                g_web_tick_stats[5] = (int)smoother.mids; g_web_tick_stats[6] = (int)smoother.skipped;
++                g_web_tick_stats[7] = (int)smoother.blends; g_web_tick_stats[8] = (int)smoother.incompat;
++#endif
                  if (phase_active) fp_t1 = FramePhaseRing::now_ns();
                  if (present_frame) present_live_frame();
 +                if (framedump_dir && frame >= framedump_start &&
@@ -739,7 +745,7 @@ index 1d17757..8464336 100644
                  if (phase_active) fp_t2 = FramePhaseRing::now_ns();
                  drain_host_audio();
                  // Windowed present-in-place stays inside one step_once() for
-@@ -4592,6 +4715,9 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
+@@ -4592,6 +4719,9 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
                  last_presented_frame = frame;
                  if (present_frame) {
                      ++frames_presented;
@@ -749,7 +755,7 @@ index 1d17757..8464336 100644
                      if (args.frames >= 0 && frames_presented >= args.frames)
                          host_quit = true;
                      if (pacer) pacer->wait_for_next_frame(banked_frames);
-@@ -4906,7 +5032,11 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
+@@ -4906,7 +5036,11 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
      // Two timestamps only: normal render/audio/present work stays inside,
      // startup/state restore and exit saves/dumps stay outside the interval.
      const auto gameplay_begin = std::chrono::steady_clock::now();
@@ -761,17 +767,21 @@ index 1d17757..8464336 100644
          // Paused: hold the guest still, keep the window alive (input pump,
          // re-present, ~100 Hz idle). Applies to windowed play only.
          service_host_pause();
-@@ -5003,6 +5133,9 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
+@@ -5003,6 +5137,13 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
                                     bus.pal_ptr());
                      }
                  }
 +                if (present_frame && !fast_forward_active)
 +                    smoother.apply(ppu, live_fb.data(), ppu.render_bytes());
 +                else if (fast_forward_active) smoother.reset();
++#if defined(GBR_WEB_SINGLE)
++                g_web_tick_stats[5] = (int)smoother.mids; g_web_tick_stats[6] = (int)smoother.skipped;
++                g_web_tick_stats[7] = (int)smoother.blends; g_web_tick_stats[8] = (int)smoother.incompat;
++#endif
                  if (phase_active) fp_t1 = FramePhaseRing::now_ns();
                  if (present_frame) present_live_frame();
                  // Framedump (capture runs only) is attributed to present_us.
-@@ -5032,6 +5165,9 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
+@@ -5032,6 +5173,9 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
                  last_presented_frame = frame;
                  if (present_frame) {
                      ++frames_presented;
@@ -781,7 +791,7 @@ index 1d17757..8464336 100644
                      if (args.frames >= 0 && frames_presented >= args.frames) {
                          host_quit = true;
                      }
-@@ -5063,7 +5199,12 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
+@@ -5063,7 +5207,12 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
                  static_cast<uint64_t>(args.frames)) {
              break;
          }
