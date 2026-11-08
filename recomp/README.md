@@ -121,3 +121,11 @@ ticks with 0/1/2 frames and resets; the page writes a "wide:" line to the privat
   `coarse_step()` now compares the old and new tile maps to see which way the map was redrawn.
 - Checked natively with `GBARECOMP_INPUT_REPLAY` (walk script into Moria) and `GBARECOMP_SMOOTH_TEST`:
   left/down walking measures 1.5/1.5/2/2 per refresh (was 2/1 and, left, wrong-way jumps).
+
+## v87 steady poses (2026-11-08)
+
+Jordan saw the load-game heroes bob. When a character changes pose, its sprite pieces are re-laid,
+so they "matched" the old pieces with a fake step and the in-between picture drew the new pose a few
+pixels off. Now a step is trusted only when most pieces agree, and when the camera is still and a
+piece's graphics changed (tile number or streamed tile data), the group is drawn where the new frame
+has it. Patch: `smooth-v87-steady-poses.patch` (on top of the v82 smoothing).

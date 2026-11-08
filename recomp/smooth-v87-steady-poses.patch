@@ -1,0 +1,73 @@
+--- /tmp/rc/frame_smooth.v82.h	2026-11-08 05:45:30.627364988 +0000
++++ /tmp/rc/gbarecomp/src/runtime/frame_smooth.h	2026-11-08 05:46:36.153482243 +0000
+@@ -298,16 +298,31 @@
+         if ((a0 & 0x0300) == 0x0300) { w *= 2; h *= 2; }  // double-size affine
+     }
+ 
++    // True when the sprite piece shows the same picture in both frames (same tile number
++    // and the same tile data in video memory: some games stream each pose into fixed tiles).
++    static bool same_gfx(const Snap& a, const Snap& b, uint16_t pa2, uint16_t a2, int w, int h, bool c256) {
++        if ((pa2 & 0x3FF) != (a2 & 0x3FF)) return false;
++        const bool one_d = (b.dispcnt & 0x40) != 0;
++        const int tb = c256 ? 64 : 32, tw = w / 8, th = h / 8, base = a2 & 0x3FF;
++        for (int ty = 0; ty < th; ++ty) {
++            const int t = one_d ? base + ty * tw * (c256 ? 2 : 1) : base + ty * 32;
++            const std::size_t off = 0x10000 + static_cast<std::size_t>(t & 0x3FF) * 32, n = static_cast<std::size_t>(tw) * tb;
++            if (off + n > a.vram.size() || off + n > b.vram.size()) return true;
++            if (std::memcmp(&a.vram[off], &b.vram[off], n) != 0) return false;
++        }
++        return true;
++    }
++
+     void mid_sprites(const Snap& a, const Snap& b) {
+         const int csx = -half(cam_dx_), csy = -half(cam_dy_);
+-        struct Obj { int x, y, w, h, pal, dx, dy, grp; bool live, matched; };
++        struct Obj { int x, y, w, h, pal, dx, dy, grp; bool live, matched, gchg; };
+         Obj o[128];
+         bool used[128] = {};
+         for (int i = 0; i < 128; ++i) {
+             const uint16_t a0 = r16(b.oam, i * 8), a1 = r16(b.oam, i * 8 + 2), a2 = r16(b.oam, i * 8 + 4);
+             Obj& s = o[i];
+             s.live = (a0 & 0x0300) != 0x0200;
+-            s.matched = false; s.grp = i; s.dx = s.dy = 0;
++            s.matched = false; s.gchg = false; s.grp = i; s.dx = s.dy = 0;
+             if (!s.live) continue;
+             s.x = a1 & 0x1FF; if (s.x >= 384) s.x -= 512;
+             s.y = a0 & 0xFF; if (s.y >= 224) s.y -= 256;
+@@ -324,7 +339,7 @@
+                 if (std::abs(dx) > 16 || std::abs(dy) > 16) continue;
+                 int d = dx * dx + dy * dy;
+                 if (std::memcmp(&a.oam[j * 8], &b.oam[i * 8], 6) == 0) d = -1;  // exact twin
+-                if (d < bestd) { bestd = d; best = j; s.dx = dx; s.dy = dy; }
++                if (d < bestd) { bestd = d; best = j; s.dx = dx; s.dy = dy; s.gchg = !same_gfx(a, b, p2, a2, s.w, s.h, (a0 & 0x2000) != 0); }
+             }
+             if (best >= 0) { used[best] = true; s.matched = true; }
+         }
+@@ -345,14 +360,26 @@
+         // Most common matched step per group.
+         for (int g = 0; g < 128; ++g) {
+             if (!o[g].live || root(g) != g) continue;
+-            int bx = 0, by = 0, bc = 0;
++            int bx = 0, by = 0, bc = 0, m = 0;
+             for (int i = 0; i < 128; ++i) {
+                 if (!o[i].live || !o[i].matched || root(i) != g) continue;
++                ++m;
+                 int c = 0;
+                 for (int k = 0; k < 128; ++k)
+                     if (o[k].live && o[k].matched && root(k) == g && o[k].dx == o[i].dx && o[k].dy == o[i].dy) ++c;
+                 if (c > bc) { bc = c; bx = o[i].dx; by = o[i].dy; }
+             }
++            // An animation change re-lays a character's pieces, so they "match" with
++            // scattered steps. Trust a step only when most pieces agree on it;
++            // otherwise the group just moves with the halfway camera (still in menus).
++            if (bc * 2 <= m) bc = 0;
++            // Camera still and the character changed pose: its pieces were re-laid for the
++            // new pose, not moved, so draw it where the new frame has it (no bobbing).
++            if (bc && cam_dx_ == 0 && cam_dy_ == 0) {
++                bool chg = false;
++                for (int i = 0; i < 128 && !chg; ++i) if (o[i].live && o[i].matched && root(i) == g && o[i].gchg) chg = true;
++                if (chg) continue;
++            }
+             const int sx = bc ? half(bx) : csx, sy = bc ? half(by) : csy;
+             if (sx == 0 && sy == 0) continue;
+             for (int i = 0; i < 128; ++i) {
