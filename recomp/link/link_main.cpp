@@ -281,7 +281,8 @@ void rotk_link_setup(gbarecomp::GbaInstance& m);
 
 static std::unique_ptr<gbarecomp::GbaMultiplayerSession> g_link;
 extern "C" {
-unsigned g_link_p2_keys = 0;            // set by the page every frame
+unsigned g_link_p2_keys = 0;
+int g_link_turbo = 0;                     // extra game frames per picture (fast start)            // set by the page every frame
 int g_link_on = 0;
 unsigned g_link_frames = 0;
 unsigned g_link_level = 0;              // nonzero: the level both games start from the path screen (82 = Moria)
@@ -403,10 +404,15 @@ static int run_link(const gbarecomp::RunOptions& opts) {
         auto ev = win.pump();
         if (ev.quit) return false;
         const std::array<std::uint16_t, 2> keys{static_cast<std::uint16_t>(~ev.keyinput & 0x3ff), static_cast<std::uint16_t>(g_link_p2_keys & 0x3ff)};
-        try { S.run_frame(keys); link_force_level(); } catch (const std::exception& e) {
-            std::fprintf(stderr, "[rotk:link] stopped: %s\n", e.what()); return false;
+        // Fast start (page sets g_link_turbo while it drives the menus): several game frames per picture, no sound.
+        const int reps = 1 + (g_link_turbo > 0 ? (g_link_turbo < 8 ? g_link_turbo : 8) : 0);
+        for (int r = 0; r < reps; ++r) {
+            try { S.run_frame(keys); link_force_level(); } catch (const std::exception& e) {
+                std::fprintf(stderr, "[rotk:link] stopped: %s\n", e.what()); return false;
+            }
+            ++g_link_frames;
+            if (r + 1 < reps) for (int b = 0; b < 16; ++b) { std::uint32_t rate = 0; if (!m0.bus.audio().drain_sample_block(audio_buf, 2048, rate)) break; }
         }
-        ++g_link_frames;
         if (m0.ppu.frame_count() != last_frame && m0.ppu.has_latched_framebuffer()) {
             last_frame = m0.ppu.frame_count();
             fb.assign(m0.ppu.latched_framebuffer(), m0.ppu.latched_framebuffer() + m0.ppu.render_bytes());

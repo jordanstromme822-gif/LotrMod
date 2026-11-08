@@ -1,4 +1,4 @@
-// Play Room v98: the P2 helper (inside the page's main script; uses $, WideHost and startWide's engine).
+// Play Room v99: the P2 helper (inside the page's main script; uses $, WideHost and startWide's engine).
   // ---------------- P2 helper (Jordan, 2026-11-08) ----------------
   // A P2 button next to Auto. In the wide view it lists the saved heroes that aren't the one being played; picking one
   // restarts as a 2-player link game (the PC app's engine runs both games side by side): both games load their own
@@ -17,7 +17,10 @@
     return out;
   };
   const p2Config = () => { try { const j = JSON.parse(sessionStorage.getItem("rotk-p2") || "null"); return j && j.p2 >= 0 && j.p2 < 4 && j.p1 >= 0 && j.p1 < 4 && j.p1 !== j.p2 ? j : null; } catch (e) { return null; } };
-  function wideP2({ M, H, readSave, save, link, setBoot, keepSave }) {
+  function wideP2({ M, H, readSave, save, link, setBoot, keepSave, join, prefetch }) {
+    // Each call (1 player, then again when P2 joins) gets its own timers; dispose() stops them.
+    const timers = [], every = (fn, ms) => { const t = setInterval(fn, ms); timers.push(t); return t; };
+    let disposed = false;
     const btn = $("p2Btn"), panel = $("p2Pick"), note = $("saveNote");
     const show = (msg, ms) => { note.textContent = msg; note.hidden = false; clearTimeout(show.t); show.t = setTimeout(() => { note.hidden = true; }, ms || 3000); };
     const slog = (m) => { try { window.__slog && window.__slog("p2: " + m); } catch (e) {} };
@@ -32,6 +35,22 @@
       return { ok: iw > 0 && ew > 0, r8, r16, r32 };
     };
     const close = () => { panel.hidden = true; panel.innerHTML = ""; };
+    const ctl = { dispose: () => {
+      disposed = true; timers.forEach(clearInterval); close();
+      try { if (M._rotk_link_p2) M._rotk_link_p2(0); if (M._rotk_link_turbo) M._rotk_link_turbo(0); } catch (e) {}
+      window.__mirrorIw = null; window.__p2Tick = null;
+    } };
+    // Joining without a reload (Jordan, 2026-11-08): tapping P2 pauses the game, picking a hero unpauses it
+    // straight into the 2-player game (from the saved games), Cancel just unpauses.
+    let held = false;
+    const hold = (on) => { if (held === on) return; held = on; try { M._rotk_pause(on ? 1 : 0); } catch (e) {} };
+    const doJoin = async (cfg) => {
+      if (disposed) return;
+      if (cfg.p1 === cfg.p2 || cfg.p1 > 3) { hold(false); show("P2 can't join: load a different hero first.", 4000); return; }
+      try { keepSave(); } catch (e) {}
+      show("P2 is joining…", 3000);
+      if (!(await join(cfg))) { hold(false); show("P2 couldn't join. Keep playing, or try again.", 5000); }
+    };
     const restart = (cfg) => {
       try { keepSave(); } catch (e) {}
       try { if (cfg) sessionStorage.setItem("rotk-p2", JSON.stringify(cfg)); else sessionStorage.removeItem("rotk-p2"); } catch (e) {}
@@ -53,26 +72,33 @@
       }
       const m = mem(0), cur = m.ok ? m.r8(0x03005834) : -1, lvl = m.ok ? m.r8(0x030041F8) : 0;
       const list = p2SlotInfo(readSave() || save).filter((s) => s && s.slot !== cur);
+      if (list.length) { hold(true); try { prefetch && prefetch().catch(() => {}); } catch (e) {} }   // paused while picking; fetch the 2-player engine now
       h.textContent = list.length ? "Pick P2's hero" : "No other saved heroes";
       const n = document.createElement("div"); n.className = "p2-note";
-      n.textContent = list.length ? "The game starts again from your saved games with both heroes" + (lvl === 82 ? " in Moria" : "") + ", so save first." : "Start another hero in a free slot first, then P2 can play it.";
+      n.textContent = list.length ? "Game paused. Pick a hero to unpause with P2; the level starts again from your last save" + (lvl === 82 ? " (back in Moria)" : "") + "." : "Start another hero in a free slot first, then P2 can play it.";
       panel.appendChild(n);
-      for (const s of list) add((P2_HEROES[s.hero] || "Hero") + " · level " + s.level, () => { close(); restart({ p1: cur, p2: s.slot, moria: lvl === 82, at: Date.now() }); }, "p2-hero");
-      add("Cancel", close);
+      for (const s of list) add((P2_HEROES[s.hero] || "Hero") + " · level " + s.level, () => {
+        close(); doJoin({ p1: cur, p2: s.slot, moria: lvl === 82 });
+      }, "p2-hero");
+      add("Cancel", () => { close(); hold(false); });
     };
-    btn.addEventListener("pointerdown", (e) => { e.preventDefault(); e.stopPropagation(); if (!panel.hidden) close(); else open(); });
-    btn.addEventListener("click", (e) => e.preventDefault());
+    btn.__open = open; btn.__unhold = () => hold(false);
+    if (!btn.__bound) {
+      btn.__bound = true;
+      btn.addEventListener("pointerdown", (e) => { e.preventDefault(); e.stopPropagation(); if (!panel.hidden) { panel.hidden = true; panel.innerHTML = ""; btn.__unhold && btn.__unhold(); } else btn.__open(); });
+      btn.addEventListener("click", (e) => e.preventDefault());
+    }
     btn.classList.toggle("on", linkOn); btn.setAttribute("aria-pressed", linkOn ? "true" : "false");
     // Page changes to game memory (skill slots, options) are copied into P2's game so both stay identical.
     if (linkOn) window.__mirrorIw = (off) => { const H8 = M.HEAPU8; H8[M._rotk_link_iwram(1) + off] = H8[M._rotk_link_iwram(0) + off]; };
     // The button shows while a hero is loaded in a level (state 1) or the game is paused, and always in a P2 game.
-    setInterval(() => {
+    every(() => {
       let vis = linkOn;
       if (!vis) try { const m = mem(0); const st = m.r32(0x030041B0) & 255; vis = m.ok && (st === 1 || st === 16) && m.r8(0x03005834) < 4; } catch (e) {}
-      btn.hidden = !vis; if (!vis && !panel.hidden) close();
+      btn.hidden = !vis; if (!vis && !panel.hidden) { close(); hold(false); }
     }, 500);
-    if (!link) return;
-    if (!linkOn) { try { sessionStorage.removeItem("rotk-p2"); } catch (e) {} show("P2 couldn't start, playing 1 player.", 5000); return; }
+    if (!link) return ctl;
+    if (!linkOn) { try { sessionStorage.removeItem("rotk-p2"); } catch (e) {} show("P2 couldn't start, playing 1 player.", 5000); return ctl; }
 
     // ---- 2-player game ----
     const K = { A: 1, B: 2, SEL: 4, START: 8, RT: 16, LT: 32, U: 64, D: 128, R: 256, L: 512 };
@@ -86,12 +112,14 @@
     setBoot(0);
     const say = (t) => { $("mpBanner").textContent = t; $("mpBanner").hidden = !t; };
     say("Starting the 2-player game…");
+    try { M._rotk_link_turbo && M._rotk_link_turbo(4); } catch (e) {}   // menus run at 5x while the page drives them
     const bootTick = () => {
       const f = frames();
       if (boot.presses.length) {
         const p = boot.presses[0];
         if (f < p.at) { setBoot(0); p2(0); return; }
-        if (f < p.until) { setBoot(p.p1); p2(p.p2); return; }
+        // Every press is held for at least one picture (the menus run several frames per picture while starting).
+        if (f < p.until || !p.held) { p.held = true; setBoot(p.p1); p2(p.p2); return; }
         setBoot(0); p2(0);
         if (f < p.end) return;
         boot.presses.shift(); return;
@@ -128,13 +156,13 @@
         if (f - boot.t > 3600) fail("the level didn't start (" + s0 + "/" + s1 + ")");
       }
     };
-    const fail = (why) => { slog("boot failed: " + why); boot = null; setBoot(null); p2(0); say(""); show("P2 couldn't start the game: " + why + ". You can play on as P1.", 6000); };
-    const done = () => { slog("boot done, P1 slot " + link.p1 + ", P2 slot " + link.p2 + ", level " + mem(0).r8(0x030041F8)); boot = null; setBoot(null); p2(0); say(""); show("P2 joined", 2500); };
+    const fail = (why) => { try { M._rotk_link_turbo && M._rotk_link_turbo(0); } catch (e) {} slog("boot failed: " + why); boot = null; setBoot(null); p2(0); say(""); show("P2 couldn't start the game: " + why + ". You can play on as P1.", 6000); };
+    const done = () => { try { M._rotk_link_turbo && M._rotk_link_turbo(0); } catch (e) {} slog("boot done, P1 slot " + link.p1 + ", P2 slot " + link.p2 + ", level " + mem(0).r8(0x030041F8)); boot = null; setBoot(null); p2(0); say(""); show("P2 joined", 2500); };
 
     // ---- Saves: both games keep their own copy; slot p2 comes from P2's game, the rest from P1's. ----
     const buf = M._malloc(512), copies = [save.slice(0, 512), save.slice(0, 512)], so = 0x40 + link.p2 * 0x70;
     let wrote = 0;
-    setInterval(() => {
+    every(() => {
       let dirty = false;
       for (let i = 0; i < 2; i++) { try { if (M._rotk_link_save(i, buf)) { copies[i] = M.HEAPU8.slice(buf, buf + 512); dirty = true; } } catch (e) {} }
       if (!dirty) return;
@@ -302,10 +330,10 @@
         tick();
       } catch (e) { p2(0); }
     };
-    setInterval(loop, 8);
+    every(loop, 8);
     // If the 2-player engine ever stops, say so; the P2 button still goes back to 1 player (saved games are kept).
     let wdF = -1, wdT = performance.now(), wdSaid = false;
-    setInterval(() => {
+    every(() => {
       let f = -1; try { f = frames(); } catch (e) {}
       const now = performance.now();
       if (f !== wdF || document.visibilityState !== "visible") { wdF = f; wdT = now; return; }
@@ -313,4 +341,25 @@
     }, 1000);
     window.__p2Tick = () => { if (document.visibilityState === "hidden") loop(); };
     window.__p2 = { get boot() { return boot && boot.phase; }, get macro() { return macro && macro.phase; }, get keys() { return p2keys; }, get wrote() { return wrote; }, state: () => [state(0), sub(0), state(1), sub(1)], lastSave: () => lastSave, get dbg() { return dbg; } };
+    return ctl;
   }
+
+// startWide's in-page join (no reload), v99:
+      // P2 joins in this page (Jordan, 2026-11-08: no reload): start the 2-player engine from the saved games,
+      // pause the 1-player one, and point everything at the new engine.
+      let p2Ctl = null;
+      const join = async (cfg) => {
+        const cur = readSave() || save;
+        say("P2 is joining…");
+        let M2;
+        try { M2 = await makeEngine(cfg, cur); } catch (e) { log.push("join: " + e); say(""); return false; }
+        try { M._rotk_pause(1); } catch (e) {}
+        M = M2; window.__wideM = M; window.__mp = { iwram: () => M._rotk_iwram(), frame: () => H.frames, M, wide: true };
+        try { sessionStorage.setItem("rotk-p2", JSON.stringify(cfg)); } catch (e) {}
+        try { M._rotk_main(); } catch (e) { if (e !== "unwind" && !(e && e.name === "ExitStatus")) { log.push("join start: " + e); say("The 2-player game didn't start. Reload the page to play on."); return false; } }
+        [100, 1000, 3000].forEach((t) => setTimeout(() => { try { window.__refindIwram && window.__refindIwram(); } catch (e) {} }, t));
+        if (p2Ctl) p2Ctl.dispose();
+        p2Ctl = wideP2({ M, H, readSave, save: cur, link: cfg, setBoot, keepSave, join, prefetch: () => fetchEngine(true) });
+        return true;
+      };
+      p2Ctl = wideP2({ M, H, readSave, save: save || new Uint8Array(512), link, setBoot, keepSave, join, prefetch: () => fetchEngine(true) });

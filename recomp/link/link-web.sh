@@ -1,0 +1,6 @@
+#!/bin/bash
+# usage: linkweb.sh <objdir-with-shards> <outdir>
+set -e
+D=$1; O=$2; mkdir -p $O; cd $O
+em++ -O2 -mtail-call -fwasm-exceptions /tmp/rc/weblink/link_main.o /tmp/rc/weblink/shim.o /tmp/rc/weblink/mixer_hook.o $D/recompiled_*.o $D/dispatch_table.o $D/symbol_map.o  -Wl,--start-group /tmp/rc/webrt/libgbarecomp_runtime.a /tmp/rc/webrt/libgbarecomp_debug.a /tmp/rc/webrt/libgbarecomp_gba.a /tmp/rc/webrt/libgbarecomp_armv4t.a /tmp/rc/webrt/libgbarecomp_recompile_core.a /tmp/rc/webrt/libgbarecomp_heal_gate.a -Wl,--end-group   -sALLOW_MEMORY_GROWTH -sINITIAL_MEMORY=134217728 -sTOTAL_STACK=16777216  -sFORCE_FILESYSTEM -sEXPORTED_RUNTIME_METHODS=FS,ENV,addRunDependency,removeRunDependency -sINVOKE_RUN=0 -sEXPORTED_FUNCTIONS=_rotk_main,_rotk_pause,_rotk_iwram,_rotk_ewram,_rotk_native_view,_rotk_oam,_rotk_tick_stats,_rotk_bg_tick,_malloc,_free,_rotk_link_p2,_rotk_link_on,_rotk_link_frames,_rotk_link_iwram,_rotk_link_ewram,_rotk_link_save,_rotk_link_level,_rotk_link_turbo -lidbfs.js  -sENVIRONMENT=web -sEXIT_RUNTIME=1 -sMODULARIZE=1 -sEXPORT_NAME=createRotkLink -o rotk-link.js
+python3 -c "d=open('rotk-link.wasm','rb').read(); h=len(d)//2; open('rotk-link-0.wasm','wb').write(d[:h]); open('rotk-link-1.wasm','wb').write(d[h:]); print(len(d))"

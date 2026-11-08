@@ -34,3 +34,5 @@ extern "C" EMSCRIPTEN_KEEPALIVE const unsigned char* rotk_oam() {
 }
 extern "C" int g_web_tick_stats[5];
 extern "C" EMSCRIPTEN_KEEPALIVE const int* rotk_tick_stats() { return g_web_tick_stats; }
+extern "C" int g_link_turbo;
+extern "C" EMSCRIPTEN_KEEPALIVE void rotk_link_turbo(int n) { g_link_turbo = n; }
