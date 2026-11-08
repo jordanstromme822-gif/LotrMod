@@ -1,0 +1,64 @@
+<!doctype html><html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes"><meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"><meta name="apple-mobile-web-app-title" content="RotK">
+<link rel="manifest" href="manifest.json"><link rel="apple-touch-icon" href="icon.png">
+<title>Return of the King</title>
+<style>
+:root{color-scheme:dark}body{margin:0;background:#14100a;color:#eee;font:16px -apple-system,BlinkMacSystemFont,sans-serif;padding:max(24px,env(safe-area-inset-top)) 20px 24px}
+main{max-width:520px;margin:0 auto}h1{font-size:22px;color:#d6aa3c}p{line-height:1.45}button,label.btn{display:inline-block;font:inherit;background:#d6aa3c;color:#14100a;border:0;border-radius:22px;padding:12px 20px;font-weight:600}
+#msg{margin-top:14px;min-height:1.4em}progress{width:100%}ol{padding-left:20px;line-height:1.5}
+</style></head><body><main>
+<h1>Return of the King</h1>
+<div id="setup" hidden>
+<p>One-time setup: pick the game pack file (<b>rotk-phone-pack.bin</b> from your Project Files). It holds your game file, the engine and a copy of your saved games, and it stays on this phone.</p>
+<label class="btn">Pick the game pack<input id="pack" type="file" hidden></label>
+<p id="msg"></p><progress id="prog" max="1" value="0" hidden></progress>
+<p id="home" hidden>To play full screen: tap Share, then <b>Add to Home Screen</b>, and open the game from the new icon.</p>
+</div>
+<p id="wait">Loading…</p>
+</main>
+<script>
+(async () => {
+  const $ = (id) => document.getElementById(id), say = (t) => { $("msg").textContent = t; };
+  const standalone = navigator.standalone || matchMedia("(display-mode: fullscreen), (display-mode: standalone)").matches;
+  if (!("serviceWorker" in navigator)) { $("wait").textContent = "This browser can't run the game offline. Open this page in Safari."; return; }
+  await navigator.serviceWorker.register("sw.js", { scope: "./" });
+  await navigator.serviceWorker.ready;
+  const cache = await caches.open("rotk-pack");
+  const ready = !!(await cache.match(new Request(new URL("wide/rotk-0.wasm", location.href).href))) && localStorage.getItem("rotk-phone-pack");
+  if (ready && navigator.serviceWorker.controller) { location.replace("play.html"); return; }
+  if (ready) { location.reload(); return; }   // first visit: let the service worker take over the page
+  $("wait").hidden = true; $("setup").hidden = false; if (!standalone) $("home").hidden = false;
+  const TYPES = { js: "text/javascript", wasm: "application/wasm", json: "application/json", txt: "text/plain", css: "text/css", html: "text/html", data: "application/octet-stream", bin: "application/octet-stream" };
+  $("pack").onchange = async (e) => {
+    const f = e.target.files[0]; if (!f) return;
+    try {
+      say("Reading the game pack…"); $("prog").hidden = false;
+      const buf = new Uint8Array(await f.arrayBuffer());
+      if (String.fromCharCode(...buf.subarray(0, 6)) !== "RKPK1\n") throw new Error("this isn't the game pack");
+      const hl = new DataView(buf.buffer, 6, 4).getUint32(0, true), head = JSON.parse(new TextDecoder().decode(buf.subarray(10, 10 + hl)));
+      let at = 10 + hl, done = 0;
+      const kv = await new Promise((res, rej) => { const o = indexedDB.open("rotk-phone", 1); o.onupgradeneeded = () => o.result.createObjectStore("kv"); o.onsuccess = () => res(o.result); o.onerror = () => rej(o.error); });
+      const put = (k, v, keep) => new Promise((res, rej) => { const t = kv.transaction("kv", "readwrite"), s = t.objectStore("kv");
+        if (keep) { const q = s.get(k); q.onsuccess = () => { if (q.result === undefined) s.put(v, k); }; } else s.put(v, k);
+        t.oncomplete = () => res(); t.onerror = () => rej(t.error); });
+      for (const it of head.files) {
+        const bytes = buf.subarray(at, at + it.n); at += it.n;
+        if (it.p === "docs.json") {
+          const docs = JSON.parse(new TextDecoder().decode(bytes));
+          // The game file always; saved games only if this phone has none yet (a newer pack never overwrites play).
+          for (const [k, v] of Object.entries(docs)) await put("data/users/me/" + k, v, /^save/.test(k));
+        } else {
+          const ext = it.p.split(".").pop();
+          await cache.put(new Request(new URL(it.p, location.href).href), new Response(bytes.slice(), { headers: { "Content-Type": TYPES[ext] || "application/octet-stream" } }));
+        }
+        $("prog").value = ++done / head.files.length;
+      }
+      try { localStorage.setItem("rotk-view", "wide"); } catch (x) {}
+      localStorage.setItem("rotk-phone-pack", head.version || "1");
+      say("Ready."); location.replace("play.html");
+    } catch (x) { say("Couldn't set up: " + (x && x.message || x)); }
+  };
+})();
+</script></body></html>
