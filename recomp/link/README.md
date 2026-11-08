@@ -48,3 +48,19 @@ Profile of the browser build in Moria (2 games, wide view): about 20% in `runtim
 about 15% in the session loop and device ticking. Compiling the game code at -O2 instead of -O1,
 and skipping P2's sound mixing (`g_link_quiet_bus` in mixer_hook.cpp), made no measurable
 difference, so v97 still ships the -O1 build without the quiet mixer.
+
+## v102 (2026-11-08): P2 plays more like a person
+
+- Smooth walking: re-plans about 7 times a second and heads for the furthest point of its route it can see,
+  steering diagonally only when the smaller offset is a real part of the move.
+- Reacts to a newly seen enemy 0.15-0.3 s later; small random pause between swings.
+- Stands beside P1; when P1 is on an enemy, P2 comes at it from the other side.
+- Casts learned skills on elites and groups (same as Auto; writes go to both games with `w8both`).
+- Backs off behind P1 for up to 4 s when HP < 30% with enemies near (note "P2 is low on health!").
+- Picks up gear only when it is an upgrade for P2 (hero, level, better than worn and packed), and wears
+  backpack upgrades through its own Backpack menu (state 10 in P2's game only; P1 keeps playing). The
+  menu macro is state-driven (Start until state 10, A until sub 1, A); fixed timings missed presses.
+- Engine: `multiplayer-slice-speed.patch` (ROM fast path for the opcode fetch, direct-mapped ARM decode
+  cache instead of a hash map in `multiplayer_slice_safe`), about 10% faster 2-player in the browser.
+- A narrower picture (288 instead of 320) gave no measurable gain, so it was not shipped; 240 was about 13%
+  faster.

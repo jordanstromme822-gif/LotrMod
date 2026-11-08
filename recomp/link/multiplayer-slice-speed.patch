@@ -1,0 +1,47 @@
+diff --git a/src/runtime/multiplayer_slice.cpp b/src/runtime/multiplayer_slice.cpp
+index 00076f3..a3fd702 100644
+--- a/src/runtime/multiplayer_slice.cpp
++++ b/src/runtime/multiplayer_slice.cpp
+@@ -10,6 +10,15 @@ namespace gbarecomp {
+ namespace {
+ bool opcode(const gba::GbaBus& b,std::uint32_t pc,bool thumb,std::uint32_t& word) {
+     const auto width=thumb ? 2u : 4u;
++    // Fast path: cartridge code (almost every instruction the game runs).
++    if (pc>=0x08000000u && pc<0x0a000000u) {
++        const std::uint32_t o=pc&0x01ffffffu; const std::uint8_t* r=b.rom_ptr();
++        if (r && o+width<=b.rom_size() && !(pc&(width-1))) {
++            word=thumb ? std::uint32_t(r[o])|std::uint32_t(r[o+1])<<8
++                       : std::uint32_t(r[o])|std::uint32_t(r[o+1])<<8|std::uint32_t(r[o+2])<<16|std::uint32_t(r[o+3])<<24;
++            return true;
++        }
++    }
+     const std::uint8_t* bytes=nullptr; std::uint32_t off=0;
+     if (pc<0x4000 && pc+width<=0x4000 && b.bios() && b.bios()->loaded()) {
+         word=thumb ? b.bios()->read16(pc) : b.bios()->read32(pc); return true;
+@@ -46,7 +55,6 @@ bool multiplayer_slice_safe(const gba::GbaBus& bus,const ArmCpuState& cpu) {
+     // hashing the guest PC at every generated instruction. Read actual bytes
+     // first so RAM code changes and different cartridges remain isolated.
+     struct Cached { std::uint32_t word; Instr instruction; };
+-    static std::unordered_map<std::uint64_t,Cached> cache;
+     static std::array<std::unique_ptr<Instr>,65536> thumb_cache;
+     const Instr* instruction;
+     if (thumb) {
+@@ -54,13 +62,11 @@ bool multiplayer_slice_safe(const gba::GbaBus& bus,const ArmCpuState& cpu) {
+         if (!slot) slot=std::make_unique<Instr>(ThumbDecoder::decode(static_cast<std::uint16_t>(word),0));
+         instruction=slot.get();
+     } else {
+-        const auto key=std::uint64_t(word);
+-        auto found=cache.find(key);
+-        if (found==cache.end()) {
+-            if (cache.size()>16384) cache.clear();
+-            found=cache.insert_or_assign(key,Cached{word,ArmDecoder::decode(word,0)}).first;
+-        }
+-        instruction=&found->second.instruction;
++        // Direct-mapped decode cache (a hash map lookup per ARM instruction was a measurable cost).
++        static std::array<std::unique_ptr<Cached>,8192> arm_cache;
++        auto& slot=arm_cache[(word ^ (word>>13) ^ (word>>26)) & 8191u];
++        if (!slot || slot->word!=word) slot=std::make_unique<Cached>(Cached{word,ArmDecoder::decode(word,0)});
++        instruction=&slot->instruction;
+     }
+     const auto& i=*instruction;
+     if (i.is_undefined) return false;
