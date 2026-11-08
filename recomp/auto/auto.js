@@ -10,7 +10,7 @@
         const DEAD = new Set([0x11, 0x15, 4, 0x1b, 0x13]);
         const btn = $("autoBtn"), note = $("saveNote");
         let on = false, ew = -1, H8 = null, grid = null, gridT = 0, queue = [], qUntil = 0, keysDown = new Set();
-        let hist = [], stuck = 0, tries = new Map(), blocked = new Map(), skip = new Map(), macro = null, noEquip = new Set(), shopT = 0, lastLog = 0, idleSince = 0, unreachSince = 0, userUntil = 0, oldHeal = null, lastSeen = 0, kills = 0;
+        let hist = [], stuck = 0, tries = new Map(), blocked = new Map(), skip = new Map(), macro = null, noEquip = new Set(), shrineAt = [1385, 1214], shopT = 0, lastLog = 0, idleSince = 0, unreachSince = 0, userUntil = 0, oldHeal = null, lastSeen = 0, kills = 0;
         const rom = () => window.__romFull;
         const heap = () => emu.Module.HEAPU8;
         const findEw = () => {
@@ -180,7 +180,8 @@
             if (u === ENEMY_UPD) { if (alive(p) && onFloor(p)) en.push(p); }
             else if (u === ITEM_UPD) { if (r8(p + 0x63) === 3) items.push(p); }
             else if (u === TRIG_UPD && r8(p + 0x63) === 0) trig.push(p);
-            else if ((u === POT_UPD || u === CHEST_UPD) && r8(p + 0x63) === 0 && onFloor(p)) boxes.push(p);
+            else if (u === POT_UPD && r8(p + 0x63) === 0 && onFloor(p)) boxes.push(p);
+            else if (u === CHEST_UPD && r8(p + 0x85) === 0 && onFloor(p)) boxes.push(p);    // +0x85 stays 1 once opened
             else if (u === SHOP_UPD && r8(p + 0x60) === 2) shops.push(p);
           }
           if (en.length < lastSeen) kills += lastSeen - en.length; lastSeen = en.length;
@@ -217,25 +218,18 @@
           if (!tgt && !close) for (const p of boxes) {
             const [bx, by] = pos(p), chest = r32(p + 0x14) === CHEST_UPD;
             if (chest) {
-              // A chest opens with R from right beside it (left, right, just below or just above), facing it.
-              // Left and right sides first (the nearer one), then below and above; 2.5 s per side, then give up for a while.
-              const d = (a) => Math.abs(a[0] - x) + Math.abs(a[1] - y);
-              const spots = [...[[bx - 20, by, 7], [bx + 20, by, 6]].sort((a, b) => d(a) - d(b)), [bx, by + 12, 4], [bx, by - 14, 5]];
-              if (Math.abs(bx - x) > 40 || Math.abs(by - y) > 40) continue;    // far: walked to below (goBox)
-              if (!tries.has("t" + p)) tries.set("t" + p, now);
-              const si = Math.floor((now - tries.get("t" + p)) / 2500);
-              if (si > 3) { skip.set(p, now + 60000); tries.delete("t" + p); slog("chest gave up at " + x + "," + y); continue; }
-              const sp = spots[si];
-              if (Math.abs(sp[0] - x) <= 8 && Math.abs(sp[1] - y) <= 8) { tgt = { kind: "open", p, face: sp[2] }; break; }
-              if (Math.abs(bx - x) <= 40 && Math.abs(by - y) <= 40) { tgt = { kind: "step", p, to: sp }; break; }
+              // A chest opens with R alone (no direction held) from anywhere close: about 20 px left/right of it and 24 px above/below.
+              if (bx - x >= -18 && bx - x <= 22 && Math.abs(by - y) <= 24) { tgt = { kind: "open", p }; break; }
             } else if (Math.abs(bx - x) <= 22 && Math.abs(by - y) <= 18) { tgt = { kind: "smash", p }; break; }
           }
           const goBox = (maxLen) => { for (const p of boxes) { const [bx, by] = pos(p); const path = pathTo(prev, bx, by, 2); if (path && path.length < maxLen && (!tgt || path.length < tgt.len)) tgt = { kind: "go", p, len: path.length, path }; } };
           if (!tgt && !close) goBox(40);
-          const shopGo = () => { if (herbs < 10 && gems >= 50 && now - shopT > 90000) for (const p of shops) {
-            const [sx, sy] = pos(p);
-            if (Math.abs(sx - x) <= 30 && Math.abs(sy - y) <= 30) { tgt = { kind: "shop", p }; break; }
-            const path = pathTo(prev, sx, sy, 3); if (path && (!tgt || path.length < tgt.len)) tgt = { kind: "go", p, len: path.length, path };
+          // The Shrine is only in the entity list while the hero is near it, so its spot is remembered (Moria's is at 1385,1214).
+          for (const p of shops) shrineAt = pos(p);
+          const shopGo = () => { if (herbs < 10 && gems >= 50 && now - shopT > 90000) {
+            const [sx, sy] = shrineAt;
+            if (Math.abs(sx - x) <= 30 && Math.abs(sy - y) <= 30) { if (shops.length) tgt = { kind: "shop", p: shops[0] }; return; }
+            const path = pathTo(prev, sx, sy, 3); if (path && (!tgt || path.length < tgt.len)) tgt = { kind: "go", p: "shrine", len: path.length, path };
           } };
           if (!tgt && !close && herbs <= 2) shopGo();                       // low on herbs: restock before going on
           if (!tgt) for (const p of en) { const [ex, ey] = pos(p); const path = pathTo(prev, ex, ey, 2); if (path && (!tgt || path.length < tgt.len)) tgt = { kind: "go", p, len: path.length, path }; }
@@ -267,12 +261,10 @@
             }
             queue = [{ k: [11], ms: 60 }, { k: [], ms: 90 }];
           } else if (tgt.kind === "open") {
-            queue = [{ k: [], ms: 120 }, { k: [11], ms: 100 }, { k: [], ms: 250 }];      // R alone, standing still (R while walking doesn't open it)
-          } else if (tgt.kind === "step") {
-            // Walk the last few pixels to the chest's side.
-            const tx = tgt.to[0], ty = tgt.to[1], k = [];
-            if (tx - x > 1) k.push(7); if (tx - x < -1) k.push(6); if (ty - y > 1) k.push(5); if (ty - y < -1) k.push(4);
-            queue = [{ k, ms: 60 }, { k: [], ms: 30 }];
+            const n = (tries.get(tgt.p) || 0) + 1; tries.set(tgt.p, n);
+            if (n > 10) { skip.set(tgt.p, now + 60000); slog("chest gave up at " + x + "," + y + " (chest " + pos(tgt.p).join(",") + ")"); }
+            const p = tgt.p;
+            queue = [{ k: [], ms: 200 }, { k: [11], ms: 120 }, { k: [], ms: 400 }, { k: [], ms: 10, run: () => { if (r8(p + 0x85)) slog("chest opened"); } }];
           } else if (tgt.kind === "smash") {
             const n = (tries.get(tgt.p) || 0) + 1; tries.set(tgt.p, n);
             if (n > 14) { skip.set(tgt.p, now + 60000); slog("smash gave up at " + x + "," + y); }
