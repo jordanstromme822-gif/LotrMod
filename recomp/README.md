@@ -194,3 +194,18 @@ at full health, herbs (17, 18, 20-24) when both herb pouches hold 10, gear (25+)
 (`playroom/grab-label.js`). Tested by changing a dropped item's type byte (+0x60) in both games.
 P2 sound check: recordings of the same level (76) solo and with P2 show one sound stream (about 60 buffers a
 second, P1's game only) and the same spectrum; P2's game is drained and never played.
+
+### P2 and online back to the full wide view, faster 2-player engine (Play Room v116, 2026-11-08)
+
+Jordan: "P2 back to full wide screen smooth". The 2-player picture (P2 helper and online) uses the same view width
+as solo Wide again (P2: chosen from the game area's shape, online: 320 on both pages so they stay identical) and
+fills the game area; v103's 240-wide boxed picture is gone. Link engine `?v=116`.
+Engine (`link/engine-speed-v116.patch`): the two games ran in tiny slices, about 13,000 handovers a frame, because
+every instruction that the slice check didn't recognise ended a slice. Most were the game's sound mixer in IWRAM
+(`ldrb rX, [r5, r7, asr #16]`: only LSL #0-4 register offsets were accepted) and DMA register writes for
+graphics copies. Now every immediate shift is accepted, and DMA register reads and writes are inside a slice
+(an immediate copy only when source and destination are plain memory and no IRQ is asked for). About 2,300
+handovers a frame; headless top speed 68 -> about 100 frames a second. Online games still hash the same.
+The frame smoother also handles a picture every 3rd VBlank (two in-between pictures at a third and two thirds);
+measured while walking with P2 the game draws an even 30 pictures a second, so it rarely applies. The play log
+shows in-between counts for the 2-player engine now too. `GBA_SESSION_PROFILE=1` prints why slices end.

@@ -269,6 +269,8 @@ extern gba::GbaBus* g_session_hook_bus;
 extern std::uint64_t g_session_slice_lookahead;
 extern "C" int g_session_bridge_misses;
 extern "C" unsigned g_session_bridged_misses;
+extern "C" int g_web_tick_stats[12];
+namespace gba { extern unsigned g_link_hub_starts; }
 extern "C" unsigned g_ws_extra, g_ws_extra_left, g_ws_extra_right, g_ws_view_width, g_ws_active;
 void runtime_set_frame_start_hook(std::function<void()>);
 void runtime_set_vblank_latch_hook(std::function<void()>);
@@ -429,6 +431,20 @@ static int run_link(const gbarecomp::RunOptions& opts) {
             last_frame = m0.ppu.frame_count();
             fb.assign(m0.ppu.latched_framebuffer(), m0.ppu.latched_framebuffer() + m0.ppu.render_bytes());
             smoother.apply(m0.ppu, fb.data(), fb.size());
+            {   // play-log counts (in-between / skipped / blended / big moves), like the 1-player engine
+                g_web_tick_stats[5] = (int)smoother.mids; g_web_tick_stats[6] = (int)smoother.skipped;
+                g_web_tick_stats[7] = (int)smoother.blends; g_web_tick_stats[8] = (int)smoother.incompat;
+                g_web_tick_stats[9] = (int)smoother.gaps[1]; g_web_tick_stats[10] = (int)smoother.gaps[2];
+                static const bool gdbg = std::getenv("ROTK_GAPS") != nullptr;
+                if (gdbg) {   // per-frame pattern: N = new picture, digit = cable transfers this frame
+                    static std::string pat; static std::uint64_t gs = 0; static unsigned ls = 0;
+                    const std::uint64_t g = smoother.gaps[0] + smoother.gaps[1] + smoother.gaps[2] + smoother.gaps[3];
+                    pat += g != gs ? 'N' : '.'; gs = g;
+                    const unsigned st = gba::g_link_hub_starts; pat += char('0' + std::min(9u, st - ls)); ls = st;
+                    if (pat.size() >= 120) { std::fprintf(stderr, "[pat] %s\n", pat.c_str()); pat.clear(); }
+                }
+                if (gdbg && (last_frame % 300) == 0) std::fprintf(stderr, "[gaps] %llu/%llu/%llu/%llu\n", (unsigned long long)smoother.gaps[0], (unsigned long long)smoother.gaps[1], (unsigned long long)smoother.gaps[2], (unsigned long long)smoother.gaps[3]);
+            }
             win.present(fb.data(), m0.ppu.render_width(), m0.ppu.render_height());
         }
         for (int b = 0; b < 16; ++b) { std::uint32_t rate = 0; const auto n = m0.bus.audio().drain_sample_block(audio_buf, 2048, rate); if (!n) break; win.push_audio_block(audio_buf, n, rate); }

@@ -1,0 +1,310 @@
+--- a/src/runtime/multiplayer_slice.cpp
++++ b/src/runtime/multiplayer_slice.cpp
+@@ -41,6 +41,34 @@
+     // Conservative cartridge subset: no GPIO, EEPROM, save or unmapped bus.
+     return load && lo>=0x08000100 && hi<0x0a000000;
+ }
++// DMA registers (v116): the game sets up immediate DMA copies to VRAM/OAM/RAM from IWRAM code many times a frame.
++// Address/count writes and reads only touch register state; an immediate copy between plain memory regions is the
++// same as the CPU's own stores (devices have no event inside a slice), and timed DMAs only arm. Anything else syncs.
++bool dma_access_safe(const gba::GbaBus& b,std::uint32_t address,unsigned size,bool load,std::uint32_t value) {
++    const std::uint32_t lo=address&~(size-1u), off=lo-0x04000000u;
++    if (lo<0x040000B0u || lo+size>0x040000E0u) return false;
++    if (load) return true;
++    const unsigned ch=(off-0xB0u)/12u, base=0xB0u+ch*12u;
++    if (off+size<=base+10u || off>=base+12u) return true;             // SAD, DAD or CNT_L only
++    if (size==4 && off!=base+8u) return false;
++    const std::uint8_t* io=b.io().raw();
++    const std::uint16_t new_h=static_cast<std::uint16_t>(size==4 ? value>>16 : value);
++    const std::uint16_t old_h=static_cast<std::uint16_t>(io[base+10]|io[base+11]<<8);
++    if (!(new_h&0x8000u) || (old_h&0x8000u) || ((new_h>>12)&3u)) return true;   // no immediate start
++    std::uint32_t count=size==4 ? (value&0xffffu) : std::uint32_t(io[base+8]|io[base+9]<<8);
++    if (!count) count=ch==3 ? 0x10000u : 0x4000u;
++    const std::uint32_t step=(new_h&0x0400u) ? 4u : 2u, len=count*step;
++    const auto rd32=[&](unsigned o) { return std::uint32_t(io[o])|std::uint32_t(io[o+1])<<8|std::uint32_t(io[o+2])<<16|std::uint32_t(io[o+3])<<24; };
++    const std::uint32_t sad=rd32(base)&0x0FFFFFFFu&~(step-1u), dad=rd32(base+4)&0x0FFFFFFFu&~(step-1u);
++    const unsigned dc=(new_h>>5)&3u, sc=(new_h>>7)&3u;
++    if (dc==1 || sc==1 || sc==3) return false;                     // decrementing copies: take the slow path
++    if (new_h&0x4000u) return false;                               // completion IRQ: take the slow path
++    const std::uint32_t s_hi=sc==2 ? sad+step-1u : sad+len-1u, d_hi=dc==2 ? dad+step-1u : dad+len-1u;
++    if (s_hi<sad || d_hi<dad) return false;
++    const bool src_ok=(sad>=0x02000000u && s_hi<0x04000000u) || (sad>=0x05000000u && s_hi<0x08000000u) || (sad>=0x08000100u && s_hi<0x0a000000u);
++    const bool dst_ok=(dad>=0x02000000u && d_hi<0x04000000u) || (dad>=0x05000000u && d_hi<0x08000000u);
++    return src_ok && dst_ok;
++}
+ }
+ bool multiplayer_slice_safe(const gba::GbaBus& bus,const ArmCpuState& cpu) {
+     using namespace armv4t;
+@@ -80,12 +108,24 @@
+         auto off=i.mem.imm_offset;
+         if (i.mem.by_register) {
+             const auto& shift=i.mem.reg_offset;
+-            if (shift.by_register || shift.type!=ShiftType::LSL || shift.imm_or_rs>4) return false;
+-            off=reg(shift.rm)<<shift.imm_or_rs;
++            if (shift.by_register) return false;
++            // Every immediate shift (the game's sound mixer reads samples with ASR #16; v116).
++            const std::uint32_t v=reg(shift.rm), n=shift.imm_or_rs&31u;
++            switch (shift.type) {
++            case ShiftType::LSL: off=v<<n; break;
++            case ShiftType::LSR: off=n ? v>>n : 0u; break;
++            case ShiftType::ASR: off=static_cast<std::uint32_t>(static_cast<std::int32_t>(v)>>(n ? n : 31u)); break;
++            default: if (!n) return false; off=(v>>n)|(v<<(32u-n)); break;   // ROR (RRX needs the carry)
++            }
+         }
+         const auto address=i.mem.pre_indexed ? (i.mem.add ? base+off : base-off) : base;
+         // Cover byte, halfword, aligned-word and signed-unaligned accesses.
+-        return plain_memory(address&~3u,(address&~3u)+3,load);
++        if (plain_memory(address&~3u,(address&~3u)+3,load)) return true;
++        if ((address>>24)==4u && i.op!=IrOp::STRB && i.op!=IrOp::LDRB && i.op!=IrOp::LDRSB && i.rd!=15) {
++            const unsigned size=(i.op==IrOp::LDR || i.op==IrOp::STR) ? 4u : 2u;
++            return dma_access_safe(bus,address,size,load,load ? 0u : reg(i.rd));
++        }
++        return false;
+     }
+     case IrOp::LDM: case IrOp::STM: {
+         const auto base=reg(i.block.rn);
+--- a/src/runtime/runtime_bus_bridge.cpp
++++ b/src/runtime/runtime_bus_bridge.cpp
+@@ -1112,6 +1112,18 @@
+     g_vblank_input_hook = std::move(h);
+ }
+ 
++#include <unordered_map>
++static bool g_slice_stats_on = std::getenv("GBA_SESSION_PROFILE") != nullptr;
++static std::unordered_map<std::uint32_t, std::uint64_t> g_slice_unsafe;
++static std::uint64_t g_slice_end[4];
++extern "C" void runtime_slice_stats_dump() {
++    if (!g_slice_stats_on) return;
++    std::vector<std::pair<std::uint64_t, std::uint32_t>> v; for (auto& [pc, n] : g_slice_unsafe) v.push_back({n, pc});
++    std::sort(v.rbegin(), v.rend());
++    std::fprintf(stderr, "[session:ends] single=%llu stopped=%llu unsafe=%llu deadline=%llu top:", (unsigned long long)g_slice_end[0], (unsigned long long)g_slice_end[1], (unsigned long long)g_slice_end[2], (unsigned long long)g_slice_end[3]);
++    for (std::size_t i = 0; i < v.size() && i < 60; ++i) std::fprintf(stderr, " %08X:%llu", v[i].second, (unsigned long long)v[i].first);
++    std::fprintf(stderr, "\n"); g_slice_unsafe.clear(); for (auto& x : g_slice_end) x = 0;
++}
+ extern "C" bool runtime_should_yield(void) {
+     // Host-stack budget guard: branch/dispatch chains that fail to unwind
+     // (e.g. a busy-wait split across generated functions whose wake flag
+@@ -1144,16 +1156,23 @@
+     if (g_session_execution) {
+         if (gbarecomp::runtime_dispatch_suspended()) return true;
+         auto* bus = gbarecomp::g_active_bus;
+-        const bool safe = g_session_slice && bus && gbarecomp::multiplayer_slice_safe(*bus,g_cpu);
++        // Cheap tests first (v116): the instruction check only matters while the slice goes on.
+         if (g_session_instruction_started && (!g_session_slice || g_session_slice_stopped ||
+-            !safe || g_runtime_cycles >= g_session_slice_deadline))
++            g_runtime_cycles >= g_session_slice_deadline)) {
++            if (g_slice_stats_on) ++g_slice_end[!g_session_slice ? 0 : g_session_slice_stopped ? 1 : 3];
++            return gbarecomp::runtime_suspend_dispatch();
++        }
++        const bool safe = g_session_slice && bus && gbarecomp::multiplayer_slice_safe(*bus,g_cpu);
++        if (g_session_instruction_started && !safe) {
++            if (g_slice_stats_on) ++g_slice_end[2];
+             return gbarecomp::runtime_suspend_dispatch();
++        }
+         if (bus && bus->io().irq_pending() && !(g_cpu.cpsr & CPSR_I_BIT)) {
+             runtime_irq(g_cpu.R[15]);
+             if (gbarecomp::runtime_dispatch_suspended()) return true;
+         }
+         g_session_instruction_started = true;
+-        if (!safe) g_session_slice_stopped = true;
++        if (!safe) { g_session_slice_stopped = true; if (g_slice_stats_on) { ++g_slice_unsafe[g_cpu.R[15]]; } }
+     }
+     auto* bus = gbarecomp::g_active_bus;
+ 
+--- a/src/runtime/multiplayer_session.cpp
++++ b/src/runtime/multiplayer_session.cpp
+@@ -12,6 +12,7 @@
+ // 8-bit transfer at the fast clock takes 64). A game that only uses
+ // multiplayer-mode transfers (5755+ cycles each) can raise it.
+ std::uint64_t g_session_slice_lookahead = 63;
++extern "C" void runtime_slice_stats_dump();
+ namespace gbarecomp {
+ namespace {
+ template<class Archive, class Context> void execution_state(Archive& a, Context& state) {
+@@ -166,6 +167,7 @@
+     std::chrono::nanoseconds cpu_time{0}, schedule_time{0}, device_time{0}, binding_time{0};
+     std::uint64_t dispatches = 0, passes = 0;
+     unsigned zero_cycle_passes = 0;
++    static std::uint64_t why[8];
+     while (cycle_ < target) {
+         const auto cpu_start = profile ? ProfileClock::now() : ProfileClock::time_point{};
+         // Simultaneous CPU edges have stable manifest order. Every device is
+@@ -218,15 +220,18 @@
+         if (profile) cpu_time += ProfileClock::now() - cpu_start;
+         const auto schedule_start = profile ? ProfileClock::now() : ProfileClock::time_point{};
+         std::uint64_t next = target;
++        int w = 7;
+         for (auto& ptr : machines_) {
+             auto& instance = *ptr;
+             auto& io = instance.bus.io();
+-            if (!io.halted()) next = std::min(next, instance.timing.cycles);
+-            const auto event = std::min({instance.ppu.cycles_until_next_event(),
++            if (!io.halted() && instance.timing.cycles < next) { next = instance.timing.cycles; w = 0; }
++            const std::uint64_t ev[4] = {instance.ppu.cycles_until_next_event(),
+                 instance.bus.audio().cycles_until_next_shared_event(),
+-                io.cycles_until_next_timer_event(), io.cycles_until_next_sio_event()});
+-            next = std::min(next, cycle_ + event);
++                io.cycles_until_next_timer_event(), io.cycles_until_next_sio_event()};
++            for (int k = 0; k < 4; ++k) if (cycle_ + ev[k] < next) { next = cycle_ + ev[k]; w = 1 + k; }
+         }
++        if (profile_enabled) { ++why[w]; if (false) { std::fprintf(stderr, "[session:why] cpu=%llu ppu=%llu audio=%llu timer=%llu sio=%llu target=%llu\n",
++            (unsigned long long)why[0],(unsigned long long)why[1],(unsigned long long)why[2],(unsigned long long)why[3],(unsigned long long)why[4],(unsigned long long)why[7]); for (auto& x : why) x = 0; } }
+         if (profile) schedule_time += ProfileClock::now() - schedule_start;
+         if (next == cycle_) {
+             // An IRQ entry/return consumed no emulated cycles; the next
+@@ -269,6 +274,9 @@
+         }
+         cycle_ = next;
+     }
++    if (profile) { ::runtime_slice_stats_dump(); }
++    if (profile) { std::fprintf(stderr, "[session:why] cpu=%llu ppu=%llu audio=%llu timer=%llu sio=%llu target=%llu\n",
++            (unsigned long long)why[0],(unsigned long long)why[1],(unsigned long long)why[2],(unsigned long long)why[3],(unsigned long long)why[4],(unsigned long long)why[7]); for (auto& x : why) x = 0; }
+     if (profile) {
+         const auto ms = [](auto duration) {
+             return std::chrono::duration<double, std::milli>(duration).count();
+--- a/src/runtime/frame_smooth.h
++++ b/src/runtime/frame_smooth.h
+@@ -42,6 +42,7 @@
+     bool enabled = true;
+     int check_every = 1;
+     uint64_t mids = 0, skipped = 0, blends = 0, incompat = 0;
++    uint64_t gaps[4] = {};   // VBlanks between new pictures: 1, 2, 3, 4+ (2 players: the game draws every 3rd VBlank)
+     bool blend_ = true;
+ 
+     // Called right after a frame is latched (emulation thread).
+@@ -67,7 +68,31 @@
+         }
+         const bool repeat = last_fb_.size() == bytes &&
+                             std::memcmp(last_fb_.data(), fb, bytes) == 0;
+-        if (repeat) return false;  // shows the real (already delayed) frame
++        if (repeat) {
++            ++gap_;
++            // Game drawing every 3rd VBlank (20 pictures a second): the first repeat shows the
++            // second in-between picture, two thirds of the way, so every 60 fps step is a third.
++            if (pending_ && older_.valid && prev_.valid) {
++                pending_ = false;
++                odd_ = false;
++                num_ = 1; den_ = 3;
++                render_mid(ppu, fb, older_, prev_, 0);
++                if (odd_ && blend_) {
++                    alt_.resize(bytes);
++                    render_mid(ppu, alt_.data(), older_, prev_, 1);
++                    for (std::size_t i = 0; i < bytes; ++i)
++                        fb[i] = static_cast<uint8_t>((fb[i] + alt_[i] + 1) >> 1);
++                    ++blends;
++                }
++                ++mids;
++                return true;
++            }
++            return false;  // shows the real (already delayed) frame
++        }
++        pending_ = false;
++        if (gap_ >= 1) ++gaps[gap_ >= 4 ? 3 : gap_ - 1];
++        const int thirds = gap_ == 3;   // cadence of the last two pictures predicts this one
++        gap_ = 1;
+         last_fb_.assign(fb, fb + bytes);
+         Snap& b = latest_;
+         bool did = false;
+@@ -98,16 +123,18 @@
+                         (r16(prev_.io, 0x12 + bg * 4) & 511) < 8 && (r16(b.io, 0x12 + bg * 4) & 511) < 8)
+                         coarse_step(prev_, b, bg, cd_[bg][0], cd_[bg][1]);
+                 }
+-                render_mid(ppu, fb, b, 0);
++                num_ = thirds ? 2 : 1; den_ = thirds ? 3 : 2;
++                render_mid(ppu, fb, prev_, b, 0);
+                 if (odd_ && blend_) {
+                     alt_.resize(bytes);
+-                    render_mid(ppu, alt_.data(), b, 1);
++                    render_mid(ppu, alt_.data(), prev_, b, 1);
+                     for (std::size_t i = 0; i < bytes; ++i)
+                         fb[i] = static_cast<uint8_t>((fb[i] + alt_[i] + 1) >> 1);
+                     ++blends;
+                 }
+                 did = true;
+                 ++mids;
++                pending_ = thirds;
+             } else {
+                 ++skipped;
+                 if (why_) std::fprintf(stderr, "smooth: skip (raster) f%llu\n", (unsigned long long)nframe_);
+@@ -117,6 +144,7 @@
+             if (why_) std::fprintf(stderr, "smooth: incompat %s f%llu\n", why_incompat(prev_, b), (unsigned long long)nframe_);
+         }
+         std::swap(prev_, latest_);
++        if (pending_) std::swap(older_, latest_);   // keep the previous picture for the second in-between
+         latest_.valid = false;
+         return did;
+     }
+@@ -130,7 +158,9 @@
+         if (std::memcmp(&a.io[0x40], &b.io[0x40], 0x12) != 0) return "win/blend";
+         return "bigscroll";
+     }
+-    Snap latest_, prev_;
++    Snap latest_, prev_, older_;
++    bool pending_ = false;
++    int gap_ = 0, num_ = 1, den_ = 2;
+     bool fresh_ = false;
+     bool last_check_failed_ = true;
+     int unchecked_ = 0;
+@@ -139,28 +169,35 @@
+     int up_ = 0;            // 0: halves rounded toward zero, 1: away from zero
+     int cd_[4][2] = {};     // camera step of each coarse layer (from its map)
+ 
+-    // Half of d, rounded toward zero (up_ == 0) or away from zero (up_ == 1).
++    // The in-between share of d (num_/den_ of it: a half, or a third / two thirds when the game
++    // draws every 3rd VBlank), rounded toward zero (up_ == 0) or away from zero (up_ == 1).
+     int half(int d) {
+-        if (d & 1) odd_ = true;
+-        const int h = d / 2;
+-        return up_ ? d - h : h;
++        const int p = d * num_;
++        if (p % den_) odd_ = true;
++        const int h = p / den_;
++        return up_ ? (p % den_ ? h + (d > 0 ? 1 : -1) : h) : h;
++    }
++    // Fade level num_/den_ of the way back from b to a.
++    int mixv(int a, int b) {
++        const int p = b * den_ + (a - b) * num_;
++        if (p % den_) odd_ = true;
++        return (p + (up_ ? den_ - 1 : 0)) / den_;
+     }
+ 
+-    void render_mid(const gba::GbaPpu& ppu, uint8_t* out, const Snap& b, int up) {
++    void render_mid(const gba::GbaPpu& ppu, uint8_t* out, const Snap& a, const Snap& b, int up) {
+         up_ = up;
+         io_mid_ = b.io;
+         oam_mid_ = b.oam;
+         vram_mid_ = b.vram;
+-        mid_scroll(prev_, b);
+-        mid_sprites(prev_, b);
+-        // Fades: brightness (BLDY) and blend weights (BLDALPHA) halfway between the two pictures.
++        mid_scroll(a, b);
++        mid_sprites(a, b);
++        // Fades: brightness (BLDY) and blend weights (BLDALPHA) part way between the two pictures.
+         {
+-            const int ay = r16(prev_.io, 0x54) & 31, by = r16(b.io, 0x54) & 31;
+-            w16(io_mid_, 0x54, static_cast<uint16_t>((ay + by + up) >> 1));
+-            const int a1 = r16(prev_.io, 0x52) & 31, b1 = r16(b.io, 0x52) & 31;
+-            const int a2 = (r16(prev_.io, 0x52) >> 8) & 31, b2 = (r16(b.io, 0x52) >> 8) & 31;
+-            w16(io_mid_, 0x52, static_cast<uint16_t>(((a1 + b1 + up) >> 1) | (((a2 + b2 + up) >> 1) << 8)));
+-            if (((ay ^ by) & 1) || ((a1 ^ b1) & 1) || ((a2 ^ b2) & 1)) odd_ = true;
++            const int ay = r16(a.io, 0x54) & 31, by = r16(b.io, 0x54) & 31;
++            w16(io_mid_, 0x54, static_cast<uint16_t>(mixv(ay, by)));
++            const int a1 = r16(a.io, 0x52) & 31, b1 = r16(b.io, 0x52) & 31;
++            const int a2 = (r16(a.io, 0x52) >> 8) & 31, b2 = (r16(b.io, 0x52) >> 8) & 31;
++            w16(io_mid_, 0x52, static_cast<uint16_t>(mixv(a1, b1) | (mixv(a2, b2) << 8)));
+         }
+         for (int bg = 0; bg < 4; ++bg) {
+             gba::g_ws_margin_scroll_override[bg][0] = margin_[bg][0];
+--- a/src/gba/gba_link_hub.cpp
++++ b/src/gba/gba_link_hub.cpp
+@@ -149,8 +149,10 @@
+     }
+     start_=ports_[port].cycle; finish_=start_+duration; active_=true;
+ }
++unsigned g_link_hub_starts = 0;
+ void GbaLinkHub::start() {
+     if (!ready()) return;
++    ++g_link_hub_starts;
+     const auto duration = kTransferCycles[ports_[0].control & 3][count_ - 2];
+     if (ports_[0].cycle > std::numeric_limits<std::uint64_t>::max() - duration)
+         throw std::overflow_error("GBA cable cycle overflow");
