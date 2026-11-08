@@ -184,6 +184,7 @@ or `0x08` (ROM as the CPU sees it).
 - Working copy of the settings is 0x03002080 (+0 music, +1 sfx, +2 quick skill, +3 auto heal, ...). The saved copy is the bit field at 0x03005820 (0x030057F0 + 0x30): bit 3 quick skill, bit 4 auto heal. Leaving Options calls 0x080265C0, which copies them into each hero's flags at player + 0x19A (bit 1 quick skill, bit 0 auto heal).
 - Quick Skill Select: with it on, the Skills page (state 0xF) shows A, B and R badges on three skills, and in play holding L and pressing A, B or R uses that skill (player + 0x191.. holds the slot map). Verified in the core: L+A fires the A skill.
 - `tools/nolanguage.py` removes Language Select: 7 rows, Credits in row 6, label helper at 0x0809E800.
+- `tools/noquickskill.py` (after nolanguage) hides Quick Skill Select: row 2 not drawn, rows below move up, cursor skips it (helpers 0x0809ED00). Skill Spirit cost: the hero's skill table pointer at player + 0x1C (ROM, 40 bytes per skill), cost u16 at +4; 0x080430E8 checks it before a Quick Skill.
 
 ## Side-quest dialogue
 

@@ -1,4 +1,17 @@
-// Play Room v109: skill buttons (icons inside, black when used, countdown), B's skill on L, B rules shared by player, Auto and P2 (bAct), B's longer pickup reach (__stepPick).
+// Play Room v110: skills always on (L held in play), skill buttons (icons inside, grey without Spirit, black when used,
+// countdown), B's skill on L, Undo button (skill points, sold or thrown-away items), B rules shared by player, Auto and P2.
+      // Skills are always on now (Jordan, 2026-11-08): the Skills button became Undo, and Quick Skill Select is gone from the
+      // game's Options menu. While Auto plays it presses L itself, so the page lets go of L then.
+      let qsOn = true, qsHeld = false, lTouch = false, lCast = false, bNoL = false, stepping = false;
+      // L is held while Quick Skill is on, while the L button is down, or while L casts B's skill; never while B is pressed
+      // (B always swings or picks up, Jordan 2026-11-08).
+      const sendL = () => { try { emu.gameManager.simulateInput(0, 10, (qsHeld || lTouch || lCast) && !bNoL ? 1 : 0); } catch (e) {} };
+      const qsOption = () => { if (emu.gameManager.mpQs) { emu.gameManager.mpQs(); return; } try { const h = emu.Module.HEAPU8; if (iwram < 0) return; h[iwram + 0x5820] |= 8; h[iwram + 0x3D9A] |= 2; h[iwram + 0x3F46] |= 2; [0x5820, 0x3D9A, 0x3F46].forEach((o) => { try { window.__mirrorIw && window.__mirrorIw(o); } catch (e) {} }); } catch (e) {} };
+      const qsSync = () => { const want = qsOn && !inMenu() && !(window.__auto && window.__auto.on); if (want && iwram >= 0) qsOption(); if (want !== qsHeld) { qsHeld = want; sendL(); } };
+      setInterval(qsSync, 100);
+      // Skill icons under A, B and R (Jordan, 2026-11-07). In play, read the local hero's Quick Skill Select slots:
+      // local player 0x03003F59, hero struct 0x03003C00 + 0x1AC * player, hero id +0x19F, slots +0x191 (A) +0x192 (B)
+      // +0x193 (R), active skill levels +0x16A. A slot shows only once its skill has been learned.
       const skIcons = [...document.querySelectorAll("#pad .sk")].sort((a, b) => a.dataset.slot - b.dataset.slot);   // A, B's skill (on L), R
       const skPos = (v) => (v[1] * 20) + "% " + (v[0] * 100 / 7).toFixed(3) + "%";   // sheet: 6 skills across, 8 heroes down
       // Used skills (Jordan, 2026-11-08): the pressed skill's icon turns black. If the game took Spirit for it and it's a
@@ -47,6 +60,10 @@
             if (hero < 8) st = [0, 1, 2].map((k) => { const s = h[P + 0x191 + k]; const lv = s < 6 ? (h[P + 0x16A + s] << 24 >> 24) : 0; return lv > 0 ? [hero, s] : null; });
           }
         } catch (e) {}
+        let sp = -1; try { const h = emu.Module.HEAPU8, P = heroPtr(); sp = h[P + 0x17E] | h[P + 0x17F] << 8; } catch (e) {}
+        const short = (v) => { if (!v || sp < 0 || !window.__skCost) return false; const c = window.__skCost(v[1]); return c > 0 && sp < c; };
+        skIcons.forEach((el, k) => { const v = st && st[k]; el.parentElement.classList.toggle("nosp", short(v)); });
+        xBtns.forEach((b, k) => b.classList.toggle("nosp", short(xList[k])));
         skIcons.forEach((el, k) => {
           const v = st && st[k], key = v ? v.join(",") : "";
           if (el.__k === key) return; el.__k = key; el.__v = v; el.classList.toggle("show", !!v); el.parentElement.classList.toggle("has-sk", !!v);
@@ -55,106 +72,74 @@
         document.body.classList.toggle("qs-on", qsOn);
         updateExtras();
       }, 250);
-      // Extra skill buttons (Jordan, 2026-11-07): each learned active skill that isn't on A, B or R gets a button above A
-      // and B. A tap puts that skill in the R slot for a moment, presses the game's own L + R (Quick Skill Select), then
-      // puts the R skill back, so the game itself checks Spirit and plays the skill. Solo and Wide only: in a 2-player
-      // link game changing memory on one side would split the two games apart. Keys 1, 2, 3 on a PC.
-      const xBtns = [...document.querySelectorAll("#pad .xs")];
-      const sheet = getComputedStyle(skIcons[0] || document.body).backgroundImage;
-      xBtns.forEach((b) => { b.querySelector(".xi").style.backgroundImage = sheet; });
-      const linked = () => !!(window.__mp && !window.__mp.wide);
-      let xList = [];
-      const heroPtr = () => { const h = emu.Module.HEAPU8; const pl = h[iwram + 0x3F59] & 1; return iwram + 0x3C00 + 0x1AC * pl; };
-      function updateExtras() {
-        let list = [];
-        try {
-          const h = emu.Module.HEAPU8;
-          if (iwram >= 0 && h && !inMenu() && !linked()) {
-            const P = heroPtr(), hero = h[P + 0x19F];
-            if (hero < 8) {
-              const slots = [h[P + 0x191], h[P + 0x192], h[P + 0x193]];
-              for (let s = 0; s < 6 && list.length < 3; s++) if ((h[P + 0x16A + s] << 24 >> 24) > 0 && !slots.includes(s) && !(xCast && xCast.skill === s)) list.push([hero, s]);
-              if (xCast) list = xList;  // keep the buttons steady while a skill is going off
-            }
-          }
-        } catch (e) {}
-        xList = list;
-        const key = list.map((v) => v.join(",")).join(";");
-        if (key === updateExtras.key) return; updateExtras.key = key;
-        xBtns.forEach((b, k) => {
-          const v = list[k]; b.classList.toggle("show", !!v);
-          if (v) b.querySelector(".xi").style.backgroundPosition = skPos(v);
-        });
-        document.body.classList.toggle("has-xs", list.length > 0);
-      }
-      let xCast = null;
-      const castExtra = (k) => {
-        const v = xList[k]; if (!v || xCast || inMenu() || linked()) return;
-        let P, h;
-        try { h = emu.Module.HEAPU8; P = heroPtr(); } catch (e) { return; }
-        const skill = v[1], old = h[P + 0x193];
-        xCast = { skill };
-        qsOption();
-        h[P + 0x193] = skill; try { window.__mirrorIw && window.__mirrorIw(P + 0x193 - iwram); } catch (e) {}
-        const btn = xBtns[k]; btn.classList.add("on"); skillPressed(btn, v);
-        try { emu.gameManager.simulateInput(0, 10, 1); } catch (e) {}
-        setTimeout(() => { try { emu.gameManager.simulateInput(0, 11, 1); } catch (e) {} }, 70);
-        setTimeout(() => { try { emu.gameManager.simulateInput(0, 11, 0); } catch (e) {} sendL(); btn.classList.remove("on"); }, 200);
-        setTimeout(() => {
-          try { const h2 = emu.Module.HEAPU8, P2 = heroPtr(); if (h2[P2 + 0x193] === skill) { h2[P2 + 0x193] = old; try { window.__mirrorIw && window.__mirrorIw(P2 + 0x193 - iwram); } catch (e) {} } } catch (e) {}
-          xCast = null; updateExtras.key = null; updateExtras();
-        }, 420);
+      // Undo (Jordan, 2026-11-08; was the Skills toggle). In the Skills tab it takes a skill point back as before. In any other
+      // menu it brings back the last item sold or thrown away there (a sale also takes its gems back). Once the menu is
+      // closed (back in play), those can't be undone any more. The page watches the hero's 8 worn + 8 backpack slots and
+      // gems while a menu is open: an item that leaves the hero (not just moved or worn) is remembered, with the gems that
+      // came in at the same moment. A brought-back item goes into the backpack (into its own slot when it was there).
+      let undoList = [], undoSnap = null;
+      const u32 = (h, o) => (h[o] | h[o + 1] << 8 | h[o + 2] << 16 | h[o + 3] << 24) >>> 0;
+      const undoRead = () => { const h = emu.Module.HEAPU8, P = heroPtr(), it = []; for (let k = 0; k < 16; k++) it.push(u32(h, P + 0x3C + 4 * k)); return { P, it, gems: h[P + 0x184] | h[P + 0x185] << 8 }; };
+      const undoNote = (msg) => { const n = $("saveNote"); if (!n) return; n.textContent = msg; n.hidden = false; clearTimeout(undoNote.t); undoNote.t = setTimeout(() => { n.hidden = true; }, 2200); };
+      setInterval(() => {
+        if (iwram < 0 || linked()) { undoList = []; undoSnap = null; return; }
+        const st = gameState();
+        if (st === 1 || st === 5 || st === 2 || st === 3) { undoList = []; undoSnap = null; $("qsBtn").classList.remove("can"); return; }
+        let cur; try { cur = undoRead(); } catch (e) { return; }
+        if (undoSnap && undoSnap.P === cur.P) {
+          const left = cur.it.slice(), gone = [];
+          undoSnap.it.forEach((w, k) => { if ((w & 15) === 15) return; const j = left.indexOf(w); if (j >= 0) left[j] = -1; else gone.push([k, w]); });
+          const g = cur.gems - undoSnap.gems;
+          gone.forEach(([k, w], i) => undoList.push({ k, w, gems: i === 0 && g > 0 ? g : 0 }));
+          if (undoList.length > 20) undoList.shift();
+        }
+        undoSnap = cur;
+        $("qsBtn").classList.toggle("can", undoList.length > 0 || inSkillsTab());
+      }, 60);
+      const undoItem = () => {
+        const u = undoList[undoList.length - 1]; if (!u) return false;
+        const h = emu.Module.HEAPU8, P = heroPtr();
+        let at = u.k >= 8 ? P + 0x3C + 4 * u.k : -1;
+        if (at < 0 || (u32(h, at) & 15) !== 15) { at = -1; for (let k = 0; k < 8; k++) { const o = P + 0x5C + 4 * k; if ((u32(h, o) & 15) === 15) { at = o; break; } } }
+        if (at < 0) { undoNote("No room in the backpack to bring it back."); return true; }
+        const gems = h[P + 0x184] | h[P + 0x185] << 8;
+        if (u.gems > gems) { undoNote("Not enough gems left to take the sale back."); return true; }
+        undoList.pop();
+        for (let b = 0; b < 4; b++) h[at + b] = (u.w >>> (8 * b)) & 255;
+        const ng = gems - u.gems; h[P + 0x184] = ng & 255; h[P + 0x185] = ng >> 8;
+        try { if (window.__mirrorIw) { for (let b = 0; b < 4; b++) window.__mirrorIw(at - iwram + b); window.__mirrorIw(P + 0x184 - iwram); window.__mirrorIw(P + 0x185 - iwram); } } catch (e) {}
+        undoSnap = undoRead();
+        // The Backpack screen only redraws its items when it is opened, so flip to the next tab and back.
+        if (gameState() === 0x0A) {
+          const gi = (k, on) => { try { emu.gameManager.simulateInput(0, k, on); } catch (e) {} };
+          gi(11, 1); setTimeout(() => gi(11, 0), 90); setTimeout(() => gi(10, 1), 750); setTimeout(() => { gi(10, 0); sendL(); }, 840);
+        }
+        undoNote(u.gems ? "Sale taken back (" + u.gems + " gems)." : "Item brought back.");
+        return true;
       };
-      xBtns.forEach((b, k) => b.addEventListener("pointerdown", (e) => { e.preventDefault(); e.stopPropagation(); castExtra(k); }));
-
-      document.querySelectorAll("#pad .btn[data-in]").forEach((el) => {
-        const id = +el.dataset.in;
-        // L and R are never swapped (Jordan undid the in-play swap, 2026-11-06).
-        const press = (on) => {
-          el.classList.toggle("on", !!on);
-          if (id === 10) {
-            // The skill on the game's B slot is cast with L (Jordan, 2026-11-08): L, then B for a moment (the game's own
-            // L + B Quick Skill), so the game checks Spirit and plays it. Without a skill there, L is just L.
-            lTouch = !!on; sendL();
-            const sk = skIcons[1];
-            if (on && !lCast && sk && sk.classList.contains("show") && !inMenu()) {
-              lCast = true; sendL(); skillPressed(el, sk.__v);
-              setTimeout(() => { try { emu.gameManager.simulateInput(0, 0, 1); } catch (e) {} }, 60);
-              setTimeout(() => { try { emu.gameManager.simulateInput(0, 0, 0); } catch (e) {} }, 200);
-              setTimeout(() => { lCast = false; sendL(); }, 240);
-            }
-            return;
+      const undo = () => {
+        if (inSkillsTab()) { refundPulse(); return; }
+        if (!inMenu() || !undoItem()) return;
+        $("qsBtn").classList.add("on"); setTimeout(() => $("qsBtn").classList.remove("on"), 140);
+      };
+      window.__undo = undo;
+      window.addEventListener("keydown", (e) => { if ((e.key === "c" || e.key === "C") && !e.repeat && inMenu()) { e.preventDefault(); undo(); } });
+        // Spirit a skill needs: the game's own table for that hero (ROM pointer at player + 0x1C, 40 bytes per skill, cost at
+        // +4), the same number the game checks before playing a Quick Skill (0x080430E8).
+        const skCostOf = (P, s) => { const t = r32(P + 0x1C), R = rom(); if (t >>> 24 !== 8 || !R) return -1; const o = t - 0x08000000 + 40 * s; return (R[o] | R[o + 1] | R[o + 2] | R[o + 3]) ? R[o + 4] | R[o + 5] << 8 : -1; };
+        window.__skCost = (s) => { try { if (iwram < 0) return -1; H8 = heap(); ew = findEw(); if (ew < 0) return -1; return skCostOf(playerAddr(), s); } catch (e) { return -1; } };
+        const pickSkill = (P, now) => {
+          const hero = r8(P + 0x19F), sp = r16(P + 0x17E), msp = r16(P + 0xD2) || 1;
+          let best = -1, bc = -1;
+          for (let s = 0; s < 6; s++) {
+            if ((r8(P + 0x16A + s) << 24 >> 24) <= 0) continue;
+            const key = hero * 8 + s; if ((noSkill.get(key) || 0) > now) continue;
+            const real = skCostOf(P, s), cost = real > 0 ? real : skillCost.has(key) ? skillCost.get(key) : Math.round(msp * 0.3);
+            if (sp < cost) continue;
+            if (cost > bc) { bc = cost; best = s; }
           }
-          // B also picks up (Jordan, 2026-11-08): with an item at the hero's feet that can be taken, B works as R. B never
-          // casts (its skill is on L), so L is let go while B is down even with Quick Skill on.
-          let sid = id;
-          // R no longer picks up or opens chests and the Shrine (Jordan, 2026-11-08; B does): next to any of those, R alone
-          // does nothing. With L held (Quick Skill) R still casts its skill.
-          if (id === 11) {
-            if (on) el.__rBlock = !(qsHeld || lTouch || lCast) && !!(window.__bPick && window.__bPick(true));
-            if (el.__rBlock) { if (!on) el.__rBlock = false; return; }
-          }
-          if (id === 0) {
-            if (on) { el.__bAs = window.__bPick && window.__bPick() ? 11 : 0; if (qsHeld || lTouch) { bNoL = true; sendL(); } }
-            sid = el.__bAs || 0;
-            if (!on && bNoL) { try { emu.gameManager.simulateInput(0, sid, 0); } catch (e) {} setTimeout(() => { bNoL = false; sendL(); }, 50); return; }
-            if (on && bNoL) { setTimeout(() => { try { emu.gameManager.simulateInput(0, sid, 1); } catch (e) {} }, 40); return; }
-          }
-          try { emu.gameManager.simulateInput(0, sid, on); } catch (e) {}
+          return best;
         };
-        // Only the finger that pressed a button can let it go, so a stick drag passing over it never touches it.
-        let bp = null;
-        el.__release = () => { bp = null; press(0); };
-        el.addEventListener("pointerdown", (e) => { e.preventDefault(); e.stopPropagation(); if (pid !== null && e.pointerId === pid) return; bp = e.pointerId; try { el.setPointerCapture(e.pointerId); } catch (x) {} press(1); });
-        const rel = (e) => { if (bp !== null && e.pointerId === bp) el.__release(); };
-        el.addEventListener("lostpointercapture", rel);
-        window.addEventListener("pointerup", rel, true); window.addEventListener("pointercancel", rel, true);
-      });
-      // Lift the black cover once the game is past the white power-on screen (about 70 frames).
-      const lift = setInterval(() => { const f = frames(); if (f > 75) { $("bootCover").classList.add("gone"); clearInterval(lift); } }, 100);
-      setTimeout(() => { $("bootCover").classList.add("gone"); clearInterval(lift); }, 8000);
-      // Watchdog: if no frames run, ask for a tap; only restart if a tap does not get it going.
-
       // Longer pickup reach (Jordan, 2026-11-08): B with a takeable item a little beyond the feet (up to PICK_REACH
       // pixels) walks the hero the last few steps to it and picks it up. Moving the stick stops it. True = B was used.
       const PICK_REACH = 22;
