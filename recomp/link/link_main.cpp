@@ -287,6 +287,14 @@ int g_link_on = 0;
 unsigned g_link_frames = 0;
 unsigned g_link_level = 0;              // nonzero: the level both games start from the path screen (82 = Moria)
 }
+// Online play (Jordan, 2026-11-08: online games in Wide). Each player's page runs both games and the pages
+// trade only buttons (lockstep, like the Classic online game). ROTK_LINK_NET=1: frames run only when the page
+// hands over both players' buttons for that frame (rotk_link_push); ROTK_LINK_SHOW picks the game that is shown
+// and heard (0 host, 1 guest). Both games then run in full (no quiet mixer) so both pages stay byte-identical.
+static int g_link_net = 0;
+static unsigned g_link_show = 0;
+static std::vector<std::array<std::uint16_t, 2>> g_net_q;
+static std::size_t g_net_head = 0;
 // The multiplayer path screen only offers story levels; when the page asks for another level,
 // swap it in as the path screen hands its choice to the level loader (both games, same frame).
 static void link_force_level() {
@@ -353,13 +361,15 @@ static int run_link(const gbarecomp::RunOptions& opts) {
         save.clear_dirty();
         rotk_link_setup(m);
     }
-    S.machine(1).ppu.set_rasterization_enabled(false);
-    { extern gba::GbaBus* g_link_quiet_bus; g_link_quiet_bus = &S.machine(1).bus; }
+    g_link_net = std::atoi(env("ROTK_LINK_NET", "0")) != 0;
+    g_link_show = std::atoi(env("ROTK_LINK_SHOW", "0")) ? 1u : 0u;
+    S.machine(1 - g_link_show).ppu.set_rasterization_enabled(false);
+    { extern gba::GbaBus* g_link_quiet_bus; g_link_quiet_bus = g_link_net ? nullptr : &S.machine(1).bus; }
     {   // same cold start as the link probe (before the wide view: snapshots refuse it)
         auto cold = S.save_state();
         if (!S.load_state(cold, &err)) { std::fprintf(stderr, "[rotk:link] %s\n", err.c_str()); return 1; }
     }
-    auto& m0 = S.machine(0);
+    auto& m0 = S.machine(g_link_show);   // the game shown and heard on this page
     // Same 4:3 view as solo play.
     ViewGeometry g;
     g.width = std::clamp<std::uint32_t>(std::atoi(env("ROTK_LINK_VW", "0")) ? std::atoi(env("ROTK_LINK_VW", "0")) : opts.max_view_width, 240, opts.max_view_width); g.extra_left = (g.width - 240) / 2; g.extra_right = g.width - 240 - g.extra_left;
@@ -403,10 +413,12 @@ static int run_link(const gbarecomp::RunOptions& opts) {
     runtime_web_run_frames([&m0, &S]() {
         auto ev = win.pump();
         if (ev.quit) return false;
-        const std::array<std::uint16_t, 2> keys{static_cast<std::uint16_t>(~ev.keyinput & 0x3ff), static_cast<std::uint16_t>(g_link_p2_keys & 0x3ff)};
+        std::array<std::uint16_t, 2> keys{static_cast<std::uint16_t>(~ev.keyinput & 0x3ff), static_cast<std::uint16_t>(g_link_p2_keys & 0x3ff)};
         // Fast start (page sets g_link_turbo while it drives the menus): several game frames per picture, no sound.
-        const int reps = 1 + (g_link_turbo > 0 ? (g_link_turbo < 8 ? g_link_turbo : 8) : 0);
+        int reps = 1 + (g_link_turbo > 0 ? (g_link_turbo < 8 ? g_link_turbo : 8) : 0);
+        if (g_link_net) reps = static_cast<int>(std::min<std::size_t>(g_net_q.size() - g_net_head, 6));
         for (int r = 0; r < reps; ++r) {
+            if (g_link_net) { keys = g_net_q[g_net_head++]; if (g_net_head == g_net_q.size()) { g_net_q.clear(); g_net_head = 0; } }
             try { S.run_frame(keys); link_force_level(); } catch (const std::exception& e) {
                 std::fprintf(stderr, "[rotk:link] stopped: %s\n", e.what()); return false;
             }
@@ -420,7 +432,7 @@ static int run_link(const gbarecomp::RunOptions& opts) {
             win.present(fb.data(), m0.ppu.render_width(), m0.ppu.render_height());
         }
         for (int b = 0; b < 16; ++b) { std::uint32_t rate = 0; const auto n = m0.bus.audio().drain_sample_block(audio_buf, 2048, rate); if (!n) break; win.push_audio_block(audio_buf, n, rate); }
-        for (int b = 0; b < 16; ++b) { std::uint32_t rate = 0; if (!S.machine(1).bus.audio().drain_sample_block(audio_buf, 2048, rate)) break; }
+        for (int b = 0; b < 16; ++b) { std::uint32_t rate = 0; if (!S.machine(1 - g_link_show).bus.audio().drain_sample_block(audio_buf, 2048, rate)) break; }
         return true;
     });
 #else
@@ -464,6 +476,20 @@ extern "C" {
 const std::uint8_t* rotk_link_iwram(int i) { return g_link ? g_link->machine(i & 1).bus.iwram_ptr() : nullptr; }
 const std::uint8_t* rotk_link_ewram(int i) { return g_link ? g_link->machine(i & 1).bus.ewram_ptr() : nullptr; }
 void rotk_link_level(unsigned level) { g_link_level = level & 0xff; }
+// Online: queue one frame's buttons (GBA bits, 1 = pressed) for both games; returns frames waiting.
+int rotk_link_push(unsigned k0, unsigned k1) { g_net_q.push_back({static_cast<std::uint16_t>(k0 & 0x3ff), static_cast<std::uint16_t>(k1 & 0x3ff)}); return static_cast<int>(g_net_q.size() - g_net_head); }
+int rotk_link_queued() { return static_cast<int>(g_net_q.size() - g_net_head); }
+// Online: hash of both games' work RAM, compared between the two pages now and then (out of step = different).
+unsigned rotk_link_hash() {
+    if (!g_link) return 0;
+    std::uint32_t h = 2166136261u;
+    for (unsigned i = 0; i < 2; ++i) {
+        const std::uint8_t* iw = g_link->machine(i).bus.iwram_ptr(); const std::uint8_t* ew = g_link->machine(i).bus.ewram_ptr();
+        for (unsigned o = 0; o < 0x8000; ++o) h = (h ^ iw[o]) * 16777619u;
+        for (unsigned o = 0; o < 0x40000; o += 4) h = (h ^ (ew[o] | ew[o + 1] << 8 | ew[o + 2] << 16 | unsigned(ew[o + 3]) << 24)) * 16777619u;
+    }
+    return h;
+}
 // Copies game i's 512-byte save into out; returns 1 if it changed since the last call for that game.
 int rotk_link_save(int i, std::uint8_t* out) {
     if (!g_link) return -1;

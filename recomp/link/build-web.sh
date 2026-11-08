@@ -12,7 +12,7 @@ em++ -O2 -mtail-call -fwasm-exceptions link_main.o shim-web.o mixer_hook.o recom
   -Wl,--start-group $RT/libgbarecomp_runtime.a $RT/libgbarecomp_debug.a $RT/libgbarecomp_gba.a $RT/libgbarecomp_armv4t.a $RT/libgbarecomp_recompile_core.a $RT/libgbarecomp_heal_gate.a -Wl,--end-group \
   -sALLOW_MEMORY_GROWTH -sINITIAL_MEMORY=134217728 -sTOTAL_STACK=16777216 -sFORCE_FILESYSTEM \
   -sEXPORTED_RUNTIME_METHODS=FS,ENV,addRunDependency,removeRunDependency -sINVOKE_RUN=0 \
-  -sEXPORTED_FUNCTIONS=_rotk_main,_rotk_pause,_rotk_iwram,_rotk_ewram,_rotk_native_view,_rotk_oam,_rotk_tick_stats,_rotk_bg_tick,_malloc,_free,_rotk_link_p2,_rotk_link_on,_rotk_link_frames,_rotk_link_iwram,_rotk_link_ewram,_rotk_link_save,_rotk_link_level \
+  -sEXPORTED_FUNCTIONS=_rotk_main,_rotk_pause,_rotk_iwram,_rotk_ewram,_rotk_native_view,_rotk_oam,_rotk_tick_stats,_rotk_bg_tick,_malloc,_free,_rotk_link_p2,_rotk_link_on,_rotk_link_frames,_rotk_link_iwram,_rotk_link_ewram,_rotk_link_save,_rotk_link_level,_rotk_link_turbo,_rotk_link_push,_rotk_link_queued,_rotk_link_hash \
   -lidbfs.js -sENVIRONMENT=web -sEXIT_RUNTIME=1 -sMODULARIZE=1 -sEXPORT_NAME=createRotk -o rotk-link.js
 # The page loads the wasm as two halves (artifact file size limit).
 python3 -c "d=open('rotk-link.wasm','rb').read(); h=len(d)//2; open('rotk-link-0.wasm','wb').write(d[:h]); open('rotk-link-1.wasm','wb').write(d[h:])"
