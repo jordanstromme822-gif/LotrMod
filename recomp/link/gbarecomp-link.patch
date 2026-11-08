@@ -1,0 +1,109 @@
+--- a/src/armv4t/runtime_arm.cpp
++++ b/src/armv4t/runtime_arm.cpp
+@@ -64,6 +64,9 @@
+     g_runtime_thumb_alu_imm_override = nullptr;
+ extern "C" RuntimeBusReadOverride g_runtime_bus_read_override = nullptr;
+ extern "C" RuntimeRamDispatchHook g_runtime_ram_dispatch_hook = nullptr;
++// Local link play may run uncovered code through the interpreter instead of stopping.
++extern "C" int g_session_bridge_misses = 0;
++extern "C" unsigned g_session_bridged_misses = 0;
+ extern "C" RuntimeRamCodeView g_runtime_ram_code_view = nullptr;
+ extern "C" RuntimeNativeRamCodeSource g_runtime_native_ram_code_source = {};
+ extern "C" RuntimeDispatchObserver g_runtime_dispatch_observer = nullptr;
+@@ -1076,6 +1079,20 @@
+     // off this is a single bool check and returns 0.
+     if (overlay_try_dispatch(pc, thumb ? 1 : 0)) return nullptr;
+     if (g_resumable_context) {
++        if (g_session_bridge_misses) {
++            // Local link play: run the uncovered code through the interpreter as one
++            // uninterrupted call (devices wait until it returns) and report it once.
++            static std::uint32_t reported[64]; static unsigned nreported = 0;
++            bool seen = false;
++            for (unsigned i = 0; i < nreported; ++i) seen |= reported[i] == (pc | (thumb ? 1u : 0u));
++            if (!seen) {
++                if (nreported < 64) reported[nreported++] = pc | (thumb ? 1u : 0u);
++                std::fprintf(stderr, "[gbarecomp:link] bridged %08x (%s)\n", pc, thumb ? "thumb" : "arm");
++                ++g_session_bridged_misses;
++            }
++            runtime_bridge_interpret(pc, thumb, 0u, 0u);
++            return nullptr;
++        }
+         char message[96];
+         std::snprintf(message,sizeof(message),"multiplayer native dispatch entry is missing: %08x (%s)",
+             pc,thumb ? "Thumb" : "ARM");
+--- a/src/runtime/multiplayer_session.cpp
++++ b/src/runtime/multiplayer_session.cpp
+@@ -8,6 +8,10 @@
+ #include <limits>
+ #include <stdexcept>
+ 
++// Native slice lookahead in cycles. 63 is safe for every cable mode (a normal
++// 8-bit transfer at the fast clock takes 64). A game that only uses
++// multiplayer-mode transfers (5755+ cycles each) can raise it.
++std::uint64_t g_session_slice_lookahead = 63;
+ namespace gbarecomp {
+ namespace {
+ template<class Archive, class Context> void execution_state(Archive& a, Context& state) {
+@@ -191,7 +195,7 @@
+                 // No newly started cable transfer can complete within this
+                 // lookahead (normal 8-bit fast clock takes 64 cycles).
+                 // Existing device events and the caller's boundary shorten it.
+-                auto deadline=cycle_+std::min<std::uint64_t>(target-cycle_,63);
++                auto deadline=cycle_+std::min<std::uint64_t>(target-cycle_,g_session_slice_lookahead);
+                 for (const auto& machine : machines_) {
+                     const auto& device_io=machine->bus.io();
+                     auto distance=std::min({machine->ppu.cycles_until_next_event(),
+--- a/src/runtime/runtime.cpp
++++ b/src/runtime/runtime.cpp
+@@ -1467,6 +1467,12 @@
+     emscripten_set_main_loop(web_single_tick, 0, 1);
+     __builtin_unreachable();
+ }
++// Local link play (P2 partner): the caller runs one session frame per call.
++[[noreturn]] void runtime_web_run_frames(std::function<bool()> frame) {
++    static std::function<bool()> f;
++    f = [frame]() { const bool ok = frame(); g_web_presented = 1; return ok; };
++    web_single_run(f);
++}
+ #endif
+ 
+ int run_game(int argc, char** argv, const RunOptions& opts) {
+--- a/src/runtime/runtime_bus_bridge.cpp
++++ b/src/runtime/runtime_bus_bridge.cpp
+@@ -127,6 +127,8 @@
+ #endif
+ static unsigned long long g_runtime_yielded_vblank_start = 0;
+ static bool g_session_execution = false;
++// Local link play: the one machine whose picture is shown keeps the frame hooks.
++gba::GbaBus* g_session_hook_bus = nullptr;
+ static const void* g_session_private_memory_owner = nullptr;
+ static std::uint64_t g_session_private_memory_deadline = 0;
+ static bool (*g_session_private_memory_owner_check)(const void*, const gba::GbaBus&) = nullptr;
+@@ -665,12 +667,12 @@
+         }
+         if (events.vblank_started) {
+             GBA_DEVICE_PHASE(5,ppu->mark_framebuffer_latched());
+-            if (!g_session_execution && g_vblank_latch_hook) g_vblank_latch_hook();
++            if ((!g_session_execution || bus == g_session_hook_bus) && g_vblank_latch_hook) g_vblank_latch_hook();
+             ++g_runtime_vblank_starts;
+             GBA_DEVICE_PHASE(5,bus->io().run_timed_dma(1));   // VBlank-timed DMA
+             if (!g_session_execution && g_vblank_input_hook) g_vblank_input_hook();
+         }
+-        if (!g_session_execution && events.frame_completed && g_frame_start_hook) {
++        if ((!g_session_execution || bus == g_session_hook_bus) && events.frame_completed && g_frame_start_hook) {
+             g_frame_start_hook();
+         }
+         if (events.vblank_started && (ds & 0x0008u)) {
+diff --git a/tools/link_session/main.cpp b/tools/link_session/main.cpp
+index 27e82c8..824b22f 100644
+--- a/tools/link_session/main.cpp
++++ b/tools/link_session/main.cpp
+@@ -73,7 +73,7 @@ int main(int argc, char** argv) {
+             throw std::runtime_error("ROM does not match the generated program's SHA-1");
+         gba::GbaBios bios;
+         std::string error;
+-        if (!bios.load_from_file(argv[2],gba::GbaBios::kExpectedSha1,&error))
++        if (!bios.load_from_file(argv[2],std::getenv("GBA_LINK_PROBE_ANY_BIOS")?"":gba::GbaBios::kExpectedSha1,&error))
+             throw std::runtime_error(error);
+         using namespace gbarecomp;
+         GbaSessionConfig config;

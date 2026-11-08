@@ -1,0 +1,205 @@
+[program]
+name = "cobios"
+id = "gba_bios"
+load_address = 0x00000000
+size = 0x00004000
+entry_pc = 0x00000000
+static_resume_all = true
+
+[identity]
+sha1 = "2e41f9d30ecdf1c4540edf89ac16f49bf327edb7"
+
+[[extra_func]]
+addr = 0x00000020
+mode = "arm"
+name = "swi_00000020"
+
+[[extra_func]]
+addr = 0x000000B8
+mode = "arm"
+name = "swi_000000B8"
+
+[[extra_func]]
+addr = 0x00000228
+mode = "arm"
+name = "swi_00000228"
+
+[[extra_func]]
+addr = 0x0000022C
+mode = "arm"
+name = "swi_0000022C"
+
+[[extra_func]]
+addr = 0x00000234
+mode = "arm"
+name = "swi_00000234"
+
+[[extra_func]]
+addr = 0x000002C4
+mode = "arm"
+name = "swi_000002C4"
+
+[[extra_func]]
+addr = 0x00000328
+mode = "arm"
+name = "swi_00000328"
+
+[[extra_func]]
+addr = 0x000003AC
+mode = "arm"
+name = "swi_000003AC"
+
+[[extra_func]]
+addr = 0x00000450
+mode = "arm"
+name = "swi_00000450"
+
+[[extra_func]]
+addr = 0x000004D0
+mode = "arm"
+name = "swi_000004D0"
+
+[[extra_func]]
+addr = 0x00000508
+mode = "arm"
+name = "swi_00000508"
+
+[[extra_func]]
+addr = 0x00000554
+mode = "arm"
+name = "swi_00000554"
+
+[[extra_func]]
+addr = 0x0000058C
+mode = "arm"
+name = "swi_0000058C"
+
+[[extra_func]]
+addr = 0x00000624
+mode = "arm"
+name = "swi_00000624"
+
+[[extra_func]]
+addr = 0x00000690
+mode = "arm"
+name = "swi_00000690"
+
+[[extra_func]]
+addr = 0x00000728
+mode = "arm"
+name = "swi_00000728"
+
+[[extra_func]]
+addr = 0x00000734
+mode = "arm"
+name = "swi_00000734"
+
+[[extra_func]]
+addr = 0x00000798
+mode = "arm"
+name = "swi_00000798"
+
+[[extra_func]]
+addr = 0x000007EC
+mode = "arm"
+name = "swi_000007EC"
+
+[[extra_func]]
+addr = 0x00000840
+mode = "arm"
+name = "swi_00000840"
+
+[[extra_func]]
+addr = 0x00000AE0
+mode = "arm"
+name = "swi_00000AE0"
+
+[[extra_func]]
+addr = 0x00000B58
+mode = "arm"
+name = "swi_00000B58"
+
+[[extra_func]]
+addr = 0x00000BFC
+mode = "arm"
+name = "swi_00000BFC"
+
+[[extra_func]]
+addr = 0x00000C0C
+mode = "arm"
+name = "swi_00000C0C"
+
+[[extra_func]]
+addr = 0x00000C1C
+mode = "arm"
+name = "swi_00000C1C"
+
+[[extra_func]]
+addr = 0x00000C28
+mode = "arm"
+name = "swi_00000C28"
+
+[[extra_func]]
+addr = 0x00000C30
+mode = "arm"
+name = "swi_00000C30"
+
+[[extra_func]]
+addr = 0x00000CA0
+mode = "arm"
+name = "swi_00000CA0"
+
+[[extra_func]]
+addr = 0x00000EA4
+mode = "arm"
+name = "swi_00000EA4"
+
+[[extra_func]]
+addr = 0x00000F08
+mode = "arm"
+name = "swi_00000F08"
+
+[[extra_func]]
+addr = 0x00000FAC
+mode = "arm"
+name = "swi_00000FAC"
+
+[[extra_func]]
+addr = 0x000010C0
+mode = "arm"
+name = "swi_000010C0"
+
+[[extra_func]]
+addr = 0x000010D4
+mode = "arm"
+name = "swi_000010D4"
+
+[[extra_func]]
+addr = 0x00001140
+mode = "arm"
+name = "swi_00001140"
+
+[[extra_func]]
+addr = 0x00000264
+mode = "arm"
+name = "x_00000264"
+
+[[extra_func]]
+addr = 0x0000027C
+mode = "arm"
+name = "x_0000027C"
+
+[[extra_func]]
+addr = 0x00000294
+mode = "arm"
+name = "x_00000294"
+
+[[extra_func]]
+addr = 0x000002AC
+mode = "arm"
+name = "x_000002AC"
+
+[[extra_func]]
+addr = 0x00000120
+mode = "arm"
+name = "x_00000120"

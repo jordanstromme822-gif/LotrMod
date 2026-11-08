@@ -1,3 +1,4 @@
+// Play Room v98 Moria Auto (inside the page's play script).
       // Auto mode for the Moria bonus map (Jordan, 2026-11-08). A button at the top left turns it on: the hero walks to the
       // nearest enemy (around walls, using the level's own collision map) and uses the main attack (B), picks up herbs and
       // food, turns the game's Auto Healing option on, and picks up gear only when it beats what the hero wears (gear the
@@ -10,7 +11,7 @@
         const DEAD = new Set([0x11, 0x15, 4, 0x1b, 0x13]);
         const btn = $("autoBtn"), note = $("saveNote");
         let on = false, ew = -1, H8 = null, grid = null, gridT = 0, queue = [], qUntil = 0, keysDown = new Set();
-        let hist = [], stuck = 0, tries = new Map(), blocked = new Map(), skip = new Map(), macro = null, noEquip = new Set(), shrineAt = [1385, 1214], shopT = 0, shopNear = 30, shopDone = false, known = null, fresh = new Set(), dropOff = false, lastLog = 0, idleSince = 0, unreachSince = 0, userUntil = 0, oldHeal = null, lastSeen = 0, kills = 0;
+        let picks = {}, lastHp = 0, hurtAt = 0, itemTriesT = 0, hist = [], stuck = 0, tries = new Map(), blocked = new Map(), skip = new Map(), macro = null, noEquip = new Set(), shrineAt = [1385, 1214], shopT = 0, shopNear = 30, shopDone = false, known = null, fresh = new Set(), dropOff = false, lastLog = 0, idleSince = 0, unreachSince = 0, userUntil = 0, oldHeal = null, lastSeen = 0, kills = 0;
         const rom = () => window.__romFull;
         const heap = () => emu.Module.HEAPU8;
         const findEw = () => {
@@ -21,7 +22,8 @@
         const r8 = (a) => { const o = at(a); return o >= 0 ? H8[o] : 0; };
         const r16 = (a) => { const o = at(a); return o >= 0 ? H8[o] | H8[o + 1] << 8 : 0; };
         const r32 = (a) => { const o = at(a); return o >= 0 ? (H8[o] | H8[o + 1] << 8 | H8[o + 2] << 16 | H8[o + 3] << 24) >>> 0 : 0; };
-        const w8 = (a, v) => { const o = at(a); if (o >= 0) H8[o] = v; };
+        // In a P2 game the same change is made in P2's game too (window.__mirrorIw), so the two games stay identical.
+        const w8 = (a, v) => { const o = at(a); if (o >= 0) { H8[o] = v; if ((a >>> 24) === 3) try { window.__mirrorIw && window.__mirrorIw(a & 0x7fff); } catch (e) {} } };
         const rr8 = (a) => rom()[a - 0x08000000];
         const rr32 = (a) => { const R = rom(), o = a - 0x08000000; return (R[o] | R[o + 1] << 8 | R[o + 2] << 16 | R[o + 3] << 24) >>> 0; };
         const playerAddr = () => 0x03003C00 + 0x1AC * (r8(0x03003F59) & 1);
@@ -72,15 +74,14 @@
           let best = empty(r32(P + 0x3c + 4 * s)) ? -1e9 : score(r32(P + 0x3c + 4 * s));
           for (let k = 0; k < 8; k++) { const b = r32(P + 0x5c + 4 * k); if (!empty(b) && slotOf(iflags(b)) === s) best = Math.max(best, score(b)); }
           const sc = score(it); if (sc <= best + 0.01) return false;
-          if (!packFull(P)) return true;
-          const [k, ks] = cheapest(P); return k >= 0 && ks < sc;            // room can be made
+          return !packFull(P);                                              // never makes room by discarding
         };
         // Backpack gear that a better item of the same kind (worn, or in the backpack and wearable at this level) makes useless.
         // Jordan equips gear by hand, so Auto never equips; it only throws away the weaker copy.
         // Only a copy that Auto just picked up can push an older item out: the older backpack item of the same
         // kind that is weaker than the new one is thrown away. Worn gear and anything else are never touched.
         const toDiscard = (P) => {
-          if (dropOff) return -1;
+          return -1;  // Jordan (2026-11-08): Auto never throws anything away.
           const lvl = r8(P + 0x19C) + 1;
           for (let k = 0; k < 8; k++) {
             const it = r32(P + 0x5c + 4 * k); if (noEquip.has(it) || fresh.has(it)) continue;
@@ -176,6 +177,30 @@
           try { H8 = heap(); ew = findEw(); setHeal(on); } catch (e) {}
           if (msg) show(msg, 3500);
         };
+        // Casting: put the skill on the R slot (+0x193), press L + R (the game's Quick Skill Select checks Spirit and
+        // plays it), put the old skill back. The Spirit each skill used is remembered; a skill that used none is
+        // skipped for a minute (passive, or it can't be used here).
+        const skillCost = new Map(), noSkill = new Map();
+        let castT = 0;
+        const pickSkill = (P, now) => {
+          const hero = r8(P + 0x19F), sp = r16(P + 0x17E), msp = r16(P + 0xD2) || 1;
+          let best = -1, bc = -1;
+          for (let s = 0; s < 6; s++) {
+            if ((r8(P + 0x16A + s) << 24 >> 24) <= 0) continue;
+            const key = hero * 8 + s; if ((noSkill.get(key) || 0) > now) continue;
+            const cost = skillCost.has(key) ? skillCost.get(key) : Math.round(msp * 0.3);
+            if (sp < cost) continue;
+            if (cost > bc) { bc = cost; best = s; }
+          }
+          return best;
+        };
+        const castSteps = (P, s, face, now) => {
+          const key = r8(P + 0x19F) * 8 + s; let old = 0, sp0 = 0;
+          return [{ k: face, ms: 40 }, { k: [10], ms: 80, run: () => { w8(0x03005820, r8(0x03005820) | 8); w8(P + 0x19A, r8(P + 0x19A) | 2); old = r8(P + 0x193); sp0 = r16(P + 0x17E); w8(P + 0x193, s); } },
+            { k: [10, 11], ms: 140 }, { k: [10], ms: 60 },
+            { k: [], ms: 350, run: () => { if (r8(P + 0x193) === s) w8(P + 0x193, old); const d = sp0 - r16(P + 0x17E); if (d > 3) skillCost.set(key, d); else noSkill.set(key, now + 60000); casts[s] = (casts[s] || 0) + 1; } }];
+        };
+        let casts = {};
         const decide = (now) => {
           const P = playerAddr(), hero = r32(P), hp = r16(P + 0x17C), mhp = r16(P + 0xD0);
           { const pk = packNow(P); if (!known) known = new Set(pk); for (const it of pk) if (!empty(it) && !known.has(it)) { known.add(it); fresh.add(it); } }
@@ -198,9 +223,15 @@
           if (en.length < lastSeen) kills += lastSeen - en.length; lastSeen = en.length;
           const prev = bfs(x, y);
           const near = (p, d) => { const [ex, ey] = pos(p); return Math.abs(ex - x) + Math.abs(ey - y) < d; };
+          // Elite enemies (Jordan, 2026-11-08): the stronger version of an enemy has an even tier byte (+0x60; e.g.
+          // tier 2 orc 72 HP next to tier 1 orc 19 HP) or lots of HP (+0x5A); Auto hits and walks to those first.
+          const elite = (p) => (r8(p + 0x60) & 1) === 0 || (r16(p + 0x5A) << 16 >> 16) >= 40;
           let tgt = null;
-          for (const p of en) { const [ex, ey] = pos(p); if (Math.abs(ex - x) <= 22 && Math.abs(ey - y) <= 16) { tgt = { kind: "hit", p }; break; } }
+          for (const p of [...en].sort((a, b) => elite(b) - elite(a))) { const [ex, ey] = pos(p); if (Math.abs(ex - x) <= 22 && Math.abs(ey - y) <= 16) { tgt = { kind: "hit", p }; break; } }
           const close = en.some((p) => near(p, 70)), low = hp * 10 < mhp * 4;
+          // Taking damage = HP went down in the last 3 seconds: then Auto fights and only goes for food that heals.
+          if (hp < lastHp) hurtAt = now; lastHp = hp;
+          const hurt = now - hurtAt < 3000, fighting = hurt && close;
           const gems = r16(P + 0x184), herbs = r8(P + 0x1AA) >> 4;
           if (!tgt && !close) {
             // Throw away weaker copies (Start, pick it, Discard). Gear is equipped by the player, never by Auto.
@@ -214,17 +245,28 @@
               return;
             }
           }
-          if (!tgt && (!close || low)) {
+          // Herbs and food (Jordan, 2026-11-08). Ground item types (+0x60, name text 568 + type): 15 fruit, 16 mushrooms,
+          // 19 lembas bread are eaten at once (heal); 17/18 dried/fresh Kingsfoil and 20-24 Shire/Elven/Mirkwood/Rivendell/
+          // Lothlorien herbs go to the herb pouch. Food is eaten whenever the hero is hurt; while taking damage only food is
+          // picked up, and only when it's close or HP is low. Gear only when nothing is fighting the hero.
+          if (now - itemTriesT > 20000) { itemTriesT = now; for (const p of items) tries.delete(p); }  // give items another go
+          if (!tgt || low) {
+            const food = (t) => t === 15 || t === 16 || t === 19, herb = (t) => t === 17 || t === 18 || (t >= 20 && t <= 24);
+            let best = null;
             for (const p of items) {
               if ((tries.get(p) || 0) > 6) continue;
               const t = r8(p + 0x60);
-              const ok = (t >= 15 && t <= 24) || (t >= 25 && !close && wanted(P, r32(p + 0x88)));
+              let ok, maxLen = 60;
+              if (food(t)) { ok = hp < mhp && (!fighting || low); if (fighting) maxLen = low ? 25 : 12; }
+              else if (herb(t)) ok = !fighting;
+              else ok = t >= 25 && !close && !hurt && wanted(P, r32(p + 0x88));
               if (!ok) continue;
               const [ix, iy] = pos(p);
-              if (Math.abs(ix - x) <= 8 && Math.abs(iy - y) <= 8) { tgt = { kind: "pick", p, gear: t >= 25 }; break; }
+              if (Math.abs(ix - x) <= 8 && Math.abs(iy - y) <= 8) { best = { kind: "pick", p, gear: t >= 25 }; break; }
               const path = pathTo(prev, ix, iy, 1);
-              if (path && path.length < 60 && (!tgt || path.length < tgt.len)) tgt = { kind: "go", p, len: path.length, path, item: true };
+              if (path && path.length < maxLen && (!best || path.length < best.len)) best = { kind: "go", p, len: path.length, path, item: true };
             }
+            if (best && (!tgt || best.kind === "pick" || best.len < 12)) tgt = best;   // low HP: food next to the hero beats hitting
           }
           // Pots, barrels and chests: smash or open the ones next to the hero, walk to near ones when no enemy is close.
           if (!tgt && !close) for (const p of boxes) {
@@ -248,7 +290,8 @@
             const near = Math.abs(shrineAt[0] - x) + Math.abs(shrineAt[1] - y) < 400;
             if (!tgt || tgt.kind === "go") { if (herbs <= 2 || near) shopGo(true); }
           }                       // low on herbs: restock before going on
-          if (!tgt) for (const p of en) { const [ex, ey] = pos(p); const path = pathTo(prev, ex, ey, 2); if (path && (!tgt || path.length < tgt.len)) tgt = { kind: "go", p, len: path.length, path }; }
+          // Walk to the nearest enemy, counting an elite as 40 steps nearer than it is.
+          if (!tgt) { let bs = 1e9; for (const p of en) { const [ex, ey] = pos(p); const path = pathTo(prev, ex, ey, 2); if (!path) continue; const sc = path.length - (elite(p) ? 40 : 0); if (sc < bs) { bs = sc; tgt = { kind: "go", p, len: path.length, path }; } } }
           if (!tgt) goBox(1e9);
           // Spirit Shrine: buy herbs until the hero carries 10 or the gems run out.
           if (!tgt) shopGo();
@@ -263,12 +306,18 @@
           idleSince = unreachSince = 0;
           if (tgt.kind === "hit") {
             const [ex, ey] = pos(tgt.p);
+            // Skills (Jordan, 2026-11-08): against an elite or two or more enemies close by, cast a learned active
+            // skill when there's Spirit for it (Spirit +0x17E, max +0xD2), the dearest one first.
+            const group = en.filter((p) => near(p, 56)).length >= 2;
+            const sk = (elite(tgt.p) || group) && now - castT > 1200 ? pickSkill(P, now) : -1;
+            if (sk >= 0) { castT = now; queue = castSteps(P, sk, steer(x, y, ex, ey), now); return; }
             queue = [{ k: steer(x, y, ex, ey), ms: 40 }, { k: [0], ms: 70 }, { k: [], ms: 70 }];
           } else if (tgt.kind === "pick") {
             tries.set(tgt.p, (tries.get(tgt.p) || 0) + 1);
+            { const t = r8(tgt.p + 0x60); picks[t] = (picks[t] || 0) + 1; }
             if (tgt.gear && packFull(P)) {
               // No room: throw away the least valuable backpack item first (Start, pick it, Discard).
-              const [k] = dropOff ? [-1] : cheapest(P);
+              const k = -1;  // never discard to make room (Jordan, 2026-11-08)
               if (k >= 0) {
                 const before = packNow(P);
                 macro = "discard"; slog("discard " + (r32(P + 0x5c + 4 * k) >>> 0).toString(16) + " for " + (r32(tgt.p + 0x88) >>> 0).toString(16));
@@ -331,10 +380,11 @@
           setKeys(step.k); qUntil = now + step.ms;
         };
         setInterval(loop, 16);
+        window.__autoTick = () => { if (document.visibilityState === "hidden") loop(); };
         btn.addEventListener("pointerdown", (e) => { e.preventDefault(); e.stopPropagation(); setOn(!on, on ? "" : "Auto on"); });
         btn.addEventListener("click", (e) => e.preventDefault());
         window.addEventListener("keydown", (e) => { if ((e.key === "o" || e.key === "O") && !e.repeat && !btn.hidden) setOn(!on, on ? "" : "Auto on"); });
         // Touching the controls pauses auto for a moment so the player can take over.
         $("pad").addEventListener("pointerdown", () => { if (on) userUntil = performance.now() + 1500; }, true);
-        window.__auto = { get on() { return on; }, set: setOn, kills: () => kills };
+        window.__auto = { get on() { return on; }, set: setOn, kills: () => kills, picks: () => picks, casts: () => casts, costs: () => [...skillCost], get macro() { return macro; } };
       })();
