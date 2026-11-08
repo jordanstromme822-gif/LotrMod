@@ -58,6 +58,11 @@ BL_SITES = [
     (0x3CC08, "00201a9e", "pack_stub"),   # save-slot packer, before its checksum
     (0x3C2A6, "0af08dfd", "unpack_stub"), # save-slot unpacker
     (0x47F18, "eaf740ff", "clear_stub"),  # title screen clears both players
+    (0x2A9D8, "01f03efe", "menu_wrap"),   # A in the item menu (Equip an Orc Head; Unequip / Discard on a slot)
+    (0x2AA04, "02f0fafa", "desc_wrap"),   # menu closed: description of the cursor
+    (0x2AA54, "01f01afb", "discard_wrap"),# "Are you sure?" Yes: discard
+    (0x2CCC4, "62300478", "mcur_stub"),   # item menu up/down: our slots move like an equipment slot's menu
+    (0x2C5FC, "62300078", "label_stub"),  # item menu text: "Unequip" on our slots
     (0x2CC60, "40460568", "nav_stub"),    # Backpack cursor movement
     (0x2A854, "2a4ab800", "a_stub"),      # A in the Backpack
     (0x2AC0A, "0bf04bfd", "frame_hook"),  # end of the Backpack frame (sprites done)
@@ -66,8 +71,8 @@ BL_SITES = [
 ]
 # The Orc Head's description (text 418, table entry 417) is re-encoded with the English Huffman tree
 # and placed in free space; only its offset in the string table changes.
-LANG_TABLE, TEXT_IDX, TEXT_AT = 0x289A10, 417, 0x9FC00
-ORC_TEXT = b"+1 Courage, but only from an Orc Head slot (the row under your backpack)."
+LANG_TABLE, TEXT_IDX, TEXT_AT = 0x289A10, 417, 0x9FE00
+ORC_TEXT = b"+1 Courage, only when equipped in an Orc Head slot (the row under your backpack)."
 EXIT_PTR, EXIT_OLD = 0x6C8A8, 0x0802E875     # state 0x0A (Backpack) exit in the state table
 
 
@@ -112,6 +117,7 @@ def patch(rom: bytearray) -> bytearray:
     if cur not in (EXIT_OLD, s["exit_hook"] | 1):
         raise SystemExit(f"unexpected state table entry at {EXIT_PTR:#x}")
     struct.pack_into("<I", rom, EXIT_PTR, s["exit_hook"] | 1)
+    assert CODE_AT + len(code) <= TEXT_AT, "code runs into the text"
     rom[CODE_AT:CODE_AT + len(code)] = code
     return rom
 

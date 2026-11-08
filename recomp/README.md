@@ -233,3 +233,12 @@ and four sites become a call into a stub (keepsake check 0x0802DBE0, save pack 0
 native code goes on as before. Applied to both the solo and the 2-player builds (shards 000, 001, 003, 004,
 006, 007); engines `?v=117`. Tested in the Wide engine: two heads moved in (count 0 → 1 → 2, Courage 35 → 36 → 37),
 picture and text as in mGBA, closing the backpack keeps both.
+
+### Orc Head slots work like equipment slots (Play Room v119, 2026-11-08)
+
+Jordan: "the orc head slots should work like equipment slots except only for orc heads". Equip in an Orc Head's
+item menu puts it in the next free slot; A on a filled slot opens Unequip / Discard. Three more bl targets
+(menu A 0x0802A9DA, description 0x0802AA06, discard 0x0802AA56) and two more call blocks (0x0802CCC4, 0x0802C5FC)
+in `orcslots/genpatch.py`; shard 002 now changes too. The code grew, so every hook address moved: re-run genpatch
+on the untouched generated shards, not on already patched ones (a patched call block is skipped, so it would keep
+the old address). Engines `?v=119`.
