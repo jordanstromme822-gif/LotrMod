@@ -186,3 +186,11 @@ the game was paused in (the page remembers the level byte 0x030041F8 seen in pla
 at the path screen, `rotk_link_level`); tested level 76. After P2 joins, the sound stays off for 4 s and fades in.
 Auto sits under P2 in the pause menu when the paused level is Moria (the level byte reads 0 for a frame as the
 pause menu opens, so that no longer clears it). Upright A is a third smaller; sideways buttons are spread evenly.
+
+### Grab / Full over herbs and food (Play Room v115, 2026-11-08)
+
+Standing over an item (within 22 px), the Grab button reads Full only when it can't be taken: food (15, 16, 19)
+at full health, herbs (17, 18, 20-24) when both herb pouches hold 10, gear (25+) with a full backpack
+(`playroom/grab-label.js`). Tested by changing a dropped item's type byte (+0x60) in both games.
+P2 sound check: recordings of the same level (76) solo and with P2 show one sound stream (about 60 buffers a
+second, P1's game only) and the same spectrum; P2's game is drained and never played.
