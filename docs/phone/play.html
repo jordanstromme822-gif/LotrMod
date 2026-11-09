@@ -4312,7 +4312,7 @@ void main()
       let lvl = -1; try { lvl = M.HEAPU8[M._rotk_iwram() + 0x41F8]; } catch (e) {}
       const secs = (performance.now() - rafT0) / 1000, d = st.map((v, i) => v - st0[i]);
       logs++;
-      try { window.__slog && window.__slog("wide: " + ((H.frames - fr0) / secs).toFixed(1) + " pics/s, screen " + (rafN / secs).toFixed(1) + " Hz, frames per refresh 0/1/2 " + d.slice(0, 3).join("/") + (d[4] ? ", resets " + d[4] : "") + ", level " + lvl + ", in-between " + d[5] + " (blended " + d[7] + "), skipped " + d[6] + ", big moves " + d[8] + (d[9] || d[10] ? ", new picture every 2/3 frames " + d[9] + "/" + d[10] : "") + ", " + (H.sharp ? (H.plain ? "plain (was too slow)" : "Sharp HD") : "plain (no WebGL2)")); } catch (e) {}
+      try { window.__slog && window.__slog("wide: " + ((H.frames - fr0) / secs).toFixed(1) + " pics/s, screen " + (rafN / secs).toFixed(1) + " Hz, frames per refresh 0/1/2 " + d.slice(0, 3).join("/") + (d[4] ? ", resets " + d[4] : "") + ", level " + lvl + ", in-between " + d[5] + " (blended " + d[7] + "), skipped " + d[6] + ", big moves " + d[8] + (d[9] || d[10] ? ", new picture every 2/3 frames " + d[9] + "/" + d[10] : "") + ", " + (H.sharp ? (H.plain ? "plain (was too slow)" : "Sharp HD") : "plain (no WebGL2)") + " | sound: " + (() => { try { const a = H.audio, g = H.gain, P = window.__preAudio; let peak = 0; let o = -1; try { o = M.HEAPU8[M._rotk_iwram() + 0x5820]; } catch (e) {} const r = "ctx " + (a ? a.state + " " + a.sampleRate : (P ? "unhooked " + P.state : "none")) + ", gain " + (g ? g.gain.value.toFixed(2) : "-") + ", played " + (H.aPlay || 0) + ", dropped " + (H.aDrop || 0) + ", ahead " + (a ? (H.audioT - a.currentTime).toFixed(2) : "-") + ", opt " + o + ", session " + ((navigator.audioSession && navigator.audioSession.type) || "-"); H.aPlay = 0; H.aDrop = 0; return r; } catch (e) { return "err " + e; } })()); } catch (e) {}
       st0 = st; rafN = 0; rafT0 = performance.now(); fr0 = H.frames;
     }, 15000);
   }
@@ -5191,8 +5191,9 @@ void main()
       const d = this.d; let r = this.ld("audioRead"); const w = this.ld("audioWrite");
       if (this.ld("resetRequest") !== this.ld("resetAck")) { this.st("audioRead", w); this.st("resetAck", this.ld("resetRequest")); return; }
       const ac = this.audio;
-      if (!ac || ac.state !== "running") { this.st("audioRead", w); return; }
+      if (!ac || ac.state !== "running") { if (r !== w) this.aDrop = (this.aDrop || 0) + 1; this.st("audioRead", w); return; }
       while (r !== w) {
+        this.aPlay = (this.aPlay || 0) + 1;
         const p = this.ptr + d.audio + (r & (d.audioSlots - 1)) * d.audioStride, u = this.u32(), n = u[p >> 2], rate = u[(p >> 2) + 1]; r = (r + 1) >>> 0;
         if (n < 1 || n > d.audioSamples || !rate) continue;
         const pcm = this._i16.subarray((p + 12) >> 1, ((p + 12) >> 1) + n), outN = Math.max(1, Math.round(n * ac.sampleRate / rate));
