@@ -2148,25 +2148,25 @@ addr = 0x08082064
 mode = "thumb"
 
 [[extra_func]]
-addr = 0x08082228
+addr = 0x0808222C
 mode = "thumb"
 
 [[extra_func]]
-addr = 0x080824B8
+addr = 0x080824BC
 mode = "thumb"
 
 [[extra_func]]
-addr = 0x0808253C
+addr = 0x08082540
 mode = "thumb"
 
 [[extra_func]]
-addr = 0x080827CC
+addr = 0x080827D0
 mode = "thumb"
 
 [[extra_func]]
-addr = 0x08082874
+addr = 0x08082878
 mode = "thumb"
 
 [[extra_func]]
-addr = 0x080828C8
+addr = 0x080828CC
 mode = "thumb"
