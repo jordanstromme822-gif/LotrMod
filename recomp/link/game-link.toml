@@ -2096,77 +2096,77 @@ addr = 0x08081288
 mode = "thumb"
 
 [[extra_func]]
-addr = 0x08081820
+addr = 0x080818B8
 mode = "thumb"
 
 [[extra_func]]
-addr = 0x08081858
+addr = 0x080818F0
 mode = "thumb"
 
 [[extra_func]]
-addr = 0x080818A0
+addr = 0x08081938
 mode = "thumb"
 
 [[extra_func]]
-addr = 0x08081A6C
+addr = 0x08081B04
 mode = "thumb"
 
 [[extra_func]]
-addr = 0x08081A70
+addr = 0x08081B08
 mode = "thumb"
 
 [[extra_func]]
-addr = 0x08081B44
+addr = 0x08081BDC
 mode = "thumb"
 
 [[extra_func]]
-addr = 0x08081BF8
+addr = 0x08081C90
 mode = "thumb"
 
 [[extra_func]]
-addr = 0x08081C9C
+addr = 0x08081D34
 mode = "thumb"
 
 [[extra_func]]
-addr = 0x08081D0C
+addr = 0x08081DA4
 mode = "thumb"
 
 [[extra_func]]
-addr = 0x08081E74
+addr = 0x08081F0C
 mode = "thumb"
 
 [[extra_func]]
-addr = 0x08081EE4
+addr = 0x08081F7C
 mode = "thumb"
 
 [[extra_func]]
-addr = 0x08081F30
+addr = 0x08081FC8
 mode = "thumb"
 
 [[extra_func]]
-addr = 0x08082008
+addr = 0x080820A0
 mode = "thumb"
 
 [[extra_func]]
-addr = 0x080821C8
+addr = 0x08082260
 mode = "thumb"
 
 [[extra_func]]
-addr = 0x08082444
+addr = 0x080824DC
 mode = "thumb"
 
 [[extra_func]]
-addr = 0x080824C8
+addr = 0x08082560
 mode = "thumb"
 
 [[extra_func]]
-addr = 0x08082758
+addr = 0x080827F0
 mode = "thumb"
 
 [[extra_func]]
-addr = 0x08082800
+addr = 0x08082898
 mode = "thumb"
 
 [[extra_func]]
-addr = 0x08082854
+addr = 0x080828EC
 mode = "thumb"

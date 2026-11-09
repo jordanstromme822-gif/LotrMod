@@ -81,6 +81,9 @@ typedef int (*fn6)(int, int, int, int, int, int);
 #define ULOCKPG (*(volatile u8 *)0x0203F00B)
 #define PBUF    ((volatile u8 *)0x0203F010)           /* 4 x 0x70: page 2 headers, as in RAM */
 #define PHEAD   ((volatile u16 (*)[4])0x0203F1D0)     /* page 2 slot heads (like SAVED) */
+#define SCR_HASH (*(volatile u32 *)0x0203F510)       /* Backpack text under the arrow slots: what is shown */
+#define SCR_T    (*(volatile u8 *)0x0203F514)        /* ... frames into this scroll step */
+#define SCR_STEP (*(volatile u8 *)0x0203F515)        /* ... and the scroll step */
 #define UBUF    ((volatile u8 *)0x0203F200)           /* 0x70 header + 8 bytes of heads + 2 arrow slot words */
 #define HDRS    0x03005630
 #define GSTATE  (*(volatile u8 *)0x030041B0)
@@ -982,7 +985,7 @@ void frame_hook(void)
     u8 rows[8]; int n = 0, leg = nas(LOCAL_P) > 0;
     for (int r = 10; r < 18; r++) rows[n++] = r;
     static const u8 order[] = {12, 11, 17, 16, 15, 14, 13};
-    while (n > (leg ? 5 : 6)) {
+    while (!leg && n > 6) {
         int drop = -1;
         for (int o = 0; o < 7 && drop < 0; o++)
             for (int i = 0; i < n; i++)
@@ -991,13 +994,30 @@ void frame_hook(void)
         for (int i = drop; i < n - 1; i++) rows[i] = rows[i + 1];
         n--;
     }
-    if (leg) {                                           /* Legolas: the arrow slots take rows 13-15, so the text goes
-                                                            to the bottom of the left side (rows 14-18) */
+    if (leg) {                                           /* Legolas and Frodo: the arrow slots take rows 13-15, so
+                                                            the text goes under them on the right (rows 16-18, Jordan
+                                                            2026-11-09). Longer text scrolls a line a second. */
         vu16 *d16 = (vu16 *)dst;
         for (int r = 10; r < 20; r++)
             for (int x = 0; x < 32; x++) d16[r * 32 + x] = (x < 15 && r < 14) ? src[r * 32 + x] : 0;
-        for (int d = 0; d < n; d++)
-            for (int x = 0; x < 15; x++) d16[(14 + d) * 32 + x] = src[rows[d] * 32 + 15 + x];
+        u8 lines[8]; int m = 0;
+        u32 h = 0;
+        for (int r = 10; r < 18; r++) {
+            const u16 *q = src + r * 32 + 15;
+            int any = 0;
+            for (int x = 0; x < 15; x++) { if (q[x]) any = 1; h = h * 31 + q[x]; }
+            if (any) lines[m++] = r;
+        }
+        if (h != SCR_HASH) { SCR_HASH = h; SCR_T = 0; SCR_STEP = 0; }
+        int top = 0;
+        if (m > 3) {
+            int steps = m - 3;                           /* a line a second (30 ticks); 2 s pause at both ends */
+            int t = SCR_STEP;
+            if (++SCR_T >= 30) { SCR_T = 0; t++; if (t >= steps + 4) t = 0; SCR_STEP = t; }
+            top = t < 2 ? 0 : t - 2 > steps ? steps : t - 2;
+        }
+        for (int d = 0; d < 3 && top + d < m; d++)
+            for (int x = 0; x < 15; x++) d16[(16 + d) * 32 + 15 + x] = src[lines[top + d] * 32 + 15 + x];
     } else {
         for (int i = 10 * 16; i < 13 * 16; i++) dst[i] = 0;
         for (int d = 0; d < 6; d++) {

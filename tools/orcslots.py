@@ -65,6 +65,8 @@ How it works (details in docs/findings.md, "Orc Head slots" and "Orc Head tiers"
     (0x6E99C) is Quick Drop: 40 Spirit, sets down every unlocked crossbow in a row in front of
     Frodo, cooldown 60 s - 7 s per level above 1; it can't be cast or bought before Crossbow
     has a level. Knives and bolts pass through foes under Ring's Persuasion. Texts 517-519.
+  - v127: Snare is named Bolt Trap; Bolt Trap and Quick Drop get crossbow icons
+    (tools/orcslots/skillicons.py). Arrow-slot heroes read item text under the slots.
   - 2-player games: each GBA sends its player's slot heads once as link message 4
     (unused by the game); both GBAs put the bonuses on when it arrives.
 
@@ -174,12 +176,15 @@ STATE_PTRS = [(0x6C898, 0x080306ED, "slot_upd"),   # state 9 (save slots) update
 # Frodo's Snare text (index 518) says what the skill does now. Re-encoded with the English bank's own Huffman tree
 # (see tools/text.py) at TEXT_AT, in the freed French bank after the code.
 LANG_TABLE, TEXT_AT = 0x289A10, 0x89400
+sys.path.insert(0, D)
+import skillicons  # noqa: E402
+
 TEXTS = [(517, b"Knife Toss (Level @1) - Frodo throws a knife for 8 damage that stuns for half a second. It bounces to"
                b" 1 more foe / level above 1, each hit doing 1/5 less. @2 Spirit."),
-         (518, b"Crossbow (Level @1) - Frodo sets up a crossbow that shoots the nearest foe 10 times for 5 damage + 3 / level."
+         (518, b"Bolt Trap (Level @1) - Frodo sets up a crossbow that shoots the nearest foe 10 times for 5 damage + 3 / level."
                b" 2 crossbows at level 3, 3 at level 5. @2 Spirit."),
          (519, b"Quick Drop (Level @1) - Frodo sets down all his crossbows in front of him. Ready again after 60 seconds"
-               b" - 7 / level above 1. Needs Crossbow. @2 Spirit.")]
+               b" - 7 / level above 1. Needs Bolt Trap. @2 Spirit.")]
 
 
 def encode(rom, bank, text):
@@ -250,6 +255,8 @@ def patch(rom: bytearray) -> bytearray:
         struct.pack_into("<I", rom, at, s[name] | 1)
     assert CODE_AT + len(code) <= TEXT_AT, "code runs into the new texts"
     for off, b in text_patch(rom):
+        rom[off:off + len(b)] = b
+    for off, b in skillicons.icons(rom):             # Frodo's Bolt Trap and Quick Drop icons
         rom[off:off + len(b)] = b
     rom[CODE_AT:CODE_AT + len(code)] = code
     return rom

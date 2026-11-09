@@ -202,6 +202,9 @@ or `0x08` (ROM as the CPU sees it).
 - Stun: 0x08008A6C(obj, ticks) (+ 0x69 bit 0x80, state 0x12 / 0x1A then 5 / 0x1A for the time); King's Command style stars 0x0801C33C(hero, foe, ticks, 0xC, 8, 0, 8). + 0xE8 bit 0x4000 = can't be stunned.
 - Ring's Persuasion charms with 0x080089AC(foe, ticks): + 0x69 |= 0x40 (cleared when it wears off), state 0x12 / 0x20, + 0xE8 |= 0x840204 (0x800000 = on Frodo's side).
 - Can-cast check 0x08043484(player, skill), called at 0x08023896, 0x080293EE, 0x080431F6 (B), 0x080433E0 (quick skills: L + A / B / R use the skill numbers at hero data + 0x191 + n). Skills page buy: 0x080422F0(player, skill) = hero level needed (-1 = never), called by A at 0x08041FBA.
+- Skill icons (Skills page, BG2, palette 4): per hero a pointer table (Frodo 0x0828773C, one per skill) to records of a 4-byte header + 12 raw 4bpp tiles (32 x 24, 4 x 3 tiles; the level pips under them are drawn separately). Frodo's Snare icon is at 0x785DB0, Galadriel's Cloak at 0x785F34; Sam has his own copies (0x7866C8, 0x78684C). `tools/orcslots/skillicons.py` (v127) draws crossbows into them.
+- Skill entry + 0x21 bit 1 (Galadriel's Cloak only): the handler sets the hero's state itself; without it the cast state (0x35) calls the handler again every tick. Quick Drop clears it (0x6E9BD).
+- Solo Wide engine: gp_hook (0x08031ED0) never ran there in tests, so Quick Drop's cooldown uses the game's tick counter 0x030041A4 (incremented by the gameplay update 0x08033000) instead.
 - `tools/orcslots/knife.c` (knives in flight at EWRAM 0x0203F400-0x0203F4FF) and Quick Drop in `crossbow.c` (cooldown ticks per player at 0x0203F500, counted down by gp_hook).
 
 ## Free space map (Spanish text bank, English only)

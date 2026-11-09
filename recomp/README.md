@@ -276,3 +276,9 @@ knives and bolts pass through foes under Ring's Persuasion, and Frodo's heavy ar
 stay). The new skill handlers (0x6E94C, 0x6E99C) need no call sites; Quick Drop's cooldown and Crossbow requirement
 add 5 bl sites (the game's can-cast check at 0x08023898 / 0x080293F0 / 0x080431F8 / 0x080433E2 and the Skills page
 buy at 0x08041FBC, genpatch BL list). Engines `?v=126`.
+
+### Bolt Trap icons and item text (Play Room v127, 2026-11-09)
+
+Snare is renamed Bolt Trap, and Frodo's Bolt Trap and Quick Drop icons are crossbows (`tools/orcslots/skillicons.py`; the
+page's button icon sheet has the same pictures). On the Backpack, Legolas and Frodo read item text under their arrow
+slots (3 lines, scrolling a line a second when longer). The hook code moved, so the engines are rebuilt: `?v=127`.
