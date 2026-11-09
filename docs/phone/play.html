@@ -180,6 +180,13 @@
     touch-action: none; -webkit-user-select: none; user-select: none; cursor: pointer; }
   #p2Btn.on { background: radial-gradient(circle at 50% 40%, #8a6020 0%, #4a3010 70%); color: #fff6dc; border-color: #f6dc94; box-shadow: 0 0 0 2px rgba(0,0,0,0.6), 0 0 18px rgba(255,190,90,0.8); }
   #p2Btn[hidden] { display: none; }
+  /* Levels button (Jordan, 2026-11-09): next to P2 in the pause menu; picking a level takes you (and P2) there. */
+  #lvBtn { position: absolute; z-index: 28; left: calc(max(env(safe-area-inset-left, 0px), 0px) + 84px); top: calc(env(safe-area-inset-top, 0px) + 10px);
+    min-width: 64px; height: 36px; padding: 0 12px; border-radius: 18px; border: 2px solid #d8b25a; background: rgba(14,11,8,0.82); color: #f3ead6;
+    font: 700 14px/1 var(--display); letter-spacing: 0.08em; box-shadow: 0 0 0 2px rgba(0,0,0,0.6), 0 0 12px rgba(240,170,80,0.3);
+    touch-action: none; -webkit-user-select: none; user-select: none; cursor: pointer; }
+  #lvBtn[hidden] { display: none; }
+  #p2Pick .lv-group, #mpPick .lv-group { font: 700 13px var(--ui); letter-spacing: 0.06em; text-transform: uppercase; color: #d8b25a; margin-top: 4px; }
   /* Save page button (Jordan, 2026-11-08: a second page of save slots, 8 in total): top left on the save slot screens. */
   #pageBtn { position: absolute; z-index: 28; left: calc(max(env(safe-area-inset-left, 0px), 0px) + 10px); top: calc(env(safe-area-inset-top, 0px) + 10px);
     min-width: 96px; height: 36px; padding: 0 14px; border-radius: 18px; border: 2px solid #d8b25a; background: rgba(14,11,8,0.82); color: #f3ead6;
@@ -375,6 +382,7 @@
     body.touch { --sa: max(env(safe-area-inset-left, 0px), env(safe-area-inset-right, 0px));
       --bar: max(calc(var(--sa) + 168px), calc((100vw - 150vh) / 2)); }
     body.touch #autoBtn, body.touch #p2Pick, body.touch #mpPick { left: calc(var(--bar) + 10px); }
+    body.touch #lvBtn { left: calc(var(--bar) + 84px); }
     body.touch #p2Btn { left: calc(var(--bar) + 10px); }
     body.touch #game { left: var(--bar); right: var(--bar); width: auto !important; box-shadow: 0 0 0 1px rgba(216,178,90,0.5), 0 0 30px rgba(240,170,80,0.14); }
     #pad::before, #pad::after { content: ""; position: absolute; top: 6px; bottom: 6px; width: calc(var(--bar) - 12px); pointer-events: none; border-radius: 22px;
@@ -2096,6 +2104,7 @@
   <div id="saveNote" hidden></div>
   <button id="autoBtn" type="button" hidden aria-pressed="false">Auto</button>
   <button id="p2Btn" type="button" hidden aria-pressed="false">P2</button>
+  <button id="lvBtn" type="button" hidden>Levels</button>
   <button id="pageBtn" type="button" hidden>Page 1 of 2</button>
   <div id="p2Pick" hidden></div>
 </div>
@@ -3998,7 +4007,7 @@ void main()
     mpStatus("Getting 2-player ready…");
     for (let i = 0; i < 60 && (!lobby || !romBytes); i++) await new Promise((r) => setTimeout(r, 250));
     if (!lobby) { mpStatus("2-player games need you signed in to Claude on this page.", "bad"); return; }
-    if (o.host) hostGame(); else joinGame(o.join);
+    if (o.host) hostGame(o.level); else joinGame(o.join);
   };
   // The game's Multiplayer menu (title screen) opens this list: host a game, or join one a friend is hosting.
   window.__onlineMenu = () => {
@@ -4010,7 +4019,15 @@ void main()
     const h = document.createElement("div"); h.className = "p2-title"; h.textContent = "Play together online"; el.appendChild(h);
     const n = document.createElement("div"); n.className = "p2-note"; n.textContent = "Save first: the page restarts into the 2-player game. Your friend needs access to this Play Room."; el.appendChild(n);
     const go = (o) => { try { sessionStorage.setItem("rotk-online", JSON.stringify(o)); } catch (e) {} location.reload(); };
-    add("Host a game", () => go({ host: 1 }), "p2-main");
+    // Hosting asks for the level first (Jordan, 2026-11-09): the game's path screen, or any mission; your friend starts there too.
+    add("Host a game", () => {
+      el.innerHTML = "";
+      const t = document.createElement("div"); t.className = "p2-title"; t.textContent = "Pick a level"; el.appendChild(t);
+      const m = document.createElement("div"); m.className = "p2-note"; m.textContent = "You and your friend start here."; el.appendChild(m);
+      add("Story (pick on the path screen)", () => go({ host: 1 }), "p2-main");
+      levelList(el, add, (lv) => go({ host: 1, level: lv }));
+      add("Cancel", () => { el.hidden = true; });
+    }, "p2-main");
     const hosts = lobby.peers().filter((p) => !p.sameTab && p.presence && p.presence.host && typeof p.presence.host.room === "string" && /^rotk-[a-z0-9]{4,20}$/.test(p.presence.host.room));
     (async () => {
       let profs = {}; try { const ids = hosts.map((p) => p.by).filter(Boolean); if (ids.length) profs = await userApi.profiles(ids); } catch (e) {}
@@ -4020,7 +4037,8 @@ void main()
     return true;
   };
   $("mpHost").addEventListener("click", () => hostGame());
-  async function hostGame() {
+  async function hostGame(level) {
+    level = level > 0 && level < 256 ? level | 0 : 0;
     if (!romBytes || mpBusy || !lobby) return;
     mpBusy = true; unlockAudio(); $("mpHost").disabled = true;
     const cfg = { mod: document.querySelector('input[name="mod"]:checked').value, stats, skills };
@@ -4029,7 +4047,7 @@ void main()
     if (sav === null) { mpReset("Couldn't load your saved games. Check your connection and try again.", "bad"); return; }
     const name = "rotk-" + Math.random().toString(36).slice(2, 10).replace(/[^a-z0-9]/g, "x");
     try { mpRoom = await lobby.join(name); } catch (e) { mpReset("Couldn't open a game room. Try again in a moment.", "bad"); return; }
-    try { await mpRoom.presence({ role: "h", cfg, crc, sav }); await lobby.presence({ host: { room: name, at: Date.now() } }); }
+    try { await mpRoom.presence({ role: "h", cfg, crc, sav, level }); await lobby.presence({ host: { room: name, at: Date.now() } }); }
     catch (e) { mpReset("Couldn't open a game room. Try again in a moment.", "bad"); return; }
     $("mpCancel").hidden = false;
     mpStatus("Waiting for a friend to join. They open this Play Room and tap your game.");
@@ -4042,7 +4060,7 @@ void main()
       if (!g.presence.ok) return;
       off(); try { lobby.presence({ host: null }); } catch (e) {}
       room.presence({ start: 1 }).catch(() => {});
-      begin({ room, me: 0, mod: cfg.mod, game, savs: [sav, typeof g.presence.sav === "string" ? g.presence.sav : ""] });
+      begin({ room, me: 0, mod: cfg.mod, game, level, savs: [sav, typeof g.presence.sav === "string" ? g.presence.sav : ""] });
     });
   }
   async function joinGame(name) {
@@ -4067,7 +4085,7 @@ void main()
       }
       if (h.presence.start && built.game) {
         off();
-        begin({ room, me: 1, mod: h.presence.cfg.mod, game: built.game, savs: [typeof h.presence.sav === "string" ? h.presence.sav : "", built.sav] });
+        const lv = h.presence.level; begin({ room, me: 1, mod: h.presence.cfg.mod, game: built.game, level: lv > 0 && lv < 256 ? lv | 0 : 0, savs: [typeof h.presence.sav === "string" ? h.presence.sav : "", built.sav] });
       }
     });
   }
@@ -4298,6 +4316,27 @@ void main()
     // No sound while P2 joins (Jordan, 2026-11-08).
     try { const g = window.GbrHost && window.GbrHost.gain; if (g) g.gain.value = on ? 0 : 1.1; } catch (e) {}
   };
+  // Level select (Jordan, 2026-11-09). Each mission's first level, from the multiplayer path tables (0x08283030: 4 paths of
+  // 5 missions, then Moria, Amon Sul, Hornburg, Entwood). Level L's name is TEXT(0x87 + L), its region's TEXT(0x6A + R).
+  const LEVELS = [
+    ["Path of the King", [[51, "Isengard"], [32, "Dunharrow"], [88, "Paths of the Dead"], [2, "Anduin River"], [25, "Docks"]]],
+    ["Path of Rohan", [[109, "Rohan"], [32, "Dunharrow"], [125, "White Mountains"], [93, "Pelennor Battle"], [99, "Pelennor Fields"]]],
+    ["Path of the Wizard", [[51, "Isengard"], [113, "Rohan"], [128, "White Mountains"], [97, "Pelennor Battle"], [69, "Minas Tirith"]]],
+    ["Path of the Hobbits", [[79, "Morgul"], [117, "Shelob's Lair"], [6, "Cirith Ungol"], [27, "Mount Doom"], [18, "Crack of Doom"]]],
+    ["Bonus levels", [[82, "Moria"], [121, "Amon Sul"], [46, "Hornburg"], [37, "Entwood"]]],
+  ];
+  // Fills a pick panel with the level list; pick(level, name) runs on a tap.
+  const levelList = (panel, add, pick) => {
+    LEVELS.forEach(([group, list]) => {
+      const g = document.createElement("div"); g.className = "lv-group"; g.textContent = group; panel.appendChild(g);
+      list.forEach(([lv, name], i) => add((group === "Bonus levels" ? "" : (i + 1) + ". ") + name, () => pick(lv, name)));
+    });
+  };
+  // Takes a game straight to a level: the game's own level change (pending state 1, mode 5, level), as when a save loads.
+  const warpTo = (H8, iw, lv) => {
+    const w32 = (o, v) => { for (let i = 0; i < 4; i++) H8[iw + o + i] = (v >>> (8 * i)) & 255; };
+    w32(0x41F8, lv); w32(0x41F4, 5); w32(0x41F0, 0x81);
+  };
   const P2_HEROES = ["Frodo", "Legolas", "Aragorn", "Gandalf", "Eowyn", "Gimli", "Sam", "Smeagol"];
   // Saved-games file: slot k at 0x40 + 0x70 k, stored in 8-byte blocks with each block's bytes reversed.
   const p2SlotInfo = (b) => {
@@ -4331,7 +4370,7 @@ void main()
     const ctl = { dispose: () => {
       disposed = true; timers.forEach(clearInterval); close();
       try { if (M._rotk_link_p2) M._rotk_link_p2(0); if (M._rotk_link_turbo) M._rotk_link_turbo(0); } catch (e) {}
-      window.__mirrorIw = null; window.__p2Tick = null;
+      window.__mirrorIw = null; window.__p2Tick = null; try { $("lvBtn").hidden = true; } catch (e) {}
     } };
     // Joining without a reload (Jordan, 2026-11-08): tapping P2 pauses the game, picking a hero unpauses it
     // straight into the 2-player game (from the saved games), Cancel just unpauses.
@@ -4382,6 +4421,35 @@ void main()
       btn.addEventListener("click", (e) => e.preventDefault());
     }
     btn.classList.toggle("on", linkOn); btn.setAttribute("aria-pressed", linkOn ? "true" : "false");
+    // Levels (Jordan, 2026-11-09): pick any mission from the pause menu and the game goes there (both games with P2, on
+    // the same frame). P2 joining later starts in the level you picked.
+    const lvBtn = $("lvBtn");
+    const goLevel = (lv, name) => {
+      try {
+        slog("level select: " + lv + " " + name);
+        // With P2, a level change mid-game breaks the games' link ("Lost connection!"), so both games start again from
+        // the saved games and the 2-player start swaps the level in after the path screen, as when P2 joins.
+        if (linkOn) { playLvl = lv; close(); show("Going to " + name + " with P2…", 4000); doJoin({ p1: link.p1, p2: link.p2, moria: lv === 82, level: lv }); return; }
+        warpTo(M.HEAPU8, M._rotk_iwram(), lv);
+        playLvl = lv; show("Going to " + name + "…", 3000);
+      } catch (e) { show("Couldn't change the level.", 3000); }
+      hold(false);
+    };
+    lvBtn.__open = () => {
+      panel.innerHTML = ""; panel.hidden = false; hold(true);
+      const add = (label, fn, cls) => { const b = document.createElement("button"); b.type = "button"; b.textContent = label; if (cls) b.className = cls; b.addEventListener("click", (e) => { e.preventDefault(); e.stopPropagation(); fn(); }); panel.appendChild(b); };
+      const h = document.createElement("div"); h.className = "p2-title"; h.textContent = "Pick a level"; panel.appendChild(h);
+      const n = document.createElement("div"); n.className = "p2-note";
+      n.textContent = linkOn ? "You and P2 start there from your last save, so save first." : "You go there now. Your hero keeps their level and gear; save in the new level to start there next time.";
+      panel.appendChild(n);
+      add("Cancel", () => { close(); hold(false); });
+      levelList(panel, add, (lv, name) => { close(); goLevel(lv, name); });
+    };
+    if (!lvBtn.__bound) {
+      lvBtn.__bound = true;
+      lvBtn.addEventListener("pointerdown", (e) => { e.preventDefault(); e.stopPropagation(); if (!panel.hidden) { panel.hidden = true; panel.innerHTML = ""; btn.__unhold && btn.__unhold(); } else lvBtn.__open(); });
+      lvBtn.addEventListener("click", (e) => e.preventDefault());
+    }
     // Page changes to game memory (skill slots, options) are copied into P2's game so both stay identical.
     if (linkOn) window.__mirrorIw = (off) => { const H8 = M.HEAPU8; H8[M._rotk_link_iwram(1) + off] = H8[M._rotk_link_iwram(0) + off]; };
     // The button shows while a hero is loaded in a level (state 1) or the game is paused, and always in a P2 game.
@@ -4389,7 +4457,7 @@ void main()
       // Only in the game's pause menu (Jordan, 2026-11-08), in 1 player and in a P2 game.
       let vis = false;
       try { const m = mem(0); const st = m.r32(0x030041B0) & 255; vis = m.ok && st === 16 && (linkOn || m.r8(0x03005834) < 4); if (m.ok && st === 1 && m.r8(0x030041F8)) playLvl = m.r8(0x030041F8); } catch (e) {}
-      btn.hidden = !vis; if (!vis && !panel.hidden) { close(); hold(false); }
+      btn.hidden = !vis; lvBtn.hidden = !vis; if (!vis && !panel.hidden) { close(); hold(false); }
     }, 500);
     if (!link) return ctl;
     if (!linkOn) { try { sessionStorage.removeItem("rotk-p2"); } catch (e) {} show("P2 couldn't start, playing 1 player.", 5000); return ctl; }
@@ -5201,6 +5269,7 @@ void main()
     window.__mp = { iwram: () => M._rotk_link_iwram(me), ewram: () => M._rotk_link_ewram(me), frame: () => frame, M, me, online: true, hashes: () => myHash, net: () => ({ rtt: Math.round(rtt), delay }) };
     window.__wideM = M;
     window.EJS_emulator = fake;
+    if (s.level) try { M._rotk_link_level(s.level); } catch (e) {}   // the host's pick: both games swap it in after the path screen
     try { M._rotk_main(); } catch (e) { if (e !== "unwind" && !(e && e.name === "ExitStatus")) { log.push("online start: " + e); say("The 2-player game didn't start. Reload the page and link up again."); return true; } }
     const draw = () => { H.draw(); requestAnimationFrame(draw); };
     requestAnimationFrame(draw);
