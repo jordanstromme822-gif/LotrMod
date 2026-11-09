@@ -12,7 +12,7 @@ import sys
 
 DATA = {"seven", "ODDS", "TIER_NAME", "frame_hook.order", "orc_tiles", "orc_pal", "slot_pal",
         "arrow_tiles", "arrow_pal", "abox_tiles", "abox_pal", "aquiv_tiles", "aquiv_pal",
-        "xb_anim", "xb_frames", "xb_tiles", "xb_bolt_touch.snd", "xb_cast.fx", "xb_cast.fy"}
+        "xb_anim", "xb_frames", "xb_tiles", "xb_bolt_touch.snd", "xb_cast.fx", "xb_cast.fy", "qd_cast.ux", "qd_cast.uy"}
 MARK = "# ---- LotrMod hooks (orcslots/linkfuncs.py) ----"
 
 sym, toml = sys.argv[1], sys.argv[2]

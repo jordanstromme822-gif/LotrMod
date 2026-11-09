@@ -268,3 +268,11 @@ sites: the skill table entry (0x6E974) points at the new handler, and the crossb
 object function pointers, so the solo engine runs them in the interpreter and the 2-player engine compiles them
 (`orcslots/linkfuncs.py`; its data list now names the crossbow's picture and tables). The hook code grew, so re-run
 genpatch, linkfuncs and the 2-player regeneration. Engines `?v=125`.
+
+### Frodo's skill rework (Play Room v126, 2026-11-09)
+
+Jordan: Knife Toss stuns and bounces, Galadriel's Cloak becomes Quick Drop (sets down every crossbow, cooldown),
+knives and bolts pass through foes under Ring's Persuasion, and Frodo's heavy armor goes back to normal (boots
+stay). The new skill handlers (0x6E94C, 0x6E99C) need no call sites; Quick Drop's cooldown and Crossbow requirement
+add 5 bl sites (the game's can-cast check at 0x08023898 / 0x080293F0 / 0x080431F8 / 0x080433E2 and the Skills page
+buy at 0x08041FBC, genpatch BL list). Engines `?v=126`.

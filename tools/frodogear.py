@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Let Frodo wear the best armor and footwear.
+"""Let Frodo wear footwear.
 
 Every base item has a word in its category's list (category table 0x08068F50,
 pointer at +0x20, 8 bytes per item). Bits 26-31 of the first word say which
@@ -7,13 +7,11 @@ heroes may equip it: bit 26 Frodo, 27 Legolas, 28 Aragorn, 29 Gandalf,
 30 Eowyn, 31 Gimli. Bits 18-25 pick the equip slot (bit 18 body armor,
 bit 21 helmet, bit 24 footwear, ...).
 
-The game leaves Frodo's bit off for:
-  - footwear (category 13): Wrappings, Sandals, Clogs, Shoes, Boots,
-    Riding Boots, Sollerets
-  - the six heaviest armor pieces (category 8, items 18-23): Lamellar,
-    Breastplate, Greathelm, Corselet, Full Corselet, Footman Plate
-
-This turns it on. Frodo's Backpack screen already has a footwear box (bottom
+The game leaves Frodo's bit off for footwear (category 13): Wrappings,
+Sandals, Clogs, Shoes, Boots, Riding Boots, Sollerets. This turns it on.
+(Until 2026-11-09 it also let him wear the six heaviest armor pieces, category 8
+items 18-23; Jordan asked for his normal armor back, so those keep the game's
+own masks: 0xD8, then 0xD0 x 5.) Frodo's Backpack screen already has a footwear box (bottom
 left); it shows up as soon as he wears something there. Level requirements
 stay as they are. Loot and shops use the same bits, so Frodo can now find and
 buy these items too.
@@ -29,7 +27,6 @@ FRODO = 0x04            # bit 26 of the word = bit 2 of its top byte
 # (category, item indexes, original hero-mask bytes)
 TARGETS = [
     (13, range(0, 7), [0xF9] * 7),                              # footwear
-    (8, range(18, 24), [0xD8, 0xD0, 0xD0, 0xD0, 0xD0, 0xD0]),   # heavy armor
 ]
 
 
@@ -53,4 +50,4 @@ if __name__ == "__main__":
         raise SystemExit(__doc__)
     rom = bytearray(open(sys.argv[1], "rb").read())
     open(sys.argv[2], "wb").write(patch(rom))
-    print("Frodo can wear footwear and heavy armor ->", sys.argv[2])
+    print("Frodo can wear footwear ->", sys.argv[2])

@@ -99,36 +99,100 @@ static void brk(int p, int k)
 
 static int level_of(int p) { return *(volatile u8 *)(HERO + p * HERO_SZ + 0x171); }
 
-/* the skill handler (Frodo's skill table, skill 1) */
-int xb_cast(u8 *h)
+static void xb_add(int p, u8 *o, int L)
 {
-    u8 *o = (u8 *)SNARE(h);           /* the game's own trap object: position, flags, palette, set-trap sound */
-    if (!o) return 0;
-    h[0x9A]--;                        /* the game's trap count stays 0: the skill never runs out of traps */
-    int p = h[0x96];
-    if (p > 1) return (int)o;
-    U(o, 0x14) = (u32)xb_update;
-    U(o, 0x18) = (u32)xb_nop;         /* foes walking over it set nothing off */
-    SETANIMSET(o, xb_anim);
-    /* on the ground a step in front of Frodo, facing his way (the trap's spot is the point of his throwing frame,
-       which some of his pictures don't have) */
-    static const s8 fx[8] = {0, 10, 14, 10, 0, -10, -14, -10}, fy[8] = {-9, -7, 0, 7, 10, 7, 0, -7};
-    int f = h[0xF8] & 7, x = I(h, 0xAC) + (fx[f] << 16), y = I(h, 0xB0) + (fy[f] << 16);
-    I(o, 0xA4) = x; I(o, 0xAC) = x; I(o, 0xCC) = x;
-    I(o, 0xA8) = y; I(o, 0xB0) = y; I(o, 0xD0) = y;
-    SETANIM(o, f);
-    tidy(p);
-    int L = level_of(p), max = L >= 5 ? 3 : L >= 3 ? 2 : 1;
-    for (int k = XN[p] - 1; k >= 0; k--) if (XB[p][k].o == o) drop(p, k);
-    while (XN[p] >= max) brk(p, 0);
     int n = XN[p];
     XB[p][n].o = o;
     XB[p][n].timer = (10 + 3 * (L > 1 ? L - 1 : 0)) * TICKS;
     XB[p][n].shots = SHOTS;
     XB[p][n].cd = TICKS / 3;
     XN[p] = n + 1;
+}
+
+/* a new crossbow at Frodo's position + (dx, dy) px, facing f */
+static u8 *xb_new(u8 *h, int dx, int dy, int f)
+{
+    u8 *o = (u8 *)SNARE(h);           /* the game's own trap object: position, flags, palette, set-trap sound */
+    if (!o) return 0;
+    h[0x9A]--;                        /* the game's trap count stays 0: the skill never runs out of traps */
+    if (h[0x96] > 1) return o;
+    U(o, 0x14) = (u32)xb_update;
+    U(o, 0x18) = (u32)xb_nop;         /* foes walking over it set nothing off */
+    SETANIMSET(o, xb_anim);
+    int x = I(h, 0xAC) + (dx << 16), y = I(h, 0xB0) + (dy << 16);
+    I(o, 0xA4) = x; I(o, 0xAC) = x; I(o, 0xCC) = x;
+    I(o, 0xA8) = y; I(o, 0xB0) = y; I(o, 0xD0) = y;
+    SETANIM(o, f);
+    return o;
+}
+
+static int max_of(int L) { return L >= 5 ? 3 : L >= 3 ? 2 : L >= 1 ? 1 : 0; }
+
+/* the skill handler (Frodo's skill table, skill 1) */
+int xb_cast(u8 *h)
+{
+    /* on the ground a step in front of Frodo, facing his way (the trap's spot is the point of his throwing frame,
+       which some of his pictures don't have) */
+    static const s8 fx[8] = {0, 10, 14, 10, 0, -10, -14, -10}, fy[8] = {-9, -7, 0, 7, 10, 7, 0, -7};
+    int f = h[0xF8] & 7, p = h[0x96];
+    if (p > 1) return (int)xb_new(h, fx[f], fy[f], f);
+    tidy(p);
+    int L = level_of(p), max = max_of(L);
+    while (XN[p] && XN[p] >= max) brk(p, 0);
+    u8 *o = xb_new(h, fx[f], fy[f], f);
+    if (o) xb_add(p, o, L);
     return (int)o;
 }
+
+/* ---- Quick Drop (was Galadriel's Cloak; Jordan, 2026-11-09): 40 Spirit at every level, sets down every crossbow
+   Frodo has unlocked (1, 2 from Crossbow level 3, 3 at level 5) in a row in front of him, in place of the ones he
+   had out. No cloak. Cooldown 60 s, 7 s less per Quick Drop level (60, 53, 46, 39, 32). It can't be cast (or bought on
+   the Skills page) before Crossbow has a level. ---- */
+#define QDEND ((volatile u32 *)0x0203F500)         /* [player]: game tick when the cooldown ends */
+#define NOW   (*(volatile u32 *)0x030041A4)         /* the game's tick counter (gameplay update 0x08033000) */
+#define QDMAX (60 * TICKS)
+static int cooling(int p) { u32 d = QDEND[p] - NOW; return d && d <= QDMAX; }
+#define HERO_ID(p) (*(volatile u8 *)(HERO + (p) * HERO_SZ + 0x19F))
+
+int qd_cast(u8 *h)
+{
+    int p = h[0x96];
+    if (p > 1) return 0;
+    int L = level_of(p), n = max_of(L), q = *(volatile u8 *)(HERO + p * HERO_SZ + 0x172);
+    if (q < 1) q = 1;
+    QDEND[p] = NOW + (60 - 7 * (q - 1)) * TICKS;
+    tidy(p);
+    while (XN[p]) brk(p, 0);
+    /* forward 14 px, then across Frodo's facing 18 px apart (unit steps of 12 px; diagonals 9, 9) */
+    static const s8 ux[8] = {0, 9, 12, 9, 0, -9, -12, -9}, uy[8] = {-12, -9, 0, 9, 12, 9, 0, -9};
+    int f = h[0xF8] & 7, g = (f + 2) & 7;
+    for (int i = 0; i < n; i++) {
+        int s = 2 * i - (n - 1);                      /* -2..2 half steps */
+        int dx = ux[f] * 7 / 6 + ux[g] * s * 3 / 4, dy = uy[f] * 7 / 6 + uy[g] * s * 3 / 4;
+        u8 *o = xb_new(h, dx, dy, f);
+        if (o) xb_add(p, o, L);
+    }
+    return 0;
+}
+
+/* the game's "can this skill be cast now" (0x08043484(player, skill)): Quick Drop waits for its cooldown and needs
+   Crossbow */
+int cancast_wrap(int p, int k)
+{
+    int r = ((fn4)0x08043485)(p, k, 0, 0);
+    if (r == 1 && k == 2 && p < 2 && HERO_ID(p) == 0 && (cooling(p) || level_of(p) < 1)) r = 0;
+    return r;
+}
+
+/* the Skills page's "hero level needed for the next level" (0x080422F0(player, skill)) when A buys one: -1 (can't)
+   for Quick Drop while Crossbow has no bought level */
+int req_wrap(int p, int k)
+{
+    int r = ((fn4)0x080422F1)(p, k, 0, 0);
+    if (k == 2 && p < 2 && HERO_ID(p) == 0 && *(volatile s8 *)(HERO + p * HERO_SZ + 0x16B) < 1) r = -1;
+    return r;
+}
+
 
 /* nearest live foe within a screen of the crossbow */
 static u8 *nearest(u8 *o)
@@ -139,7 +203,7 @@ static u8 *nearest(u8 *o)
         u32 f = U(e, 0xE8);
         if ((f & 0x801000) != 0x1000 || !(f & 0x10040400)) continue;
         u8 s = e[0x62];
-        if (s == 0x11 || s == 0x15 || s == 4) continue;
+        if (s == 0x11 || s == 0x15 || s == 4 || (e[0x69] & 0x40)) continue;   /* not under Ring's Persuasion */
         int dx = (I(e, 0xAC) >> 16) - ox, dy = (I(e, 0xB0) >> 16) - oy;
         if (dx < -120 || dx > 120 || dy < -80 || dy > 80) continue;
         int d = dx * dx + dy * dy;
@@ -153,6 +217,7 @@ void xb_bolt_touch(u8 *b, u8 *t)
 {
     static const u8 snd[10] = {0x14, 0x15, 0x16, 0x17, 0x18, 0x1A, 0x19, 0x1A, 0x1B, 0x1C};
     if (!(U(t, 0xE8) & 0x10040400)) return;
+    if (t[0x69] & 0x40) return;       /* under Ring's Persuasion: the bolt flies through */
     u8 *h = *(u8 **)(b + 0xC);
     int ok = 1;
     if ((u8)(t[0x61] - 0x1D) <= 1 && t[0x62] != 0xE && t[0x62] != 8) ok = HITOK(h, t) & 0xFF;

@@ -29,6 +29,9 @@ BL = [  # address of the bl's second half, hook symbol
     (0x0802AEAE, "same_wrap"), (0x0802AF24, "same_wrap"),
     # arrow slots (Legolas)
     (0x0802AD10, "apick_wrap"),
+    # Frodo's Quick Drop: "can cast" check (cooldown, needs Crossbow) and buying it on the Skills page
+    (0x08023898, "cancast_wrap"), (0x080293F0, "cancast_wrap"), (0x080431F8, "cancast_wrap"), (0x080433E2, "cancast_wrap"),
+    (0x08041FBC, "req_wrap"),
 ]
 PAIRS = [(0x0802DBE0, "db90_stub"), (0x0803CC08, "pack_stub"), (0x0802CC60, "nav_stub"), (0x0802A854, "a_stub"),
          (0x0802CCC4, "mcur_stub"), (0x0802C5FC, "label_stub"),

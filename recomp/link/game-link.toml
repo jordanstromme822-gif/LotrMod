@@ -2116,21 +2116,57 @@ addr = 0x08081A70
 mode = "thumb"
 
 [[extra_func]]
-addr = 0x08081C0C
+addr = 0x08081B44
 mode = "thumb"
 
 [[extra_func]]
-addr = 0x08081DCC
+addr = 0x08081BF8
 mode = "thumb"
 
 [[extra_func]]
-addr = 0x08081E70
+addr = 0x08081C9C
 mode = "thumb"
 
 [[extra_func]]
-addr = 0x08081EE0
+addr = 0x08081D0C
 mode = "thumb"
 
 [[extra_func]]
-addr = 0x08081FA4
+addr = 0x08081E74
+mode = "thumb"
+
+[[extra_func]]
+addr = 0x08081EE4
+mode = "thumb"
+
+[[extra_func]]
+addr = 0x08081F30
+mode = "thumb"
+
+[[extra_func]]
+addr = 0x08082008
+mode = "thumb"
+
+[[extra_func]]
+addr = 0x080821C8
+mode = "thumb"
+
+[[extra_func]]
+addr = 0x08082444
+mode = "thumb"
+
+[[extra_func]]
+addr = 0x080824C8
+mode = "thumb"
+
+[[extra_func]]
+addr = 0x08082758
+mode = "thumb"
+
+[[extra_func]]
+addr = 0x08082800
+mode = "thumb"
+
+[[extra_func]]
+addr = 0x08082854
 mode = "thumb"
