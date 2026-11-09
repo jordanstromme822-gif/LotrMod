@@ -2616,6 +2616,18 @@ void main()
       }
     } catch (e) {}
   }
+  // Keep the sound on (Jordan, 2026-11-09: "Audio doesn't work"). Phones suspend or interrupt the page's sound when
+  // the app is left, a call or notification comes in, or the screen locks, and nothing turned it back on, so the game
+  // stayed silent for the rest of the session. Now any tap or key, coming back to the page, and a check every second
+  // resume it.
+  (function keepAudio() {
+    const wake = () => { const a = window.__preAudio; if (a && a.state !== "running" && a.state !== "closed") { try { const r = a.resume(); if (r && r.catch) r.catch(() => {}); } catch (e) {} } };
+    ["pointerdown", "touchend", "keydown", "click"].forEach((t) => document.addEventListener(t, wake, { capture: true, passive: true }));
+    document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") wake(); });
+    window.addEventListener("pageshow", wake); window.addEventListener("focus", wake);
+    setInterval(wake, 1000);
+    window.__wakeAudio = wake;
+  })();
   // A 2-player online game picked from the game's own Multiplayer menu (Jordan, 2026-11-08) reloads the page with the
   // choice kept; the Play tap then hosts or joins (that tap also lets the sound start on phones).
   let onlinePick = null;
