@@ -259,3 +259,26 @@ Jordan: "3% chance on drop to regenerate whatever amount of quiver they have at 
 Orc Heads (`tools/orcslots/`). `orcslots/genpatch.py` adds 6 bl targets: the 4 shot calls of 0x0802C410 and the
 2 arrow match checks 0x0802EB08 (the solo build lacks one of them; the interpreter runs it). Re-run genpatch on the
 untouched shards. Engines `?v=121`.
+
+### Frodo's crossbows (Play Room v125, 2026-11-09)
+
+Jordan: Frodo's Snare places a small crossbow that shoots the nearest foe (10 bolts, 1-3 crossbows by skill
+level), and Frodo gets 1 arrow slot whose arrows the bolts use (`tools/orcslots/crossbow.c`). It adds no call
+sites: the skill table entry (0x6E974) points at the new handler, and the crossbow's update and the bolts' touch are
+object function pointers, so the solo engine runs them in the interpreter and the 2-player engine compiles them
+(`orcslots/linkfuncs.py`; its data list now names the crossbow's picture and tables). The hook code grew, so re-run
+genpatch, linkfuncs and the 2-player regeneration. Engines `?v=125`.
+
+### Frodo's skill rework (Play Room v126, 2026-11-09)
+
+Jordan: Knife Toss stuns and bounces, Galadriel's Cloak becomes Quick Drop (sets down every crossbow, cooldown),
+knives and bolts pass through foes under Ring's Persuasion, and Frodo's heavy armor goes back to normal (boots
+stay). The new skill handlers (0x6E94C, 0x6E99C) need no call sites; Quick Drop's cooldown and Crossbow requirement
+add 5 bl sites (the game's can-cast check at 0x08023898 / 0x080293F0 / 0x080431F8 / 0x080433E2 and the Skills page
+buy at 0x08041FBC, genpatch BL list). Engines `?v=126`.
+
+### Bolt Trap icons and item text (Play Room v127, 2026-11-09)
+
+Snare is renamed Bolt Trap, and Frodo's Bolt Trap and Quick Drop icons are crossbows (`tools/orcslots/skillicons.py`; the
+page's button icon sheet has the same pictures). On the Backpack, Legolas and Frodo read item text under their arrow
+slots (3 lines, scrolling a line a second when longer). The hook code moved, so the engines are rebuilt: `?v=127`.

@@ -81,6 +81,9 @@ typedef int (*fn6)(int, int, int, int, int, int);
 #define ULOCKPG (*(volatile u8 *)0x0203F00B)
 #define PBUF    ((volatile u8 *)0x0203F010)           /* 4 x 0x70: page 2 headers, as in RAM */
 #define PHEAD   ((volatile u16 (*)[4])0x0203F1D0)     /* page 2 slot heads (like SAVED) */
+#define SCR_HASH (*(volatile u32 *)0x0203F510)       /* Backpack text under the arrow slots: what is shown */
+#define SCR_T    (*(volatile u8 *)0x0203F514)        /* ... frames into this scroll step */
+#define SCR_STEP (*(volatile u8 *)0x0203F515)        /* ... and the scroll step */
 #define UBUF    ((volatile u8 *)0x0203F200)           /* 0x70 header + 8 bytes of heads + 2 arrow slot words */
 #define HDRS    0x03005630
 #define GSTATE  (*(volatile u8 *)0x030041B0)
@@ -229,6 +232,8 @@ static u32 with_count(u32 w, int n) { return (w & 0xFF00FFFFu) | ((u32)(n & 0xFF
 #define ITEMSTATS(it, sl, p, r) ((fn4)0x0802DB91)((int)(it), sl, p, r)
 #define WEAPONFLAGS(p)         ((fn4)0x0802D8E1)(p, 0, 0, 0)
 static int is_leg(int p) { return p < 2 && HERO_ID(p) == 1; }
+static int is_frodo(int p) { return p < 2 && HERO_ID(p) == 0; }
+static int nas(int p) { return is_leg(p) ? 2 : is_frodo(p) ? 1 : 0; }   /* arrow slots: Legolas 2, Frodo 1 (his crossbows) */
 static void a_norm(int p) { for (int k = 0; k < 2; k++) if (!is_arrow(ASLOT[p][k])) ASLOT[p][k] = NOARROW; }
 
 /* keep QMAX/QWORD in step with what the hero wears (called every gameplay and Backpack frame) */
@@ -326,11 +331,13 @@ static void a_cycle(int p, int quiet)
 int apick_wrap(u32 *item, int p)
 {
     u32 w = *item, *it = inv(p);
-    if ((LINKED && ALV[p] != 1) || !is_leg(p) || !is_arrow(w) || !is_arrow(it[2]) || same_wrap(it[2], w)) return AE68(item, p);
+    if ((LINKED && ALV[p] != 1) || !nas(p) || !is_arrow(w)) return AE68(item, p);
+    if (is_leg(p) && (!is_arrow(it[2]) || same_wrap(it[2], w))) return AE68(item, p);
     a_norm(p);
+    int ns = nas(p);
     int n = (w >> 16) & 0xFF;
     if (!is_regen(w))
-        for (int k = 0; k < 2 && n; k++) {
+        for (int k = 0; k < ns && n; k++) {
             u32 a = ASLOT[p][k];
             if (!is_arrow(a) || !same_wrap(a, w)) continue;
             int c = (a >> 16) & 0xFF, m = 99 - c;
@@ -341,7 +348,7 @@ int apick_wrap(u32 *item, int p)
         }
     w = with_count(w, n); *item = w;
     if (!n) return 1;
-    for (int k = 0; k < 2; k++)
+    for (int k = 0; k < ns; k++)
         if (!is_arrow(ASLOT[p][k])) { ASLOT[p][k] = w; *item = with_count(w, 0); return 1; }
     return AE68(item, p);
 }
@@ -385,6 +392,11 @@ int gp_hook(int a, int b, int c, int d)
         u8 *h = *(u8 **)HERO;
         SPAWN(*(int *)(h + 0xAC) + (8 << 16), *(int *)(h + 0xB0), 84, (int)item_of(*(volatile u16 *)0x0203FE72), 0x708);
         *(volatile u16 *)0x0203FE70 = 0;
+    }
+    if (*(volatile u8 *)0x0203F3F0) {                 /* Frodo's skill 1 (crossbow) as if cast */
+        extern int xb_cast(u8 *h);
+        xb_cast(*(u8 **)HERO);
+        *(volatile u8 *)0x0203F3F0 = 0;
     }
     if (*(volatile u16 *)0x0203FE74) {                 /* add item word 0x0203FE78 as if picked up */
         *(volatile u32 *)0x0203FE7C = ((fn4)0x0802ACE9)(*(volatile u32 *)0x0203FE78, 0, 0, 0);
@@ -717,8 +729,10 @@ static int shape_of(int n) { return n >= AFIRST ? 13 + n - AFIRST : 12 + n - FIR
 static void place_cursor(u8 *ui, int n)
 {
     int c = n - FIRST, y = 80;
-    if (n >= AFIRST) { c = n - AFIRST + 1; y = 104; }   /* arrow slots: under Orc Head slots 2 and 3 */
-    *(int *)(ui + 0xAC) = (120 + 30 * c) << 16;
+    int x = 120 + 30 * c;
+    if (n >= AFIRST) { y = 104; x = nas(LOCAL_P) == 1 ? 165 : 150 + 30 * (n - AFIRST); }   /* arrow slots: under Orc Head
+                                                                         slots 2 and 3 (Frodo's one between them) */
+    *(int *)(ui + 0xAC) = x << 16;
     *(int *)(ui + 0xB0) = y << 16;
     *(u32 *)(ui + 0xE8) |= 0x80;
     ui[0x62] = n;
@@ -729,22 +743,22 @@ static void place_cursor(u8 *ui, int n)
 int nav_c(int proposed)
 {
     u8 *ui = UI;
-    int old = ui[0x62], k = KEYS(LOCAL_P), n = proposed, ar = is_leg(LOCAL_P);
+    int old = ui[0x62], k = KEYS(LOCAL_P), n = proposed, ar = nas(LOCAL_P);
     if (old >= AFIRST) {                 /* arrow slots: up to Orc Head slots 2/3, down to the grid's top row */
         int c = old - AFIRST;
         if (k & 0x40) n = FIRST + 1 + c;
         else if (k & 0x80) n = 9 + c;
-        else if (k & 0x30) n = AFIRST + (c ^ 1);
+        else if (k & 0x30) n = ar == 2 ? AFIRST + (c ^ 1) : old;
         else n = old;
     } else if (old >= FIRST) {
         int c = old - FIRST;
         if (k & 0x40) n = 12 + c;
-        else if (k & 0x80) n = ar ? AFIRST + (c >= 2) : 8 + c;
+        else if (k & 0x80) n = ar == 2 ? AFIRST + (c >= 2) : ar ? AFIRST : 8 + c;
         else if (k & 0x20) n = FIRST + ((c + 3) & 3);
         else if (k & 0x10) n = FIRST + ((c + 1) & 3);
         else n = old;
     } else if (old >= 12 && old <= 15 && (k & 0x80)) n = FIRST + old - 12;
-    else if (old >= 8 && old <= 11 && (k & 0x40)) n = ar ? AFIRST + (old >= 10) : FIRST + old - 8;
+    else if (old >= 8 && old <= 11 && (k & 0x40)) n = ar == 2 ? AFIRST + (old >= 10) : ar ? AFIRST : FIRST + old - 8;
     if (n < FIRST || n == old) return n;
     place_cursor(ui, n);                 /* the game then sees no change and stops */
     desc(n);
@@ -841,6 +855,23 @@ void menu_wrap(void)
         MENU[4] = 2;
         return;
     }
+    if (cur >= 8 && cur < 16 && sel == 0 && is_arrow(it[cur]) && is_frodo(p)) {   /* Frodo: Equip arrows = into his
+                                                                                    arrow slot (for his crossbows) */
+        if (LINKED) { SOUND(5); MENU[4] = 2; return; }
+        u32 w = it[cur], a = ASLOT[p][0];
+        if (is_arrow(a) && same_wrap(a, w) && !is_regen(w)) {
+            int c = (a >> 16) & 0xFF, m = (w >> 16) & 0xFF;
+            if (c + m > 99) { ASLOT[p][0] = with_count(a, 99); it[cur] = with_count(w, c + m - 99); MENU[4] = 2; SOUND(3); return; }
+            ASLOT[p][0] = with_count(a, c + m);
+            DISCARD(cur, p);
+        } else {
+            DISCARD(cur, p);                               /* removes it and its picture */
+            if (is_arrow(a)) { it[cur] = a; MKSPRITE(cur); }   /* the arrows that were in the slot take its place */
+            ASLOT[p][0] = w;
+        }
+        MENU[4] = 2;
+        return;
+    }
     if (cur >= 8 && cur < 16 && sel == 0 && is_orc(it[cur])) {   /* Equip an Orc Head: into the next free slot */
         if (LINKED) { SOUND(5); MENU[4] = 2; return; }
         int n = cnt(p);
@@ -894,16 +925,17 @@ extern const u16 arrow_pal[160], abox_pal[16], aquiv_pal[16];
 #define OBJT(t) ((volatile u32 *)(0x06010000 + (t) * 32))
 #define OBJP(n) ((volatile u32 *)(0x05000200 + (n) * 32))
 static void cp32(volatile u32 *d, const u32 *s, int n) { for (int i = 0; i < n; i++) d[i] = s[i]; }
-static void draw_arrows(int p)
+static void draw_arrows(int p, int ns)
 {
     u16 a[4];
     cp32(OBJT(940), (const u32 *)abox_tiles, 128);
     cp32(OBJT(984), (const u32 *)aquiv_tiles, 96);
     cp32(OBJP(2), (const u32 *)abox_pal, 8);
     cp32(OBJP(6), (const u32 *)aquiv_pal, 8);
-    for (int k = 0; k < 2; k++) {
+    int x0 = ns == 1 ? 165 : 150;
+    for (int k = 0; k < ns; k++) {
         u32 w = ASLOT[p][k];
-        int x = 150 + 30 * k, t = (w >> 8) & 0xFF, base = 984, pal = 6, fade = 0;
+        int x = x0 + 30 * k, t = (w >> 8) & 0xFF, base = 984, pal = 6, fade = 0;
         if (is_arrow(w) && t < 10) {
             base = 960 + 12 * k; pal = 4 + k; fade = 0;
             cp32(OBJT(base), (const u32 *)(arrow_tiles + 384 * t), 96);
@@ -914,8 +946,8 @@ static void draw_arrows(int p)
         a[0] = 112 | (1 << 14) | fade; a[1] = x | (2 << 14); a[2] = (base + 4) | (1 << 10) | (pal << 12);
         OAMADD(OAM_COUNT, a);
     }
-    for (int k = 0; k < 2; k++) {
-        a[0] = 102; a[1] = (148 + 30 * k) | (2 << 14); a[2] = 940 | (1 << 10) | (2 << 12); a[3] = 0;
+    for (int k = 0; k < ns; k++) {
+        a[0] = 102; a[1] = (x0 - 2 + 30 * k) | (2 << 14); a[2] = 940 | (1 << 10) | (2 << 12); a[3] = 0;
         OAMADD(OAM_COUNT, a);
     }
 }
@@ -950,10 +982,10 @@ void frame_hook(void)
     u32 *dst = (u32 *)0x0600D800;
     const u32 *s32 = (const u32 *)src;
     for (int i = 0; i < 10 * 16; i++) dst[i] = s32[i];
-    u8 rows[8]; int n = 0, leg = is_leg(LOCAL_P);
+    u8 rows[8]; int n = 0, leg = nas(LOCAL_P) > 0;
     for (int r = 10; r < 18; r++) rows[n++] = r;
     static const u8 order[] = {12, 11, 17, 16, 15, 14, 13};
-    while (n > (leg ? 5 : 6)) {
+    while (!leg && n > 6) {
         int drop = -1;
         for (int o = 0; o < 7 && drop < 0; o++)
             for (int i = 0; i < n; i++)
@@ -962,13 +994,30 @@ void frame_hook(void)
         for (int i = drop; i < n - 1; i++) rows[i] = rows[i + 1];
         n--;
     }
-    if (leg) {                                           /* Legolas: the arrow slots take rows 13-15, so the text goes
-                                                            to the bottom of the left side (rows 14-18) */
+    if (leg) {                                           /* Legolas and Frodo: the arrow slots take rows 13-15, so
+                                                            the text goes under them on the right (rows 16-18, Jordan
+                                                            2026-11-09). Longer text scrolls a line a second. */
         vu16 *d16 = (vu16 *)dst;
         for (int r = 10; r < 20; r++)
             for (int x = 0; x < 32; x++) d16[r * 32 + x] = (x < 15 && r < 14) ? src[r * 32 + x] : 0;
-        for (int d = 0; d < n; d++)
-            for (int x = 0; x < 15; x++) d16[(14 + d) * 32 + x] = src[rows[d] * 32 + 15 + x];
+        u8 lines[8]; int m = 0;
+        u32 h = 0;
+        for (int r = 10; r < 18; r++) {
+            const u16 *q = src + r * 32 + 15;
+            int any = 0;
+            for (int x = 0; x < 15; x++) { if (q[x]) any = 1; h = h * 31 + q[x]; }
+            if (any) lines[m++] = r;
+        }
+        if (h != SCR_HASH) { SCR_HASH = h; SCR_T = 0; SCR_STEP = 0; }
+        int top = 0;
+        if (m > 3) {
+            int steps = m - 3;                           /* a line a second (30 ticks); 2 s pause at both ends */
+            int t = SCR_STEP;
+            if (++SCR_T >= 30) { SCR_T = 0; t++; if (t >= steps + 4) t = 0; SCR_STEP = t; }
+            top = t < 2 ? 0 : t - 2 > steps ? steps : t - 2;
+        }
+        for (int d = 0; d < 3 && top + d < m; d++)
+            for (int x = 0; x < 15; x++) d16[(16 + d) * 32 + 15 + x] = src[lines[top + d] * 32 + 15 + x];
     } else {
         for (int i = 10 * 16; i < 13 * 16; i++) dst[i] = 0;
         for (int d = 0; d < 6; d++) {
@@ -998,7 +1047,7 @@ void frame_hook(void)
         a[0] = 88 | (1 << 14) | fade; a[1] = x | (2 << 14); a[2] = 1004 | (1 << 10) | (7 << 12);
         OAMADD(OAM_COUNT, a);
     }
-    if (leg) draw_arrows(p);
+    if (leg) draw_arrows(p, nas(p));
     OAMFINISH();
 }
 

@@ -44,12 +44,29 @@ How it works (details in docs/findings.md, "Orc Head slots" and "Orc Head tiers"
   - Arrow slots (v123): Legolas gets 2 arrow-only slots under the Orc Head slots. Picked-up
     arrows that don't go on the worn quiver fill them before the backpack; the page's L
     button (ACYC) puts on the next quiver.
+    Frodo (v125) gets 1, centred under them, for his crossbows: picked-up arrows fill it
+    first, and Equip on arrows in his backpack moves them in (swapping with what was there).
   - 64 Kbit save chip (v124): one byte sets the game's EEPROM library up for the 8 KB chip,
     and page 2, its slot heads and the arrow slots are kept in blocks 64-132 (marker
     "LOTRXT01" in block 64). Old 512-byte saves get them from the page's copies once.
   - Arrow slots in 2-player games (v124): link message 6 sends each player's 2 slots; a
     flick of GBA L (changed twice within 8 ticks, no A, B or R) sends link message 7, and
     both GBAs put on the next quiver when it comes in.
+  - Crossbows (v125, Jordan 2026-11-09): Frodo's Snare (skill table entry at 0x6E974) places
+    a crossbow instead of a trap (tools/orcslots/crossbow.c): same Spirit cost and damage
+    table (5 + 3 / level), 10 bolts at the nearest awake foe within 120 x 80 pixels, one a
+    second, then it breaks; it also breaks after 10 s + 3 s per level above 1. 1 crossbow,
+    2 from level 3, 3 at level 5; one more breaks the oldest. Bolts are the game's own arrows
+    and use the arrows in Frodo's 1 arrow slot (picture, damage stats, Extra Projectiles,
+    Armor Piercing; 1 arrow a shot). The skill text (518) is re-encoded at 0x89400.
+  - Frodo's skill rework (v126, Jordan 2026-11-09): Knife Toss (0x6E94C, tools/orcslots/knife.c)
+    does 8 at every level, stuns each foe it hits for 0.5 s and bounces to the nearest unhit
+    foe within 64 px (level L hits up to L foes, each hit 1/5 less). Galadriel's Cloak
+    (0x6E99C) is Quick Drop: 40 Spirit, sets down every unlocked crossbow in a row in front of
+    Frodo, cooldown 60 s - 7 s per level above 1; it can't be cast or bought before Crossbow
+    has a level. Knives and bolts pass through foes under Ring's Persuasion. Texts 517-519.
+  - v127: Snare is named Bolt Trap; Bolt Trap and Quick Drop get crossbow icons
+    (tools/orcslots/skillicons.py). Arrow-slot heroes read item text under the slots.
   - 2-player games: each GBA sends its player's slot heads once as link message 4
     (unused by the game); both GBAs put the bonuses on when it arrives.
 
@@ -130,6 +147,12 @@ BL_SITES = [
     (0x307F0, "c046c046", "flip_r"),      # R on the save slot screen (free since tools/nodelete.py): other page
     # arrow slots (Legolas)
     (0x2AD0E, "00f0abf8", "apick_wrap"),  # picked-up arrows: worn quiver, then the arrow slots, then the backpack
+    # Frodo's Quick Drop: the game's "can cast" check (4 calls) waits for its cooldown; buying it needs Crossbow
+    (0x23896, "1ff0f5fd", "cancast_wrap"),
+    (0x293EE, "1af049f8", "cancast_wrap"),
+    (0x431F6, "00f045f9", "cancast_wrap"),
+    (0x433E0, "00f050f8", "cancast_wrap"),
+    (0x41FBA, "00f099f9", "req_wrap"),    # Skills page A: hero level needed for the next level
 ]
 # link message 4 (never used by the game): send and receive cases
 LINK_CASES = [(0x3FE48, 0x0804006A, "send4"), (0x3F6AC, 0x0803FDAC, "recv4"),
@@ -138,11 +161,68 @@ LINK_CASES = [(0x3FE48, 0x0804006A, "send4"), (0x3F6AC, 0x0803FDAC, "recv4"),
               # link message 7: a player flicked GBA L (Legolas: next quiver on both GBAs)
               (0x3FE54, 0x0804006A, "send4"), (0x3F6B8, 0x0803FDAC, "recv7")]
 # plain byte changes: (offset, original, new, what)
-BYTES = [(0x3CF8E, "0420", "4020", "the game's EEPROM library set up for the 64 Kbit chip (was 4 Kbit): room for page 2 and the arrow slots")]
+BYTES = [(0x3CF8E, "0420", "4020", "the game's EEPROM library set up for the 64 Kbit chip (was 4 Kbit): room for page 2 and the arrow slots"),
+         (0x6E956, "01000100010001000100", "00000000000000000000", "Frodo's Knife Toss: 8 damage at every level (was +1 / level)"),
+         (0x6E9BD, "02", "00", "Quick Drop: the cast ends like Snare's (the cloak's flag 2 kept Frodo casting until its handler set his state)")]
 EXIT_PTR, EXIT_OLD = 0x6C8A8, 0x0802E875     # state 0x0A (Backpack) exit in the state table
 # more state table entries: (offset, original, hook)
 STATE_PTRS = [(0x6C898, 0x080306ED, "slot_upd"),   # state 9 (save slots) update: page flips and Undo requests
-              (0x6C8EC, 0x080397FD, "pause_upd")]  # state 0x10 (pause menu) update: Undo requests
+              (0x6C8EC, 0x080397FD, "pause_upd"),  # state 0x10 (pause menu) update: Undo requests
+              (0x6E94C, 0x080203BD, "kt_cast"),    # Frodo's skill 0 handler (Knife Toss): stun and bounces
+              (0x6E974, 0x080455C1, "xb_cast"),    # Frodo's skill 1 handler (Snare): crossbows
+              (0x6E99C, 0x08044D41, "qd_cast")]    # Frodo's skill 2 handler (Galadriel's Cloak): Quick Drop
+
+
+# Frodo's Snare text (index 518) says what the skill does now. Re-encoded with the English bank's own Huffman tree
+# (see tools/text.py) at TEXT_AT, in the freed French bank after the code.
+LANG_TABLE, TEXT_AT = 0x289A10, 0x89400
+sys.path.insert(0, D)
+import skillicons  # noqa: E402
+
+TEXTS = [(517, b"Knife Toss (Level @1) - Frodo throws a knife for 8 damage that stuns for half a second. It bounces to"
+               b" 1 more foe / level above 1, each hit doing 1/5 less. @2 Spirit."),
+         (518, b"Bolt Trap (Level @1) - Frodo sets up a crossbow that shoots the nearest foe 10 times for 5 damage + 3 / level."
+               b" 2 crossbows at level 3, 3 at level 5. @2 Spirit."),
+         (519, b"Quick Drop (Level @1) - Frodo sets down all his crossbows in front of him. Ready again after 60 seconds"
+               b" - 7 / level above 1. Needs Bolt Trap. @2 Spirit.")]
+
+
+def encode(rom, bank, text):
+    """Huffman-encode text (plus the 0 terminator) with the bank's own tree."""
+    tree = bank + 4
+    codes, todo = {}, [(0x100, [])]
+    while todo:
+        node, path = todo.pop()
+        for bit in (0, 1):
+            child = struct.unpack_from("<H", rom, tree + (node - 0x100) * 4 + 2 * bit)[0]
+            if child == 0x100:
+                continue                      # a link back to the root; never needed to encode
+            if child > 0xFF:
+                todo.append((child, path + [bit]))
+            else:
+                codes.setdefault(child, path + [bit])
+    missing = set(text) - set(codes)
+    if missing:
+        raise SystemExit(f"characters not in the text tree: {bytes(sorted(missing))!r}")
+    bits = [b for ch in text + b"\0" for b in codes[ch]]
+    out = bytearray((len(bits) + 7) // 8)
+    for i, b in enumerate(bits):
+        out[i // 8] |= b << (i % 8)
+    return bytes(out)
+
+
+def text_patch(rom):
+    """[(offset, bytes)] for the new texts and their table entries"""
+    bank = struct.unpack_from("<I", rom, LANG_TABLE)[0] - 0x08000000
+    tree_size = struct.unpack_from("<I", rom, bank)[0]
+    out, at = [], TEXT_AT
+    for idx, t in TEXTS:
+        e = encode(rom, bank, t)
+        out.append((at, e))
+        out.append((bank + 4 + tree_size + 4 * idx, struct.pack("<I", at - bank)))
+        at = (at + len(e) + 3) & ~3
+    assert at <= 0x89864
+    return out
 
 
 def patch(rom: bytearray) -> bytearray:
@@ -173,7 +253,11 @@ def patch(rom: bytearray) -> bytearray:
         if cur not in (orig, s[name] | 1):
             raise SystemExit(f"unexpected state table entry at {at:#x}")
         struct.pack_into("<I", rom, at, s[name] | 1)
-    assert CODE_AT + len(code) <= 0x89864, "code runs into the German text bank"
+    assert CODE_AT + len(code) <= TEXT_AT, "code runs into the new texts"
+    for off, b in text_patch(rom):
+        rom[off:off + len(b)] = b
+    for off, b in skillicons.icons(rom):             # Frodo's Bolt Trap and Quick Drop icons
+        rom[off:off + len(b)] = b
     rom[CODE_AT:CODE_AT + len(code)] = code
     return rom
 
