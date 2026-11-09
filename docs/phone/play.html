@@ -207,8 +207,12 @@
   #storyMap .sm-leg b { display: inline-block; width: 14px; height: 14px; border-radius: 3px; vertical-align: -3px; margin-right: 5px; }
   #storyMap .sm-close { height: 36px; padding: 0 16px; border-radius: 18px; border: 2px solid #d8b25a; background: rgba(14,11,8,0.82); color: #f3ead6; font: 700 14px var(--display, serif); cursor: pointer; }
   #storyMap .sm-scroll { flex: 1; overflow: auto; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; }
-  #storyMap .sm-grid { display: grid; gap: 6px; grid-auto-rows: 76px; width: max-content; }
-  #storyMap .sm-b .sm-cnt { display: block; font-size: 8.5px; line-height: 1.15; margin-top: 2px; color: #e6e2d6; opacity: 0.95; }
+  #storyMap .sm-grid { display: grid; gap: 6px; grid-auto-rows: 118px; width: max-content; }
+  #storyMap .sm-b .sm-cnt { display: block; width: 100%; max-width: 92px; font-size: 9px; line-height: 1.2; margin-top: 3px; color: #e6e2d6; }
+  #storyMap .sm-cnt > span { display: flex; justify-content: space-between; gap: 4px; padding: 0 3px; }
+  #storyMap .sm-cnt em { font-style: normal; }
+  #storyMap .sm-cnt .sm-tot { border-top: 1px solid rgba(255,255,255,0.35); margin-top: 1px; font-weight: 700; }
+  #storyMap .sm-cnt .sm-sp { opacity: 0.75; }
   #storyMap .sm-hero { position: sticky; left: 0; z-index: 2; background: #121318; display: flex; flex-direction: column; justify-content: center; font: 700 16px var(--display, serif); color: #f3d98e; padding-left: 2px; }
   #storyMap .sm-hero span { font: 400 11px var(--ui, sans-serif); color: #a9a79f; margin-top: 2px; }
   #storyMap .sm-gaphead { position: sticky; left: 0; z-index: 2; background: #121318; }
@@ -231,8 +235,8 @@
     #storyMap .sm-leg { font-size: 10px; gap: 8px; }
     #storyMap .sm-leg b { width: 11px; height: 11px; }
     #storyMap .sm-close { height: 30px; font-size: 12px; }
-    #storyMap .sm-grid { gap: 4px; grid-auto-rows: 58px; }
-    #storyMap .sm-b .sm-cnt { font-size: 7.5px; }
+    #storyMap .sm-grid { gap: 4px; grid-auto-rows: 100px; }
+    #storyMap .sm-b .sm-cnt { font-size: 8px; max-width: 70px; }
     #storyMap .sm-hero { font-size: 12px; }
     #storyMap .sm-hero span { font-size: 9px; }
     #storyMap .sm-b b { font-size: 9.5px; }
@@ -5313,9 +5317,13 @@ void main()
         const COUNTS = {"51":[12,0,0,0,0],"55":[2,1,0,0,0],"54":[15,1,0,0,0],"52":[12,3,0,0,0],"56":[0,3,0,0,0],"57":[0,1,0,0,0],"53":[2,1,0,0,1],"50":[0,0,0,0,0],"113":[13,0,0,0,0],"114":[27,5,0,0,4],"111":[11,17,0,0,1],"112":[38,4,0,0,0],"108":[3,0,0,0,0],"128":[20,1,1,0,2],"126":[11,0,0,0,0],"122":[3,0,2,0,3],"123":[0,0,0,0,0],"97":[18,7,0,0,0],"105":[19,19,0,1,0],"103":[17,7,0,0,1],"90":[12,13,0,0,0],"91":[16,1,0,0,0],"95":[14,13,0,0,10],"100":[0,0,0,0,0],"69":[5,10,5,1,0],"73":[16,19,0,0,0],"72":[0,1,0,1,0],"71":[0,0,0,0,0],"63":[0,0,0,0,0],"67":[0,0,0,1,0],"68":[0,0,0,0,0],"60":[12,40,9,0,1],"61":[0,0,0,0,1],"59":[19,32,3,0,0],"58":[34,17,2,0,0],"32":[44,6,0,0,0],"34":[21,3,0,0,0],"30":[16,8,1,0,4],"31":[0,0,0,0,0],"23":[13,9,0,0,0],"20":[17,11,3,0,0],"21":[52,3,0,0,2],"19":[5,0,0,0,0],"22":[42,7,0,0,2],"88":[96,0,0,0,0],"87":[59,0,0,0,0],"85":[39,0,0,1,1],"86":[9,0,0,0,0],"2":[0,20,1,0,1],"3":[0,23,4,0,0],"0":[23,19,3,0,1],"1":[0,0,0,0,0],"24":[0,13,1,0,0],"15":[0,3,1,0,0],"14":[9,8,1,1,0],"25":[16,15,1,0,0],"107":[24,25,0,0,0],"102":[29,12,0,0,6],"92":[1,8,0,0,1],"109":[26,0,0,0,0],"110":[21,2,0,0,6],"125":[46,7,1,0,0],"129":[18,1,0,0,0],"48":[5,8,2,0,0],"124":[15,11,0,0,0],"127":[35,3,0,0,1],"93":[16,20,1,0,0],"104":[7,12,0,0,0],"96":[4,0,1,0,0],"106":[0,6,7,0,1],"101":[6,2,0,0,0],"99":[0,1,8,0,0],"94":[3,0,2,0,0],"98":[0,0,0,1,1],"79":[13,0,0,0,0],"76":[24,0,0,0,0],"78":[29,9,0,0,0],"77":[5,3,0,0,0],"89":[0,0,0,0,0],"74":[9,2,0,0,0],"80":[18,2,0,0,0],"75":[1,0,0,0,0],"12":[19,2,0,0,0],"8":[12,0,0,0,0],"13":[30,9,2,0,5],"10":[30,1,0,0,0],"117":[44,4,0,0,6],"115":[44,5,0,0,3],"116":[62,6,0,1,3],"6":[4,10,0,1,4],"9":[9,12,0,0,0],"5":[9,6,0,0,0],"4":[2,0,1,0,7],"7":[1,0,0,0,7],"42":[14,10,0,0,0],"43":[42,1,0,0,0],"41":[27,0,1,0,0],"40":[3,1,0,0,0],"27":[5,7,0,0,0],"29":[9,7,2,0,1],"28":[9,1,1,0,0],"26":[2,0,1,0,0],"18":[10,0,0,0,3],"16":[36,1,3,0,0],"17":[2,0,1,0,0],"82":[26,13,0,0,0],"83":[12,15,0,0,0],"84":[42,15,5,0,13],"81":[60,3,2,0,19],"49":[5,2,1,0,6],"121":[0,6,0,0,0],"46":[3,10,1,0,0],"47":[4,27,3,0,1],"37":[34,38,17,0,0],"38":[48,12,3,0,0],"39":[40,38,14,0,0],"36":[17,2,8,0,0]};
         const cnt = (l) => {
           const c = COUNTS[l]; if (!c) return "";
-          const parts = [["Boss", c[3]], ["Large", c[2]], ["Medium", c[1]], ["Small", c[0]]].filter((x) => x[1]).map((x) => x[0] + " " + x[1]);
-          if (c[4]) parts.push("Spawners " + c[4]);
-          return parts.length ? '<span class="sm-cnt">' + parts.join(" · ") + "</span>" : "";
+          const rows = [["Boss", c[3]], ["Large", c[2]], ["Medium", c[1]], ["Small", c[0]]].filter((x) => x[1]);
+          const tot = c[0] + c[1] + c[2] + c[3];
+          if (!rows.length && !c[4]) return "";
+          let h = '<span class="sm-cnt">' + rows.map((x) => "<span><em>" + x[0] + "</em><em>" + x[1] + "</em></span>").join("");
+          if (rows.length) h += '<span class="sm-tot"><em>Total</em><em>' + tot + "</em></span>";
+          if (c[4]) h += '<span class="sm-sp"><em>Spawners</em><em>' + c[4] + "</em></span>";
+          return h + "</span>";
         };
         const orc = (l) => l === 58 || (l >= 6 && l <= 13) ? "Hard" : l >= 99 && l <= 107 ? "Grueling" : "";
         function layout() {
@@ -5348,7 +5356,7 @@ void main()
         let tab = "story";
         function bonusGrid(sc, small) {
           const cols = Math.max(...BONUS.map((m) => m.s.length));
-          const g = document.createElement("div"); g.className = "sm-grid"; g.style.gridTemplateColumns = (small ? "78px" : "112px") + " repeat(" + cols + ", " + (small ? 96 : 120) + "px)"; sc.appendChild(g);
+          const g = document.createElement("div"); g.className = "sm-grid"; g.style.gridTemplateColumns = (small ? "78px" : "112px") + " repeat(" + cols + ", " + (small ? 96 : 120) + "px)"; g.style.gridTemplateRows = BONUS.map((m, i) => (i ? "18px " : "") + (small ? "100px" : "118px")).join(" "); sc.appendChild(g);
           BONUS.forEach((m, i) => {
             if (i) for (let c = 0; c <= cols; c++) { const d = document.createElement("div"); d.className = c ? "sm-empty" : "sm-gaphead"; g.appendChild(d); }
             const head = document.createElement("div"); head.className = "sm-hero"; head.textContent = m.name; g.appendChild(head);
