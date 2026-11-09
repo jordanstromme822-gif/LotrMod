@@ -247,6 +247,17 @@
   #storyMap .sm-tabs button { height: 34px; padding: 0 14px; border-radius: 17px; border: 2px solid #6b5a33; background: transparent; color: #c9c7bf; font: 700 14px var(--display, serif); letter-spacing: 0.04em; cursor: pointer; }
   #storyMap .sm-tabs button.on { border-color: #d8b25a; background: #3a2e14; color: #f3d98e; }
   #storyMap .sm-b i.sm-big { opacity: 1; font-weight: 700; font-size: 10.5px; margin-top: 2px; }
+  #storyMap .sm-b[data-l] { cursor: pointer; }
+  #storyMap .sm-b[data-l]:hover { filter: brightness(1.15); }
+  #smPic { position: absolute; inset: 0; z-index: 2; background: #0b0c10; display: flex; flex-direction: column; padding: env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px) 0 env(safe-area-inset-left, 0px); }
+  #smPic .smp-bar { display: flex; align-items: center; gap: 10px; padding: 8px 12px; flex: none; }
+  #smPic .smp-bar b { font-size: 16px; font-weight: 600; }
+  #smPic .smp-bar span { color: #a9a79f; font-size: 12px; flex: 1; }
+  #smPic .smp-bar button { font: inherit; font-size: 13px; color: #ecebe6; background: #2a2c35; border: 1px solid #44475a; border-radius: 8px; padding: 7px 14px; cursor: pointer; }
+  #smPic .smp-wrap { flex: 1; overflow: auto; display: grid; place-items: center; padding: 8px; -webkit-overflow-scrolling: touch; cursor: grab; }
+  #smPic .smp-wrap.zoomed { place-items: start; }
+  #smPic .smp-wrap img { display: block; image-rendering: pixelated; max-width: none; border-radius: 4px; box-shadow: 0 0 0 1px #2a2c35; }
+  #smPic .smp-msg { color: #a9a79f; font-size: 14px; }
   #storyMap .sm-foot { font-size: 12px; color: #a9a79f; padding: 12px 0 4px; max-width: 900px; }
   /* Pause menu (Jordan, 2026-11-08): P2 at the top left, Auto under it (Moria). */
   #p2Btn { left: calc(max(env(safe-area-inset-left, 0px), 0px) + 10px); min-width: 64px; }
@@ -5366,7 +5377,7 @@ void main()
               const l = v[0];
               d.className = "sm-b " + (v[1] ? "boss" : "n");
               d.innerHTML = "<b>" + NAMES[l] + "</b>" + (v[1] ? "<i class=\"sm-big\">" + v[1] + "</i><i>" + v[2] + "</i>" : "") + cnt(l);
-              d.title = NAMES[l] + " (level " + l + ")"; g.appendChild(d);
+              d.title = NAMES[l] + " (level " + l + ")"; d.dataset.l = l; g.appendChild(d);
             }
           });
           const foot = document.createElement("div"); foot.className = "sm-foot";
@@ -5382,6 +5393,7 @@ void main()
           const x = document.createElement("button"); x.type = "button"; x.className = "sm-close"; x.textContent = "Close"; x.addEventListener("click", (e) => { e.preventDefault(); close(); }); top.appendChild(x);
           box.appendChild(top);
           const sc = document.createElement("div"); sc.className = "sm-scroll"; box.appendChild(sc);
+          sc.addEventListener("click", (e) => { const b = e.target.closest(".sm-b[data-l]"); if (b) { e.preventDefault(); pic(+b.dataset.l); } });
           if (tab === "bonus") { bonusGrid(sc, window.innerHeight <= 500); return box; }
           const g = document.createElement("div"); g.className = "sm-grid"; const small = window.innerHeight <= 500; g.style.gridTemplateColumns = (small ? "78px" : "112px") + " repeat(" + L.cols + ", " + (small ? 72 : 92) + "px)"; sc.appendChild(g);
           for (let r = 0; r < L.rows; r++) {
@@ -5401,7 +5413,7 @@ void main()
               if (team) t += "<i>" + v.hs.map((h) => HEROES[h].name).join(" + ") + "</i>";
               if (o) t += '<u>Orc Heads ' + o + "</u>";
               t += cnt(l);
-              d.innerHTML = t; d.title = NAMES[l] + " (" + rg + ", level " + l + ")"; g.appendChild(d);
+              d.innerHTML = t; d.title = NAMES[l] + " (" + rg + ", level " + l + ")"; d.dataset.l = l; g.appendChild(d);
             }
           }
           const foot = document.createElement("div"); foot.className = "sm-foot";
@@ -5409,15 +5421,41 @@ void main()
           sc.appendChild(foot);
           return box;
         }
+        // Tap or click a block: overhead picture of the screen with no monsters (captured from the game, tools/storymap/cap.py).
+        let pv = null, zoom = 0;
+        function pic(l) {
+          closePic(); zoom = 0;
+          const v = document.createElement("div"); v.id = "smPic";
+          const bar = document.createElement("div"); bar.className = "smp-bar";
+          const rg = region(l); bar.innerHTML = "<b>" + NAMES[l] + "</b><span>" + (rg ? rg + " · " : "") + "level " + l + "</span>";
+          const z = document.createElement("button"); z.type = "button"; z.textContent = "Zoom in"; bar.appendChild(z);
+          const x = document.createElement("button"); x.type = "button"; x.textContent = "Back"; x.addEventListener("click", (e) => { e.preventDefault(); closePic(); }); bar.appendChild(x);
+          const wrap = document.createElement("div"); wrap.className = "smp-wrap";
+          const img = new Image(); img.alt = NAMES[l] + " from above"; img.decoding = "async";
+          const msg = document.createElement("div"); msg.className = "smp-msg"; msg.textContent = "Loading picture…"; wrap.appendChild(msg);
+          const fit = () => { if (!img.naturalWidth) return; const W = wrap.clientWidth - 16, H = wrap.clientHeight - 16, f = Math.min(W / img.naturalWidth, H / img.naturalHeight); const k = zoom ? Math.max(1, f) * (zoom === 1 ? 2 : 4) : Math.min(f, 3); img.style.width = Math.round(img.naturalWidth * k) + "px"; wrap.classList.toggle("zoomed", !!zoom); z.textContent = zoom === 2 ? "Fit" : "Zoom in"; };
+          img.onload = () => { msg.remove(); wrap.appendChild(img); fit(); };
+          img.onerror = () => { msg.textContent = "No picture for this screen yet."; };
+          img.src = "maps/L" + l + ".webp";
+          z.addEventListener("click", (e) => { e.preventDefault(); const cx = (wrap.scrollLeft + wrap.clientWidth / 2) / (wrap.scrollWidth || 1), cy = (wrap.scrollTop + wrap.clientHeight / 2) / (wrap.scrollHeight || 1); zoom = (zoom + 1) % 3; fit(); wrap.scrollLeft = cx * wrap.scrollWidth - wrap.clientWidth / 2; wrap.scrollTop = cy * wrap.scrollHeight - wrap.clientHeight / 2; });
+          // Drag to look around with a mouse (fingers scroll natively).
+          let dr = null;
+          wrap.addEventListener("pointerdown", (e) => { if (e.pointerType !== "mouse") return; dr = { x: e.clientX, y: e.clientY, l: wrap.scrollLeft, t: wrap.scrollTop }; wrap.setPointerCapture(e.pointerId); e.preventDefault(); });
+          wrap.addEventListener("pointermove", (e) => { if (dr) { wrap.scrollLeft = dr.l - (e.clientX - dr.x); wrap.scrollTop = dr.t - (e.clientY - dr.y); } });
+          wrap.addEventListener("pointerup", () => { dr = null; });
+          v.appendChild(bar); v.appendChild(wrap); el.appendChild(v); pv = v;
+          v._fit = fit; window.addEventListener("resize", fit);
+        }
+        function closePic() { if (pv) { window.removeEventListener("resize", pv._fit); pv.remove(); pv = null; } }
         function open() { if (el) return; el = render(); document.body.appendChild(el); }
-        function close() { if (el) { el.remove(); el = null; } }
-        return { open, close, layout, isOpen: () => !!el };
+        function close() { closePic(); if (el) { el.remove(); el = null; } }
+        return { open, close, layout, isOpen: () => !!el, picOpen: () => !!pv, closePic };
       })();
       (function mapButton() {
         const b = document.getElementById("mapBtn"); if (!b) return;
         b.addEventListener("pointerdown", (e) => { e.preventDefault(); e.stopPropagation(); StoryMap.isOpen() ? StoryMap.close() : StoryMap.open(); });
         b.addEventListener("click", (e) => e.preventDefault());
-        window.addEventListener("keydown", (e) => { if (e.key === "Escape" && StoryMap.isOpen()) { e.preventDefault(); StoryMap.close(); } }, true);
+        window.addEventListener("keydown", (e) => { if (e.key === "Escape" && StoryMap.isOpen()) { e.preventDefault(); StoryMap.picOpen() ? StoryMap.closePic() : StoryMap.close(); } }, true);
         // Shows on the title screen (state 5) and the main menu (state 8).
         setInterval(() => {
           let vis = false;
