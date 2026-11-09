@@ -31,7 +31,6 @@ typedef int (*fn4)(int, int, int, int);
 #define HIT(h, t, d)      ((fn4)0x08010381)((int)(h), (int)(t), d, 0)
 #define HITOK(h, t)       ((fn4)0x08011A89)((int)(h), (int)(t), 0, 0)
 #define SOUND(n)          ((fn4)0x08046EED)(n, 0, 0, 0)
-#define SOUND2(n, h)      ((fn4)0x08046FA1)(n, h, 0, 0)
 #define ITEMSTATS(it,sl,p,r) ((fn4)0x0802DB91)((int)(it), sl, p, r)
 
 #define I(o, off)  (*(volatile int *)((u8 *)(o) + (off)))
@@ -93,8 +92,7 @@ static void brk(int p, int k)
 {
     u8 *o = XB[p][k].o;
     drop(p, k);
-    kill(o);
-    SOUND(7);
+    kill(o);                          /* silent (Jordan, 2026-11-09: traps only make the bow shot sound) */
 }
 
 static int level_of(int p) { return *(volatile u8 *)(HERO + p * HERO_SZ + 0x171); }
@@ -112,7 +110,11 @@ static void xb_add(int p, u8 *o, int L)
 /* a new crossbow at Frodo's position + (dx, dy) px, facing f */
 static u8 *xb_new(u8 *h, int dx, int dy, int f)
 {
-    u8 *o = (u8 *)SNARE(h);           /* the game's own trap object: position, flags, palette, set-trap sound */
+    volatile u8 *sfx = (volatile u8 *)0x03005820;   /* SFX on/off bit: off while the game's handler runs, so its */
+    u8 keep = *sfx;                                 /* set-trap sound doesn't play (traps only make the bow sound) */
+    *sfx = keep & ~4;
+    u8 *o = (u8 *)SNARE(h);           /* the game's own trap object: position, flags, palette */
+    *sfx = keep;
     if (!o) return 0;
     h[0x9A]--;                        /* the game's trap count stays 0: the skill never runs out of traps */
     if (h[0x96] > 1) return o;
@@ -215,7 +217,6 @@ static u8 *nearest(u8 *o)
 /* a bolt hits something (the knife's touch, with the bolt's damage and armor piercing) */
 void xb_bolt_touch(u8 *b, u8 *t)
 {
-    static const u8 snd[10] = {0x14, 0x15, 0x16, 0x17, 0x18, 0x1A, 0x19, 0x1A, 0x1B, 0x1C};
     if (!(U(t, 0xE8) & 0x10040400)) return;
     if (t[0x69] & 0x40) return;       /* under Ring's Persuasion: the bolt flies through */
     u8 *h = *(u8 **)(b + 0xC);
@@ -226,10 +227,7 @@ void xb_bolt_touch(u8 *b, u8 *t)
         if (b[0x8A]) d += ARMOR(t[0x61]);
         HIT(h, t, d);
     }
-    b[0x62] = 4;
-    s8 a = (s8)b[0x93];
-    if (a >= 0 && a <= 9) *(volatile s16 *)(b + 0x8E) = SOUND2(snd[a], *(volatile s16 *)(b + 0x8E));
-    else SOUND(7);
+    b[0x62] = 4;                      /* no hit sound: the bow shot is the trap's only sound */
     U(b, 0xE8) &= ~4u;
 }
 
@@ -275,6 +273,7 @@ static void fire(u8 *o, u8 *h, u8 *t, int p)
     if (extra < 0) extra = 0;
     if (extra > 2) extra = 2;
     for (int k = 0; k <= extra; k++) shoot(o, h, a + 2 * k - extra, p, aw, dmg, ap);
+    SOUND(0x40);                      /* Legolas's bow shot (0x08024892), once per volley */
 }
 
 void xb_update(u8 *o)

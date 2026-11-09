@@ -282,3 +282,8 @@ buy at 0x08041FBC, genpatch BL list). Engines `?v=126`.
 Snare is renamed Bolt Trap, and Frodo's Bolt Trap and Quick Drop icons are crossbows (`tools/orcslots/skillicons.py`; the
 page's button icon sheet has the same pictures). On the Backpack, Legolas and Frodo read item text under their arrow
 slots (3 lines, scrolling a line a second when longer). The hook code moved, so the engines are rebuilt: `?v=127`.
+
+### Crossbow sounds (Play Room v128, 2026-11-09)
+
+A crossbow now only plays the bow shot (sound 0x40) when it fires; its hit, break and set-down sounds are gone
+(`tools/orcslots/crossbow.c`). The hook code changed size, so the engines are rebuilt: `?v=128`.
