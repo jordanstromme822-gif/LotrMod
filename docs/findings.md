@@ -184,6 +184,16 @@ or `0x08` (ROM as the CPU sees it).
 - Every gameplay frame: state 1 update 0x08031E44 calls 0x080391C4 at 0x08031ED0.
 - `tools/orcslots.py` (v120): roll in the item word's top half (bits 15-14 tier, 13-12 difficulty table, 11-0 seed; tier 3 or table 3 = a head from before tiers). Slot heads per player at EWRAM 0x0203FF00, per save slot at 0x0203F280 (v122; saved XOR 0xC000 in the file header bytes 8 + 8k, all 0xFF = none). v120-v121 kept them in EEPROM blocks 0x32-0x34, the start of save slot 4, which broke slot 4 whenever another slot was saved, 2-player copies at 0x0203FF38, what is on each hero at 0x0203FE40. EWRAM 0x0203FE40-0x0203FF7F was checked unused (smooth60 uses 0x0203F600-0x0203FE3F).
 
+## Frodo's crossbows (v125)
+
+- Skill table entries are 40 bytes: +0 handler, +4 Spirit cost, +8 6 halfwords (value at level 0, then per level), +0x14 6 more. 0x08043764(player, skill, table, level) adds them up; skill k's level is hero data + 0x170 + k. Frodo is hero id 0 (Legolas 1); his table is 0x0806E94C. Snare's handler 0x080455C1 makes the trap object (attack id 0x5D, update 0x080456D9, touch 0x08016959, anim set 0x08287DD0, OBJ palette 3, owner + 0x9A trap count, checked at 0x0804367E against the second table). The trap's spot is the action point of Frodo's current frame (0x0800103C), which idle frames don't have.
+- Damage without the hero's attack roll: 0x08010380(hero object, target, damage) adds hero data + 0x136, subtracts the target type's armor byte (0x08057518 + type * 20 + 0xC) and takes it off HP (+ 0x5A). Knife Toss (touch 0x080169B5, damage at + 0x88) and Snare use it.
+- Arrows: 0x080337C8(owner, angle, 1) makes one (angle 0-31, 0 up, clockwise; 0x080329B4(dx, dy) gives it). For a hero it takes the worn quiver's arrow type from hero data + 0x44 (+ 0x93 on the arrow) and adds a trail (0x08026E88) from the arrow or the weapon's affixes. Positions: x at + 0xA4 / 0xAC / 0xCC, y at + 0xA8 / 0xB0 / 0xD0 (16.16). The arrow's own touch (0x08015425) is the hero's normal attack (0x0800F168).
+- Objects: one list at 0x03002420 (next pointer at + 0). Awake foes have + 0xE8 & 0x801000 == 0x1000 and + 0xE8 & 0x10040400.
+- Hero stats are halfwords at hero data + 0xA4 + 2 * stat (0 Melee, 1 Impaling, 2 Fire, 3 Poison Damage, 5 Damage, 47 Extra Projectiles, 50 Armor Piercing); an item's stats go on and off with 0x0802DB90(item, slot, player, remove).
+- Anim sets: {tiles, frames, palette or 0, byte}. Frames: + 0xC u16 offsets (from + 0xC) per anim; each record is flags (0x20 LZ77, 0x40 the game's own packing, 0 raw) | part count, 0, width, height, u16 tile offset, u16 bytes, a 6-byte hitbox, then 4 bytes per OAM part. 0x08049B34 uploads a frame's tiles to VRAM. OBJ palette 3 is the same in every level.
+- `tools/orcslots/crossbow.c`: Frodo's skill 1 handler calls Snare's for the object, then gives it our update and picture (8 directions, `xbgfx.c`). Crossbows per player at EWRAM 0x0203F360 (0x0203F360-0x0203F3FF).
+
 ## Free space map (Spanish text bank, English only)
 
 - 0x9E400-0x9E46F: story-cutscene hook (tools/nocutscenes.py).
@@ -196,6 +206,7 @@ or `0x08` (ROM as the CPU sees it).
 - 0x9EC80-0x9ECCF: gem auto pickup (tools/autogems.py).
 - 0x9E820-0x9E877: save slot lock (tools/nodupe.py).
 - 0x9EA00-0x9EC47: skill point refund (tools/skillrefund.py).
+- 0x89400-0x8946F: Frodo's Crossbow skill text (tools/orcslots.py, v125); the Orc Head code before it now runs to about 0x83E00.
 - 0x9F000-0x9FFFF: free again (the Orc Head code moved to the French bank in v120). 0x7F000-0x806B3: Orc Head slots and tiers code, picture and palettes (tools/orcslots.py); the French bank runs to 0x89863. The "Spanish" bank the tools use is really the Italian one (language table 0x289A10: En 0x7500C, Fr 0x7EE28, De 0x89864, Es 0x93C6C, It 0x9E330); French, German and Spanish are free as well.
 
 ## Arrows and quivers (Jordan, 2026-11-08)

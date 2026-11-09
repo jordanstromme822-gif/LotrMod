@@ -259,3 +259,12 @@ Jordan: "3% chance on drop to regenerate whatever amount of quiver they have at 
 Orc Heads (`tools/orcslots/`). `orcslots/genpatch.py` adds 6 bl targets: the 4 shot calls of 0x0802C410 and the
 2 arrow match checks 0x0802EB08 (the solo build lacks one of them; the interpreter runs it). Re-run genpatch on the
 untouched shards. Engines `?v=121`.
+
+### Frodo's crossbows (Play Room v125, 2026-11-09)
+
+Jordan: Frodo's Snare places a small crossbow that shoots the nearest foe (10 bolts, 1-3 crossbows by skill
+level), and Frodo gets 1 arrow slot whose arrows the bolts use (`tools/orcslots/crossbow.c`). It adds no call
+sites: the skill table entry (0x6E974) points at the new handler, and the crossbow's update and the bolts' touch are
+object function pointers, so the solo engine runs them in the interpreter and the 2-player engine compiles them
+(`orcslots/linkfuncs.py`; its data list now names the crossbow's picture and tables). The hook code grew, so re-run
+genpatch, linkfuncs and the 2-player regeneration. Engines `?v=125`.

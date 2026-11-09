@@ -44,12 +44,21 @@ How it works (details in docs/findings.md, "Orc Head slots" and "Orc Head tiers"
   - Arrow slots (v123): Legolas gets 2 arrow-only slots under the Orc Head slots. Picked-up
     arrows that don't go on the worn quiver fill them before the backpack; the page's L
     button (ACYC) puts on the next quiver.
+    Frodo (v125) gets 1, centred under them, for his crossbows: picked-up arrows fill it
+    first, and Equip on arrows in his backpack moves them in (swapping with what was there).
   - 64 Kbit save chip (v124): one byte sets the game's EEPROM library up for the 8 KB chip,
     and page 2, its slot heads and the arrow slots are kept in blocks 64-132 (marker
     "LOTRXT01" in block 64). Old 512-byte saves get them from the page's copies once.
   - Arrow slots in 2-player games (v124): link message 6 sends each player's 2 slots; a
     flick of GBA L (changed twice within 8 ticks, no A, B or R) sends link message 7, and
     both GBAs put on the next quiver when it comes in.
+  - Crossbows (v125, Jordan 2026-11-09): Frodo's Snare (skill table entry at 0x6E974) places
+    a crossbow instead of a trap (tools/orcslots/crossbow.c): same Spirit cost and damage
+    table (5 + 3 / level), 10 bolts at the nearest awake foe within 120 x 80 pixels, one a
+    second, then it breaks; it also breaks after 10 s + 3 s per level above 1. 1 crossbow,
+    2 from level 3, 3 at level 5; one more breaks the oldest. Bolts are the game's own arrows
+    and use the arrows in Frodo's 1 arrow slot (picture, damage stats, Extra Projectiles,
+    Armor Piercing; 1 arrow a shot). The skill text (518) is re-encoded at 0x89400.
   - 2-player games: each GBA sends its player's slot heads once as link message 4
     (unused by the game); both GBAs put the bonuses on when it arrives.
 
@@ -142,7 +151,53 @@ BYTES = [(0x3CF8E, "0420", "4020", "the game's EEPROM library set up for the 64 
 EXIT_PTR, EXIT_OLD = 0x6C8A8, 0x0802E875     # state 0x0A (Backpack) exit in the state table
 # more state table entries: (offset, original, hook)
 STATE_PTRS = [(0x6C898, 0x080306ED, "slot_upd"),   # state 9 (save slots) update: page flips and Undo requests
-              (0x6C8EC, 0x080397FD, "pause_upd")]  # state 0x10 (pause menu) update: Undo requests
+              (0x6C8EC, 0x080397FD, "pause_upd"),  # state 0x10 (pause menu) update: Undo requests
+              (0x6E974, 0x080455C1, "xb_cast")]    # Frodo's skill 1 handler (Snare): crossbows
+
+
+# Frodo's Snare text (index 518) says what the skill does now. Re-encoded with the English bank's own Huffman tree
+# (see tools/text.py) at TEXT_AT, in the freed French bank after the code.
+LANG_TABLE, TEXT_AT = 0x289A10, 0x89400
+TEXTS = [(518, b"Crossbow (Level @1) - Frodo sets up a crossbow that shoots the nearest foe 10 times for 5 damage + 3 / level."
+               b" 2 crossbows at level 3, 3 at level 5. @2 Spirit.")]
+
+
+def encode(rom, bank, text):
+    """Huffman-encode text (plus the 0 terminator) with the bank's own tree."""
+    tree = bank + 4
+    codes, todo = {}, [(0x100, [])]
+    while todo:
+        node, path = todo.pop()
+        for bit in (0, 1):
+            child = struct.unpack_from("<H", rom, tree + (node - 0x100) * 4 + 2 * bit)[0]
+            if child == 0x100:
+                continue                      # a link back to the root; never needed to encode
+            if child > 0xFF:
+                todo.append((child, path + [bit]))
+            else:
+                codes.setdefault(child, path + [bit])
+    missing = set(text) - set(codes)
+    if missing:
+        raise SystemExit(f"characters not in the text tree: {bytes(sorted(missing))!r}")
+    bits = [b for ch in text + b"\0" for b in codes[ch]]
+    out = bytearray((len(bits) + 7) // 8)
+    for i, b in enumerate(bits):
+        out[i // 8] |= b << (i % 8)
+    return bytes(out)
+
+
+def text_patch(rom):
+    """[(offset, bytes)] for the new texts and their table entries"""
+    bank = struct.unpack_from("<I", rom, LANG_TABLE)[0] - 0x08000000
+    tree_size = struct.unpack_from("<I", rom, bank)[0]
+    out, at = [], TEXT_AT
+    for idx, t in TEXTS:
+        e = encode(rom, bank, t)
+        out.append((at, e))
+        out.append((bank + 4 + tree_size + 4 * idx, struct.pack("<I", at - bank)))
+        at = (at + len(e) + 3) & ~3
+    assert at <= 0x89864
+    return out
 
 
 def patch(rom: bytearray) -> bytearray:
@@ -173,7 +228,9 @@ def patch(rom: bytearray) -> bytearray:
         if cur not in (orig, s[name] | 1):
             raise SystemExit(f"unexpected state table entry at {at:#x}")
         struct.pack_into("<I", rom, at, s[name] | 1)
-    assert CODE_AT + len(code) <= 0x89864, "code runs into the German text bank"
+    assert CODE_AT + len(code) <= TEXT_AT, "code runs into the new texts"
+    for off, b in text_patch(rom):
+        rom[off:off + len(b)] = b
     rom[CODE_AT:CODE_AT + len(code)] = code
     return rom
 
