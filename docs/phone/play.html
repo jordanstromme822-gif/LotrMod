@@ -225,6 +225,8 @@
     #storyMap { padding-top: calc(env(safe-area-inset-top, 0px) + 6px); }
     #storyMap .sm-top { gap: 10px; padding-bottom: 6px; }
     #storyMap .sm-title { font-size: 16px; }
+    #storyMap .sm-tabs button { height: 28px; padding: 0 10px; font-size: 12px; }
+    #storyMap .sm-b i.sm-big { font-size: 9px; }
     #storyMap .sm-leg { font-size: 10px; gap: 8px; }
     #storyMap .sm-leg b { width: 11px; height: 11px; }
     #storyMap .sm-close { height: 30px; font-size: 12px; }
@@ -235,6 +237,10 @@
     #storyMap .sm-b i, #storyMap .sm-b u { font-size: 7.5px; }
     #storyMap .sm-b i.sm-m { font-size: 7px; }
   }
+  #storyMap .sm-tabs { display: flex; gap: 6px; }
+  #storyMap .sm-tabs button { height: 34px; padding: 0 14px; border-radius: 17px; border: 2px solid #6b5a33; background: transparent; color: #c9c7bf; font: 700 14px var(--display, serif); letter-spacing: 0.04em; cursor: pointer; }
+  #storyMap .sm-tabs button.on { border-color: #d8b25a; background: #3a2e14; color: #f3d98e; }
+  #storyMap .sm-b i.sm-big { opacity: 1; font-weight: 700; font-size: 10.5px; margin-top: 2px; }
   #storyMap .sm-foot { font-size: 12px; color: #a9a79f; padding: 12px 0 4px; max-width: 900px; }
   /* Pause menu (Jordan, 2026-11-08): P2 at the top left, Auto under it (Moria). */
   #p2Btn { left: calc(max(env(safe-area-inset-left, 0px), 0px) + 10px); min-width: 64px; }
@@ -5319,13 +5325,44 @@ void main()
           return { cells, cols: Math.max(...Object.values(col)) + 1, rows: HEROES.length * 2 - 1, first };
         }
         let el = null;
+        // Bonus maps (Jordan, 2026-11-09): each map's screens in order, with its big monsters. Screens from the exits;
+        // monsters from the live enemies' kind (+0x61) and hit points (stats table 0x08057518, 20 bytes per kind, +6).
+        const BONUS = [
+          { name: "Moria", s: [[82], [83], [84, "Trolls", "2 trolls, 250 HP each"], [81], [49, "Cave troll", "350 HP"]] },
+          { name: "Amon Sûl", s: [[121, "Ringwraiths", "by the fire"]] },
+          { name: "Hornburg", s: [[46], [47]] },
+          { name: "Entwood", s: [[37], [38], [39], [36, "Troll", "525 HP"]] },
+        ];
+        let tab = "story";
+        function bonusGrid(sc, small) {
+          const cols = Math.max(...BONUS.map((m) => m.s.length));
+          const g = document.createElement("div"); g.className = "sm-grid"; g.style.gridTemplateColumns = (small ? "78px" : "112px") + " repeat(" + cols + ", " + (small ? 96 : 120) + "px)"; sc.appendChild(g);
+          BONUS.forEach((m, i) => {
+            if (i) for (let c = 0; c <= cols; c++) { const d = document.createElement("div"); d.className = c ? "sm-empty" : "sm-gaphead"; g.appendChild(d); }
+            const head = document.createElement("div"); head.className = "sm-hero"; head.textContent = m.name; g.appendChild(head);
+            for (let c = 0; c < cols; c++) {
+              const d = document.createElement("div"), v = m.s[c];
+              if (!v) { d.className = "sm-empty"; g.appendChild(d); continue; }
+              const l = v[0];
+              d.className = "sm-b " + (v[1] ? "boss" : "n");
+              d.innerHTML = "<b>" + NAMES[l] + "</b>" + (v[1] ? "<i class=\"sm-big\">" + v[1] + "</i><i>" + v[2] + "</i>" : "");
+              d.title = NAMES[l] + " (level " + l + ")"; g.appendChild(d);
+            }
+          });
+          const foot = document.createElement("div"); foot.className = "sm-foot";
+          foot.textContent = "Read from the game: each map's screens follow its exits, and big monsters are the enemies with the most hit points. The Nazgûl on Amon Sûl are from a picture of the map. Amon Sûl is one screen and Hornburg two.";
+          sc.appendChild(foot);
+        }
         function render() {
           const L = layout(), box = document.createElement("div"); box.id = "storyMap";
           const top = document.createElement("div"); top.className = "sm-top";
-          top.innerHTML = '<div class="sm-title">Story map</div><div class="sm-leg"><span><b class="n"></b>Screen</span><span><b class="boss"></b>Big fight</span><span><b class="side"></b>Side quest</span><span><b class="team"></b>Team-up (both heroes walk it)</span><span><b class="n orc"></b>More Orc Heads</span></div>';
+          const leg = tab === "story" ? '<span><b class="n"></b>Screen</span><span><b class="boss"></b>Big fight</span><span><b class="side"></b>Side quest</span><span><b class="team"></b>Team-up (both heroes walk it)</span><span><b class="n orc"></b>More Orc Heads</span>' : '<span><b class="n"></b>Screen</span><span><b class="boss"></b>Big monster</span>';
+          top.innerHTML = '<div class="sm-tabs"><button type="button" data-t="story"' + (tab === "story" ? ' class="on"' : "") + '>Story</button><button type="button" data-t="bonus"' + (tab === "bonus" ? ' class="on"' : "") + '>Bonus maps</button></div><div class="sm-leg">' + leg + "</div>";
+          top.querySelectorAll(".sm-tabs button").forEach((b) => b.addEventListener("click", (e) => { e.preventDefault(); if (tab === b.dataset.t) return; tab = b.dataset.t; const n = render(); el.replaceWith(n); el = n; }));
           const x = document.createElement("button"); x.type = "button"; x.className = "sm-close"; x.textContent = "Close"; x.addEventListener("click", (e) => { e.preventDefault(); close(); }); top.appendChild(x);
           box.appendChild(top);
           const sc = document.createElement("div"); sc.className = "sm-scroll"; box.appendChild(sc);
+          if (tab === "bonus") { bonusGrid(sc, window.innerHeight <= 500); return box; }
           const g = document.createElement("div"); g.className = "sm-grid"; const small = window.innerHeight <= 500; g.style.gridTemplateColumns = (small ? "78px" : "112px") + " repeat(" + L.cols + ", " + (small ? 72 : 92) + "px)"; sc.appendChild(g);
           for (let r = 0; r < L.rows; r++) {
             const head = document.createElement("div"); head.className = r % 2 ? "sm-gaphead" : "sm-hero";
