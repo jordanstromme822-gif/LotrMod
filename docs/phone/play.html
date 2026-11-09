@@ -193,6 +193,49 @@
     font: 700 14px/1 var(--display); letter-spacing: 0.06em; box-shadow: 0 0 0 2px rgba(0,0,0,0.6), 0 0 12px rgba(240,170,80,0.3);
     touch-action: none; -webkit-user-select: none; user-select: none; cursor: pointer; }
   #pageBtn[hidden] { display: none; }
+  /* Story map (Jordan, 2026-11-09) */
+  #mapBtn { position: absolute; z-index: 28; left: calc(max(env(safe-area-inset-left, 0px), 0px) + 10px); top: calc(env(safe-area-inset-top, 0px) + 10px);
+    min-width: 96px; height: 36px; padding: 0 14px; border-radius: 18px; border: 2px solid #d8b25a; background: rgba(14,11,8,0.82); color: #f3ead6;
+    font: 700 14px/1 var(--display); letter-spacing: 0.06em; box-shadow: 0 0 0 2px rgba(0,0,0,0.6), 0 0 12px rgba(240,170,80,0.3);
+    touch-action: none; -webkit-user-select: none; user-select: none; cursor: pointer; }
+  #mapBtn[hidden] { display: none; }
+  #storyMap { position: fixed; inset: 0; z-index: 60; background: #121318; color: #ecebe6; display: flex; flex-direction: column; font: 13px/1.2 var(--ui, system-ui, sans-serif);
+    padding: calc(env(safe-area-inset-top, 0px) + 10px) calc(env(safe-area-inset-right, 0px) + 12px) 10px calc(env(safe-area-inset-left, 0px) + 12px); }
+  #storyMap .sm-top { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; padding-bottom: 10px; }
+  #storyMap .sm-title { font: 700 20px var(--display, serif); color: #f3d98e; letter-spacing: 0.04em; }
+  #storyMap .sm-leg { display: flex; gap: 14px; flex-wrap: wrap; flex: 1; font-size: 12px; color: #c9c7bf; }
+  #storyMap .sm-leg b { display: inline-block; width: 14px; height: 14px; border-radius: 3px; vertical-align: -3px; margin-right: 5px; }
+  #storyMap .sm-close { height: 36px; padding: 0 16px; border-radius: 18px; border: 2px solid #d8b25a; background: rgba(14,11,8,0.82); color: #f3ead6; font: 700 14px var(--display, serif); cursor: pointer; }
+  #storyMap .sm-scroll { flex: 1; overflow: auto; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; }
+  #storyMap .sm-grid { display: grid; gap: 6px; grid-auto-rows: 58px; width: max-content; }
+  #storyMap .sm-hero { position: sticky; left: 0; z-index: 2; background: #121318; display: flex; flex-direction: column; justify-content: center; font: 700 16px var(--display, serif); color: #f3d98e; padding-left: 2px; }
+  #storyMap .sm-hero span { font: 400 11px var(--ui, sans-serif); color: #a9a79f; margin-top: 2px; }
+  #storyMap .sm-gaphead { position: sticky; left: 0; z-index: 2; background: #121318; }
+  #storyMap .sm-arrow { display: flex; align-items: center; justify-content: center; color: #5d86d6; font-size: 15px; }
+  #storyMap .sm-b { border-radius: 6px; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 2px 3px; box-sizing: border-box; overflow: hidden; }
+  #storyMap .sm-b b { font-weight: 600; font-size: 11.5px; line-height: 1.1; }
+  #storyMap .sm-b i { font-style: normal; font-size: 9px; opacity: 0.8; margin-top: 1px; line-height: 1.1; }
+  #storyMap .sm-b i.sm-m { opacity: 1; font-weight: 700; color: #f3d98e; letter-spacing: 0.04em; margin: 0 0 1px; text-transform: uppercase; font-size: 8.5px; }
+  #storyMap .sm-b u { text-decoration: none; font-size: 8.5px; color: #f6d55c; margin-top: 1px; }
+  #storyMap .n { background: #393d48; } #storyMap .boss { background: #b3262e; } #storyMap .side { background: #23803b; } #storyMap .team { background: #2457b8; }
+  #storyMap .teamedge { border-top: 5px solid #4f86ec; }
+  #storyMap .orc { box-shadow: inset 0 0 0 3px #f2c230; }
+  #storyMap .sm-leg b.orc { box-shadow: inset 0 0 0 3px #f2c230; }
+  @media (max-height: 500px) {
+    #storyMap { padding-top: calc(env(safe-area-inset-top, 0px) + 6px); }
+    #storyMap .sm-top { gap: 10px; padding-bottom: 6px; }
+    #storyMap .sm-title { font-size: 16px; }
+    #storyMap .sm-leg { font-size: 10px; gap: 8px; }
+    #storyMap .sm-leg b { width: 11px; height: 11px; }
+    #storyMap .sm-close { height: 30px; font-size: 12px; }
+    #storyMap .sm-grid { gap: 4px; grid-auto-rows: 40px; }
+    #storyMap .sm-hero { font-size: 12px; }
+    #storyMap .sm-hero span { font-size: 9px; }
+    #storyMap .sm-b b { font-size: 9.5px; }
+    #storyMap .sm-b i, #storyMap .sm-b u { font-size: 7.5px; }
+    #storyMap .sm-b i.sm-m { font-size: 7px; }
+  }
+  #storyMap .sm-foot { font-size: 12px; color: #a9a79f; padding: 12px 0 4px; max-width: 900px; }
   /* Pause menu (Jordan, 2026-11-08): P2 at the top left, Auto under it (Moria). */
   #p2Btn { left: calc(max(env(safe-area-inset-left, 0px), 0px) + 10px); min-width: 64px; }
   #autoBtn { top: calc(env(safe-area-inset-top, 0px) + 56px); }
@@ -384,6 +427,7 @@
     body.touch #autoBtn, body.touch #p2Pick, body.touch #mpPick { left: calc(var(--bar) + 10px); }
     body.touch #lvBtn { left: calc(var(--bar) + 84px); }
     body.touch #p2Btn { left: calc(var(--bar) + 10px); }
+    body.touch #mapBtn { left: calc(var(--bar) + 10px); }
     body.touch #game { left: var(--bar); right: var(--bar); width: auto !important; box-shadow: 0 0 0 1px rgba(216,178,90,0.5), 0 0 30px rgba(240,170,80,0.14); }
     #pad::before, #pad::after { content: ""; position: absolute; top: 6px; bottom: 6px; width: calc(var(--bar) - 12px); pointer-events: none; border-radius: 22px;
       border: 1px solid rgba(216,178,90,0.45); box-shadow: inset 0 0 0 3px #0b0908, inset 0 0 0 4px rgba(216,178,90,0.2), inset 0 0 36px rgba(0,0,0,0.8);
@@ -2106,6 +2150,7 @@
   <button id="p2Btn" type="button" hidden aria-pressed="false">P2</button>
   <button id="lvBtn" type="button" hidden>Levels</button>
   <button id="pageBtn" type="button" hidden>Page 1 of 2</button>
+  <button id="mapBtn" type="button" hidden>Story map</button>
   <div id="p2Pick" hidden></div>
 </div>
 
@@ -5234,6 +5279,95 @@ void main()
     },
   };
   window.GbrHost = WideHost;
+
+      // Story map (Jordan, 2026-11-09): every hero's story as a grid, left to right, one block per screen. Screens two
+      // heroes both walk sit once in the empty row between them. Read from the game: mission starts (path table
+      // 0x08283030), each screen's exits (spawn records of type 3, level byte at +0x13) and the story scenes.
+      window.StoryMap = (() => {
+        const NAMES = ["Anduin Banks","Campsite","Corsair Camp","Corsair Chase","Top Room","Tower","Ambush","Cirith Campsite","Ledge","Parapet","Pass","Lair Campsite","Stairs","Summit","Above","Below","Crack of Doom","Edge of Volcano","Tunnel","Campsite","Dwimerberg Base","Dwimerberg Mt.","Glen","Road","Anduin Docks","Minas Tirith Docks","Campsite","Foot of Mt Doom","Sammath Naur","Slopes of Mt Doom","Camps","Campsite","Hills","Hollow","Plateau","River Crossing","Campsite","Clearing","Copse","Entwash","Campsite","Hills","Orc Road","Plains","Campsite","Caverns","Fortress","Valley","Ice Caves","Balin's Tomb","Campsite","Flooded Field","Uruk Hatchery","Orthanc","Orthanc Tunnel","Tower Base","Tower Door","Tower Levels","Black Gate","Black Road","North","Waterfall","Battlements","Court of Kings","Gates","City Center","Streets","Steward's Tomb","Denethor Fall","Gates","Minas City Center","Streets","Tier Four","Tier Three","Bridge","Campsite","Crossroads","Gate","Minas Morgul","Vale of Morgul","Valley","Hall","Hall Top","Long Stairs","Treasure Hoards","Black Chasm","Campsite","Dark Paths","Grey Vapors","Secret Cave","West Beacon","East Beacon","Minas Entrance","Edge","Fall of Rohirrim","North Fields","Hidden Plains","West Fields","Witch King","Mumakil Attack","Campsite","Theoden's Charge","Footpath","Fork","Haradrim Camp","Mt. Mindolluin","Mumakil Camp","Outpost","Campsite","Edoras Fields","Gap","Deeping Outskirts","Hills","Plains","Snowbourne Trail","Caves","Lair","Tunnel Mouth","Campsite","Hills","Marsh","Tower","Approach","Campsite","Edge","Foothills","Narrow Pass","SE Mts. Edge","Hidden Trail","Storm"];
+        const REG = [[0,3,"Anduin River"],[4,5,"Orc Tower"],[6,13,"Cirith Ungol"],[14,15,"Corsair Flagship"],[16,18,"Crack of Doom"],[19,23,"Dimholt"],[24,25,"Docks"],[26,29,"Mt Doom"],[30,35,"Dunharrow"],[36,39,"Entwood"],[40,43,"Gorgoroth"],[44,47,"Hornburg"],[48,49,"Ice Cave"],[50,57,"Isengard"],[58,61,"Ithilien"],[62,67,"Minas Tirith"],[68,68,"Balcony"],[69,73,"Minas Tirith"],[74,80,"Morgul"],[81,84,"Dwarf Halls"],[85,89,"Paths of the Dead"],[90,92,"Pelennor Beacon"],[93,98,"Pelennor Battle"],[99,107,"Pelennor Fields"],[108,114,"Rohan"],[115,117,"Shelob's Lair"],[118,121,"Amon Sul"],[122,129,"White Mountains"]];
+        const region = (l) => { for (const r of REG) if (l >= r[0] && l <= r[1]) return r[2]; return ""; };
+        // Each hero's missions in story order (Legolas and Gimli walk Aragorn's path, Sam walks Frodo's).
+        const HEROES = [
+          { name: "Gandalf", sub: "", m: [[51,55,54,52,56,57,53,50],[113,114,111,112,108],[128,126,122,123],[97,105,103,90,91,95,100],[69,73,72,71,63,67,68,60,61,59,58]] },
+          { name: "Aragorn", sub: "+ Legolas, Gimli", m: [[51,55,54,52,56,57,53,50],[32,34,30,31,23,20,21,19,22],[88,87,85,86],[2,3,0,1,24,15,14],[25,107,102,92,60,61,59,58]] },
+          { name: "Éowyn", sub: "", m: [[109,110,112,108],[32,34,30,31],[125,129,48,124,127,123],[93,104,96,106,100,101],[99,94,98]] },
+          { name: "Frodo", sub: "+ Sam", m: [[79,76,78,77,89,74,80,75,12,8,13,10],[117,115,116],[6,9,5,4,7,42,43,41,40],[27,29,28,26],[18,16,17]] },
+        ];
+        // Big story fights (the scene after them, or the fight the level is named for).
+        const BOSS = { 53: "Saruman", 85: "Army of the Dead", 14: "Corsair flagship", 58: "Last stand", 98: "Witch-king", 116: "Shelob", 4: "Orc Tower", 17: "Gollum" };
+        // Screens with reward side-quest dialogue (dialogue ids 21, 28-30, 33, 37, 48-53 found in their scripts).
+        const SIDE = { 30: 1, 1: 1, 2: 1, 61: 1, 111: 1, 109: 1 };
+        // More Orc Heads there (Play Room v120): Black Gate and Cirith Ungol on Hard, Pelennor Fields on Grueling.
+        const orc = (l) => l === 58 || (l >= 6 && l <= 13) ? "Hard" : l >= 99 && l <= 107 ? "Grueling" : "";
+        function layout() {
+          // Column = one more than the latest screen before it on every hero's path that walks it.
+          const who = {}, first = {}; let seq = HEROES.map((h, hi) => { const s = []; h.m.forEach((ms, mi) => ms.forEach((l, k) => { s.push(l); (who[l] = who[l] || new Set()).add(hi); if (!k) (first[hi] = first[hi] || {})[l] = mi + 1; })); return s; });
+          const col = {}; for (let it = 0; it < 200; it++) { let ch = false; seq.forEach((s) => s.forEach((l, i) => { const c = i ? col[s[i - 1]] + 1 : 0; if (!(col[l] >= c)) { col[l] = c; ch = true; } })); if (!ch) break; }
+          const cells = {}, key = (r, c) => r + ":" + c;
+          // Hero h is on row 2h; the empty row between heroes a and a+1 is 2a+1.
+          const shared = [];
+          Object.keys(col).forEach((k) => { const l = +k, hs = [...who[l]].sort(); if (hs.length === 1) cells[key(2 * hs[0], col[l])] = { l, hs }; else shared.push({ l, hs }); });
+          shared.forEach((s) => {
+            const lo = s.hs[0], hi = s.hs[s.hs.length - 1], c = col[s.l];
+            const opts = []; for (let g = lo; g < hi; g++) opts.push(2 * g + 1);
+            opts.sort((a, b) => Math.abs(a - (lo + hi)) - Math.abs(b - (lo + hi)));
+            const r = opts.find((r) => !cells[key(r, c)]) || opts[0];
+            cells[key(r, c)] = { l: s.l, hs: s.hs };
+            s.hs.forEach((h) => { if (!cells[key(2 * h, c)]) cells[key(2 * h, c)] = { arrow: r < 2 * h ? "up" : "down" }; });
+          });
+          return { cells, cols: Math.max(...Object.values(col)) + 1, rows: HEROES.length * 2 - 1, first };
+        }
+        let el = null;
+        function render() {
+          const L = layout(), box = document.createElement("div"); box.id = "storyMap";
+          const top = document.createElement("div"); top.className = "sm-top";
+          top.innerHTML = '<div class="sm-title">Story map</div><div class="sm-leg"><span><b class="n"></b>Screen</span><span><b class="boss"></b>Big fight</span><span><b class="side"></b>Side quest</span><span><b class="team"></b>Team-up (both heroes walk it)</span><span><b class="n orc"></b>More Orc Heads</span></div>';
+          const x = document.createElement("button"); x.type = "button"; x.className = "sm-close"; x.textContent = "Close"; x.addEventListener("click", (e) => { e.preventDefault(); close(); }); top.appendChild(x);
+          box.appendChild(top);
+          const sc = document.createElement("div"); sc.className = "sm-scroll"; box.appendChild(sc);
+          const g = document.createElement("div"); g.className = "sm-grid"; const small = window.innerHeight <= 500; g.style.gridTemplateColumns = (small ? "78px" : "112px") + " repeat(" + L.cols + ", " + (small ? 72 : 92) + "px)"; sc.appendChild(g);
+          for (let r = 0; r < L.rows; r++) {
+            const head = document.createElement("div"); head.className = r % 2 ? "sm-gaphead" : "sm-hero";
+            if (!(r % 2)) { const h = HEROES[r / 2]; head.innerHTML = h.name + (h.sub ? "<span>" + h.sub + "</span>" : ""); }
+            g.appendChild(head);
+            for (let c = 0; c < L.cols; c++) {
+              const d = document.createElement("div"), v = L.cells[r + ":" + c];
+              if (!v) { d.className = "sm-empty"; g.appendChild(d); continue; }
+              if (v.arrow) { d.className = "sm-arrow"; d.textContent = v.arrow === "up" ? "▲" : "▼"; g.appendChild(d); continue; }
+              const l = v.l, team = v.hs.length > 1, o = orc(l);
+              d.className = "sm-b " + (BOSS[l] ? "boss" : SIDE[l] ? "side" : team ? "team" : "n") + (team && (BOSS[l] || SIDE[l]) ? " teamedge" : "") + (o ? " orc" : "");
+              const mi = v.hs.map((h) => L.first[h] && L.first[h][l]).find((m) => m);
+              let t = (mi ? '<i class="sm-m">Mission ' + mi + "</i>" : "") + "<b>" + NAMES[l] + "</b>";
+              const rg = region(l); if (NAMES[l].indexOf("Camp") === 0 || NAMES[l] === "Hills" || NAMES[l] === "Edge" || NAMES[l] === "Gates" || NAMES[l] === "Streets" || NAMES[l] === "Valley" || NAMES[l] === "Plains" || NAMES[l] === "Tower") t += "<i>" + rg + "</i>";
+              if (BOSS[l] && BOSS[l] !== "Witch-king") t += "<i>" + BOSS[l] + "</i>";
+              if (team) t += "<i>" + v.hs.map((h) => HEROES[h].name).join(" + ") + "</i>";
+              if (o) t += '<u>Orc Heads ' + o + "</u>";
+              d.innerHTML = t; d.title = NAMES[l] + " (" + rg + ", level " + l + ")"; g.appendChild(d);
+            }
+          }
+          const foot = document.createElement("div"); foot.className = "sm-foot";
+          foot.textContent = "Read from the game: where each mission starts, which screen each exit leads to, and the story scenes. Red marks are my reading of the story scenes; a few side screens the story never walks through are left out.";
+          sc.appendChild(foot);
+          return box;
+        }
+        function open() { if (el) return; el = render(); document.body.appendChild(el); }
+        function close() { if (el) { el.remove(); el = null; } }
+        return { open, close, layout, isOpen: () => !!el };
+      })();
+      (function mapButton() {
+        const b = document.getElementById("mapBtn"); if (!b) return;
+        b.addEventListener("pointerdown", (e) => { e.preventDefault(); e.stopPropagation(); StoryMap.isOpen() ? StoryMap.close() : StoryMap.open(); });
+        b.addEventListener("click", (e) => e.preventDefault());
+        window.addEventListener("keydown", (e) => { if (e.key === "Escape" && StoryMap.isOpen()) { e.preventDefault(); StoryMap.close(); } }, true);
+        // Shows on the title screen (state 5) and the main menu (state 8).
+        setInterval(() => {
+          let vis = false;
+          try { const M = window.__wideM; if (M && M.HEAPU8) { const iw = M._rotk_link_iwram ? M._rotk_link_iwram((window.__mp && window.__mp.me) || 0) : M._rotk_iwram(); const st = iw ? M.HEAPU8[iw + 0x41B0] : -1; vis = st === 5 || st === 8; } } catch (e) {}
+          if (b.hidden === vis) b.hidden = !vis;
+          if (!vis && StoryMap.isOpen()) StoryMap.close();
+        }, 300);
+      })();
 
   // Item text panel (Jordan, 2026-11-09): the game's Backpack box cuts long names and stat lists off, so the whole
   // description of the item under the cursor shows in a panel over the other half of the screen (over the grid when
