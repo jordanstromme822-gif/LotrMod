@@ -788,8 +788,9 @@ int nav_c(int proposed)
         int c = old - FIRST;
         if (k & 0x40) n = 12 + c;
         else if (k & 0x80) n = ar == 2 ? AFIRST + (c >= 2) : ar ? AFIRST : 8 + c;
-        else if (k & 0x20) n = FIRST + ((c + 3) & 3);
-        else if (k & 0x10) n = FIRST + ((c + 1) & 3);
+        /* off the row's ends like the grid row above it (Jordan, 2026-11-09): left to the shield, right to the weapon */
+        else if (k & 0x20) n = c ? FIRST + c - 1 : 2;
+        else if (k & 0x10) n = c < 3 ? FIRST + c + 1 : 1;
         else n = old;
     } else if (old >= 12 && old <= 15 && (k & 0x80)) n = FIRST + old - 12;
     else if (old >= 8 && old <= 11 && (k & 0x40)) n = ar == 2 ? AFIRST + (old >= 10) : ar ? AFIRST : FIRST + old - 8;
