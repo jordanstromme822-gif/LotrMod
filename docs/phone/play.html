@@ -4204,7 +4204,15 @@ void main()
     try {
       say("Starting…");
       M = await makeEngine(link, save);
-    } catch (e) { say("Couldn't load the wide-view engine. Reload the page and try again, or pick Classic."); log.push(String(e)); return; }
+    } catch (e) {
+      // Classic is hidden from the menu (Jordan, 2026-11-09) and stays only as this backup: if Wide can't load, the
+      // game starts in Classic (the emulator) instead.
+      log.push(String(e)); try { window.__slog && window.__slog("wide failed to load, Classic instead: " + String(e).slice(0, 80)); } catch (e2) {}
+      say("The wide view couldn't load, so this game is in the classic view.");
+      try { $("view-classic").checked = true; const sc = document.createElement("script"); sc.src = "emu/loader.js"; document.body.appendChild(sc); } catch (e2) {}
+      setTimeout(() => say(""), 6000);
+      return;
+    }
 
     const H = WideHost;
     H.keepAspect = false;
@@ -4251,7 +4259,7 @@ void main()
     window.EJS_emulator = fake;
     const draw = () => { H.draw(); requestAnimationFrame(draw); };
     window.__wideM = M;
-    try { M._rotk_main(); } catch (e) { if (e !== "unwind" && !(e && e.name === "ExitStatus")) { log.push("start: " + e); say("The wide-view engine stopped. Reload the page and pick Classic."); return; } }
+    try { M._rotk_main(); } catch (e) { if (e !== "unwind" && !(e && e.name === "ExitStatus")) { log.push("start: " + e); say("The wide-view engine stopped. Reload the page to play again."); return; } }
     requestAnimationFrame(draw);
     say("");
     try { window.EJS_onGameStart(); } catch (e) {}
