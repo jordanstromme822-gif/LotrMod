@@ -125,7 +125,8 @@ static u8 *xb_new(u8 *h, int dx, int dy, int f)
     I(o, 0xA4) = x; I(o, 0xAC) = x; I(o, 0xCC) = x;
     I(o, 0xA8) = y; I(o, 0xB0) = y; I(o, 0xD0) = y;
     SETANIM(o, f);
-    return o;
+    o[0x20] = 0;                      /* no frame timer: the game's stepper (0x080022E4) would play the 8 facings as */
+    return o;                         /* one looping anim, so the crossbow spun (Jordan, 2026-11-09) */
 }
 
 static int max_of(int L) { return L >= 5 ? 3 : L >= 3 ? 2 : L >= 1 ? 1 : 0; }
@@ -279,6 +280,7 @@ static void fire(u8 *o, u8 *h, u8 *t, int p)
 void xb_update(u8 *o)
 {
     u8 *h = *(u8 **)(o + 0xC);
+    o[0x20] = 0;                      /* hold the facing it aimed with (see xb_new) */
     if (h[0x62] == 0x2D) { kill(o); return; }
     int p = h[0x96], k;
     if (p > 1) { kill(o); return; }
