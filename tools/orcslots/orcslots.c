@@ -683,7 +683,33 @@ static char *bonus_text(char *d, u16 code)
     return d;
 }
 
-int itemdesc_wrap(char *buf, int p, u32 item, u16 *x, u16 *y, u16 *tile)
+/* Item text panel (Jordan, 2026-11-09): the page shows the whole description of the item under the Backpack cursor in a
+   panel, since the game's box cuts long names and stat lists off. Every description the game builds is copied here. */
+#define PANEL      ((volatile u8 *)0x0203F520)         /* 0x0203F520-0x0203F5FF */
+#define MINLEVEL(it)          ((fn4)0x0802D2F9)(it, 0, 0, 0)
+static void panel(int p, u32 item, const char *text)
+{
+    volatile u8 *P = PANEL;
+    char nm[96];
+    for (int i = 0; i < 96; i++) nm[i] = 0;
+    name_wrap(nm, item, 0xDC);                                      /* 0xDC as the game passes it (a width, not a length) */
+    u8 *ui = UI;
+    int lv = MINLEVEL(item) & 0xFF, mine = *(volatile u8 *)(HERO + p * HERO_SZ + 0x19C) + 1;
+    *(volatile u32 *)(P + 4) = item;
+    P[8] = *(volatile u8 *)(0x03003F70 + LOCAL_P * 0x7C + 0x78);   /* the name colour: 3 yellow, 9/12 green, 6 red */
+    P[9] = lv;
+    P[10] = ui ? ui[0x62] : 0xFF;                                   /* the Backpack cursor it belongs to */
+    P[11] = lv > mine;                                              /* the hero's level is too low */
+    int i = 0;
+    for (; i < 43 && nm[i]; i++) P[12 + i] = nm[i];
+    P[12 + i] = 0;
+    i = 0;
+    if (text) for (; i < 167 && text[i]; i++) P[0x38 + i] = text[i];
+    P[0x38 + i] = 0;
+    *(volatile u32 *)P = *(volatile u32 *)P + 1;                    /* changes last: the page reads a whole record */
+}
+
+static int itemdesc_core(char *buf, int p, u32 item, u16 *x, u16 *y, u16 *tile)
 {
     int r = ITEMDESC(buf, p, item, x, y, tile);
     int qc;
@@ -697,6 +723,13 @@ int itemdesc_wrap(char *buf, int p, u32 item, u16 *x, u16 *y, u16 *tile)
     char *d = bonus_text(buf, item >> 16);
     put(d, ". Works only in an Orc Head slot (the row under your backpack).");
     return (int)buf;
+}
+
+int itemdesc_wrap(char *buf, int p, u32 item, u16 *x, u16 *y, u16 *tile)
+{
+    int r = itemdesc_core(buf, p, item, x, y, tile);
+    panel(p, item, (const char *)r);
+    return r;
 }
 
 /* ---- the slots ---- */
@@ -722,6 +755,7 @@ static void desc(int cur)
     ITEMDESC(buf, p, item_of(CODE[p][c]), &x, &y, &tile);  /* coloured name and "Min. Level" */
     TEXTCOLOR(0, 3, 0);
     bonus_text(buf, CODE[p][c]);
+    panel(p, item_of(CODE[p][c]), buf);
     DRAWTEXT(tile, x, 0x68, 0x76, buf, 0);
 }
 
