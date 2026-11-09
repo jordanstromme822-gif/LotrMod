@@ -253,3 +253,9 @@ generator didn't emit (the solo build lacks 0x08014B9A, 0x0802EF32/0x0802EF3E; n
 in the interpreter, which already sees the ROM patch. The link message cases are table data, so they need nothing.
 All 8 shards change now (005 too); re-run genpatch on the untouched shards. Engines `?v=120`.
 
+### Regenerating quivers (Play Room v121, 2026-11-08)
+
+Jordan: "3% chance on drop to regenerate whatever amount of quiver they have at 1 per second". Same code as the
+Orc Heads (`tools/orcslots/`). `orcslots/genpatch.py` adds 6 bl targets: the 4 shot calls of 0x0802C410 and the
+2 arrow match checks 0x0802EB08 (the solo build lacks one of them; the interpreter runs it). Re-run genpatch on the
+untouched shards. Engines `?v=121`.

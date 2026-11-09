@@ -9,7 +9,7 @@ in the generated C++ instead: a changed bl gets the hook as its constant target,
 two plain instructions that the ROM patch replaced with a bl become a call block (the
 same shape the generator emits for a bl) plus an empty block. The hooks themselves are
 not recompiled; they run in the runtime's interpreter and call back into native code.
-Prints the shard files it changed; running it twice changes nothing.
+Prints the shard files it changed; running it again after a hook build only moves the targets.
 """
 import glob, os, re, sys
 
@@ -24,10 +24,20 @@ BL = [  # address of the bl's second half, hook symbol
     (0x0802D208, "itemdesc_wrap"), (0x0801E970, "itemdesc_wrap"), (0x0801EB8C, "itemdesc_wrap"),
     (0x08030F7E, "save_wrap"), (0x08031060, "save_wrap"), (0x0803CC58, "save_wrap"),
     (0x0803CCDE, "load_wrap"), (0x0803CD16, "load_wrap"), (0x08031ED2, "gp_hook"),
+    # regenerating quivers
+    (0x080249A4, "arrow_wrap"), (0x08024A0E, "arrow_wrap"), (0x08024BF0, "arrow_wrap"), (0x08044AE2, "arrow_wrap"),
+    (0x0802AEAE, "same_wrap"), (0x0802AF24, "same_wrap"),
+    # arrow slots (Legolas)
+    (0x0802AD10, "apick_wrap"),
 ]
 PAIRS = [(0x0802DBE0, "db90_stub"), (0x0803CC08, "pack_stub"), (0x0802CC60, "nav_stub"), (0x0802A854, "a_stub"),
          (0x0802CCC4, "mcur_stub"), (0x0802C5FC, "label_stub"),
-         (0x0803A6EC, "drop_stub"), (0x0803A746, "find_cap"), (0x0802EF32, "chest_cap"), (0x0803AF54, "gem_cap")]
+         (0x0803A6EC, "drop_stub"), (0x0803A746, "find_cap"), (0x0802EF32, "chest_cap"), (0x0803AF54, "gem_cap"),
+         (0x080307F0, "flip_r")]
+
+# movs r0,#4 -> #0x40 at 0x0803CF8E: the game's EEPROM library set up for the 64 Kbit chip (v124)
+IMM = [(0x0803CF8E, "0x00000004u", "0x00000040u")]
+IMM_WHY = {0x0803CF8E: "64 Kbit EEPROM"}
 
 CALL = """    /* {S:08X}  LotrMod Orc Head slots: bl {name} */
     {{
@@ -73,9 +83,14 @@ def main(gen, symfile):
         for a, name in BL:
             pat = re.compile(r"(uint32_t _blt_%08X = )[^;]*;" % a)
             new = pat.sub(lambda m: m.group(1) + "0x%08Xu; /* LotrMod Orc Head slots: %s */" % (sym[name], name), new)
+        for a, old, val in IMM:   # plain constant changes (tools/orcslots.py BYTES)
+            new = new.replace("_r_%08X = %s;" % (a, old), "_r_%08X = %s; /* LotrMod: %s */" % (a, val, IMM_WHY[a]))
         for s, name in PAIRS:
             b = block(new, s)
-            if not b or "LotrMod Orc Head slots" in new[b[0]:b[1]]:
+            if not b:
+                continue
+            if "LotrMod Orc Head slots" in new[b[0]:b[1]]:   # patched before: just point it at the hook's current address
+                new = re.sub(r"(uint32_t _blt_%08X = )0x[0-9A-F]+u;" % s, lambda m: m.group(1) + "0x%08Xu;" % sym[name], new)
                 continue
             r = s + 4
             new = new[:b[0]] + CALL.format(S=s, T=sym[name], R=r, R1=r | 1, name=name) + new[b[1]:]

@@ -19,7 +19,7 @@ typedef volatile u16 vu16;
 #define COUNT      ((volatile u8 *)0x0203FFE0)
 #define QUIET      (*(volatile u8 *)0x0203FFE4)   /* skip the game's next error sound */
 #define CODE       ((volatile u16 (*)[4])0x0203FF00) /* [player][slot]: the heads in the slots */
-#define SAVED      ((volatile u16 (*)[4])0x0203FF20) /* [save slot][slot]: copy of EEPROM blocks 0x32-0x34 */
+#define SAVED      ((volatile u16 (*)[4])0x0203F280) /* [save slot][slot]: the slot heads kept in the save file header */
 #define CONF       ((volatile u16 (*)[4])0x0203FF38) /* 2-player: heads whose bonuses are on the hero */
 #define CONFV      ((volatile u8 *)0x0203FF58)       /* 2-player: CONF[p] is in use */
 #define SENT       (*(volatile u8 *)0x0203FF5C)       /* 2-player: our heads were sent */
@@ -68,7 +68,33 @@ typedef int (*fn6)(int, int, int, int, int, int);
 #define SETTINGS   (*(volatile u32 *)0x03005820)  /* bit 0: Fast Discard, bits 5-6 difficulty */
 #define DIFF       ((SETTINGS >> 5) & 3)
 #define DROPTBL    ((const signed char *)0x08057F78)
-#define EE_BLOCK   0x32         /* EEPROM blocks 0x32-0x34 (bytes 0x190-0x1A7): never used by the game */
+#define PAGE    (*(volatile u8 *)0x0203F000)
+#define PREADY  (*(volatile u8 *)0x0203F001)          /* the page has put the stored page 2 into PBUF */
+#define PGEN    (*(volatile u16 *)0x0203F002)         /* bumped on every page-2 write: the page saves it */
+#define UREQ    (*(volatile u8 *)0x0203F004)          /* page asks: write UBUF to slot USLOT of page UPAGE */
+#define UPAGE   (*(volatile u8 *)0x0203F005)
+#define USLOT   (*(volatile u8 *)0x0203F006)
+#define SESSPG  (*(volatile u8 *)0x0203F007)          /* page of the slot this play session belongs to */
+#define FLIPREQ (*(volatile u8 *)0x0203F008)          /* page's Page button */
+#define SESSV   (*(volatile u8 *)0x0203F009)
+#define ULOCK   (*(volatile u8 *)0x0203F00A)          /* Undo: the save lock (and its page) from before the undone save */
+#define ULOCKPG (*(volatile u8 *)0x0203F00B)
+#define PBUF    ((volatile u8 *)0x0203F010)           /* 4 x 0x70: page 2 headers, as in RAM */
+#define PHEAD   ((volatile u16 (*)[4])0x0203F1D0)     /* page 2 slot heads (like SAVED) */
+#define UBUF    ((volatile u8 *)0x0203F200)           /* 0x70 header + 8 bytes of heads + 2 arrow slot words */
+#define HDRS    0x03005630
+#define GSTATE  (*(volatile u8 *)0x030041B0)
+#define SLOTSUB (*(volatile u8 *)0x030041C0)
+#define SAVEMODE (*(volatile u8 *)0x030041B4)
+#define DUPELOCK (*(volatile u8 *)0x0203FFF0)
+#define READ_ALL()            ((fn4)0x0803CCBD)(0, 0, 0, 0)
+#define SLOT_UPD()            ((fn4)0x080306ED)(0, 0, 0, 0)
+#define PAUSE_UPD()           ((fn4)0x080397FD)(0, 0, 0, 0)
+
+/* Slot heads of save slot k: bytes 8 + 8k of the save file header (RAM copy 0x030057F0, unused 0xFF in the game's
+   template), written with the header checksum the game checks at boot. v117-v121 kept them in EEPROM
+   blocks 0x32-0x34, which are the first 3 blocks of save slot 4: saving any game there broke slot 4 (Jordan's Aragorn). */
+#define SAVEHDR    ((volatile u8 *)0x030057F0)
 #define LINK_MSG   4            /* link message type the game never uses: one player's 4 slot heads */
 
 extern const u8 orc_tiles[384];
@@ -150,6 +176,186 @@ static void convert_old(int p)
         if (is_old(CODE[p][i])) CODE[p][i] = local_code(0, tab);
 }
 
+/* ---------------- regenerating quivers (Jordan, 2026-11-08) ----------------
+   Arrows keep their count in item byte 2 (the game rolls 10-40 and deletes a quiver at 0).
+   3% of dropped quivers regenerate: 1 arrow a second, starting 1 second after the last shot,
+   up to the count they dropped with; they stay at 0 instead of being deleted.
+   Every other bit of an arrow word is used by the game (bits 4-7 are the rune), so a regenerating
+   quiver off the hero is written with byte 2 = 0x80 | max (it is full: it regenerates in the pack
+   too). The equipped one holds its live count in byte 2 like any quiver, and its max is QMAX[p].
+   Saves and the hero sent to the other GBA in 2-player games get the pack form (full), so a loaded
+   or joined game starts with the quiver full on both GBAs. */
+#define QMAX    ((volatile u8 *)0x0203FE80)   /* [player]: max of the equipped regenerating quiver, 0 = none */
+#define QIDLE   ((volatile u8 *)0x0203FE82)   /* [player]: ticks since the last shot or refill */
+#define DEBTN   ((volatile u8 *)0x0203FEA0)   /* [player]: arrows missing from the quiver last taken off */
+#define QWORD   ((volatile u32 *)0x0203FEA4)  /* [player]: the equipped regenerating quiver's word */
+#define DEBTW   ((volatile u32 *)0x0203FEAC)  /* [player]: that quiver's word off the hero */
+#define DEBTT   ((volatile u32 *)0x0203FEB4)  /* [player]: QCLK when it was taken off */
+#define QCLK    (*(volatile u32 *)0x0203FEBC) /* gameplay ticks */
+#define TICKS   30                     /* the game logic runs 30 ticks a second */
+#define USE_ARROW(p)   ((fn4)0x0802C411)(p, 0, 0, 0)
+#define SAME_ITEM(a,b) ((fn4)0x0802EB09)(a, b, 0, 0)
+#define HFLAGS(p)      (*(volatile u16 *)(HERO + (p) * HERO_SZ + 0x18C))
+#define ARROWS_ON      0x400                  /* hero flag: shooting from the equipped quiver */
+
+static int is_arrow(u32 w) { return (w & 0xF) == 7; }
+static int is_regen(u32 w) { return is_arrow(w) && (w & 0x800000); }
+static u32 with_count(u32 w, int n) { return (w & 0xFF00FFFFu) | ((u32)(n & 0xFF) << 16); }
+
+/* ---------------- arrow slots (Legolas; Jordan, 2026-11-08) ----------------
+   Two slots under the Orc Head slots that hold only arrows. Picked-up arrows that don't go on the worn quiver
+   fill them before the backpack; the page's L puts on the next quiver (worn -> slots -> worn). The EEPROM has
+   no room left, so the slots of each save slot are kept by the page on the player's account (AKEEP). */
+#define ASLOT   ((volatile u32 (*)[2])0x0203F2A0)    /* [player][2]: the arrows in the 2 slots (not an arrow word = empty) */
+#define ASAVED  ((volatile u32 (*)[2])0x0203F2B0)    /* [save slot][2]: of the page of slots shown (like SAVED) */
+#define AKEEP   ((volatile u32 (*)[4][2])0x0203F2D0) /* [page][save slot][2]: kept by the page */
+#define AGEN    (*(volatile u16 *)0x0203F310)        /* bumped on every AKEEP write: the page saves it */
+#define AREADY  (*(volatile u8 *)0x0203F312)         /* the page has put the stored AKEEP in */
+#define ACYC    (*(volatile u8 *)0x0203F313)         /* the page's L button (Legolas, in play): next quiver */
+#define NOARROW 0xFFFFFFFFu
+/* 2-player games (v124): each GBA sends its player's 2 slots once (link message 6, recv6 in stubs.s), both GBAs
+   take them on the same frame (ALV[p] = 1 from then on), and pickups and quiver changes run the same on both. */
+#define ALINK   ((volatile u32 (*)[2])0x0203F320)    /* [player][2]: slots that came in by link message 6 */
+#define ALV     ((volatile u8 *)0x0203F340)          /* [player]: 2 = just came in, 1 = in step on both GBAs */
+#define LTAP    ((volatile u8 *)0x0203F344)          /* [player]: ticks since GBA L last changed (0xFF = none, or A/B/R since) */
+#define LPREV   ((volatile u8 *)0x0203F348)          /* [player]: GBA L held at the last gameplay tick */
+#define ACP     ((volatile u8 *)0x0203F34C)          /* [player]: 2 = link message 7 came in: next quiver (recv7) */
+#define ACYC_MSG 7
+#define HELD(p) (*(volatile u16 *)(0x03004088u + 2u * (p)))
+#define ALINK_MSG 6
+#define AFIRST  24                                  /* cursor values 24, 25 are the arrow slots */
+#define HERO_ID(p) (*(volatile u8 *)(HERO + (p) * HERO_SZ + 0x19F))
+#define AE68(it, p)            ((fn4)0x0802AE69)((int)(it), p, 0, 0)
+#define ITEMSTATS(it, sl, p, r) ((fn4)0x0802DB91)((int)(it), sl, p, r)
+#define WEAPONFLAGS(p)         ((fn4)0x0802D8E1)(p, 0, 0, 0)
+static int is_leg(int p) { return p < 2 && HERO_ID(p) == 1; }
+static void a_norm(int p) { for (int k = 0; k < 2; k++) if (!is_arrow(ASLOT[p][k])) ASLOT[p][k] = NOARROW; }
+
+/* keep QMAX/QWORD in step with what the hero wears (called every gameplay and Backpack frame) */
+static void q_sync(int p)
+{
+    u32 *it = inv(p), w = it[2];
+    if (QMAX[p] && w != QWORD[p]) {                    /* taken off (or swapped): back to the pack form */
+        int mx = QMAX[p], cur = (QWORD[p] >> 16) & 0xFF;
+        u32 off = with_count(QWORD[p], 0x80 | mx);
+        for (int j = 8; j < 16; j++)
+            if (it[j] == QWORD[p]) { it[j] = off; break; }
+        for (int k = 0; k < 2; k++)
+            if (ASLOT[p][k] == QWORD[p]) { ASLOT[p][k] = off; break; }
+        DEBTW[p] = off; DEBTN[p] = cur < mx ? mx - cur : 0; DEBTT[p] = QCLK;
+        QMAX[p] = 0;
+    }
+    if (!QMAX[p] && is_regen(w)) {                     /* just put on */
+        int mx = (w >> 16) & 0x3F, cur = mx;
+        if (w == DEBTW[p] && DEBTN[p]) {               /* the same quiver again: what it has refilled since */
+            int miss = DEBTN[p]; volatile int t = (int)(QCLK - DEBTT[p]);
+            while (t >= TICKS && miss) { t -= TICKS; miss--; }
+            cur = mx - miss;
+            DEBTN[p] = 0;
+        }
+        w = with_count(w, cur);
+        it[2] = w;
+        QMAX[p] = mx; QWORD[p] = w; QIDLE[p] = 0;
+    }
+    if (QMAX[p]) {
+        if ((w >> 16) & 0xFF) HFLAGS(p) |= ARROWS_ON; else HFLAGS(p) &= ~(ARROWS_ON | 0x20);
+    }
+}
+
+static void q_frame(int p)
+{
+    q_sync(p);
+    if (!QMAX[p]) return;
+    u32 *it = inv(p), w = it[2];
+    int cur = (w >> 16) & 0xFF;
+    if (cur >= QMAX[p]) { QIDLE[p] = 0; return; }
+    if (++QIDLE[p] < TICKS) return;
+    QIDLE[p] = 0;
+    w = with_count(w, cur + 1);
+    it[2] = w; QWORD[p] = w;
+    HFLAGS(p) |= ARROWS_ON;
+}
+
+/* a shot: the game's 4 calls that use up an arrow */
+void arrow_wrap(int p)
+{
+    if (!QMAX[p]) { USE_ARROW(p); return; }
+    u32 *it = inv(p), w = it[2];
+    int cur = (w >> 16) & 0xFF;
+    if (cur) cur--;
+    w = with_count(w, cur);
+    it[2] = w; QWORD[p] = w; QIDLE[p] = 0;
+    if (!cur) HFLAGS(p) &= ~(ARROWS_ON | 0x20);         /* empty: plain shots, the quiver stays */
+    *(volatile u32 *)(0x03003F70 + p * 0x7C + 0x70) |= 0x4000;   /* the game's arrow count label */
+    *(volatile u8 *)(0x03003F70 + p * 0x7C + 0x79) = 0x14;
+}
+
+/* picking up arrows adds them to a matching quiver: never to or from a regenerating one */
+int same_wrap(u32 a, u32 b)
+{
+    if (is_regen(a) || is_regen(b)) return 0;
+    for (int p = 0; p < 2; p++) if (QMAX[p] && a == inv(p)[2]) return 0;
+    return SAME_ITEM(a, b);
+}
+
+/* the page's L: the worn quiver goes to the end of the arrow slots and the first one is put on, with the game's own
+   item stat steps (take off, put on, weapon flags) */
+static void a_cycle(int p, int quiet)
+{
+    u32 *it = inv(p);
+    q_sync(p);
+    a_norm(p);
+    u32 w0 = it[2], n0 = w0, n1 = ASLOT[p][0], n2 = ASLOT[p][1];
+    if ((!is_arrow(w0) && (w0 & 0xF) != 0xF) || (!is_arrow(n1) && !is_arrow(n2))) { if (!quiet) SOUND(5); return; }
+    for (int k = 0; k < 2; k++) { u32 t = n0; n0 = n1; n1 = n2; n2 = t; if (is_arrow(n0)) break; }
+    ASLOT[p][0] = is_arrow(n1) ? n1 : NOARROW;
+    ASLOT[p][1] = is_arrow(n2) ? n2 : NOARROW;
+    if (is_arrow(w0)) ITEMSTATS(w0, 2, p, 1);
+    it[2] = n0;
+    ITEMSTATS(n0, 2, p, 0);
+    WEAPONFLAGS(p);
+    q_sync(p);
+    if ((it[2] >> 16) & 0xFF) HFLAGS(p) |= ARROWS_ON;
+    *(volatile u32 *)(0x03003F70 + p * 0x7C + 0x70) |= 0x4000;   /* the game's arrow count label */
+    *(volatile u8 *)(0x03003F70 + p * 0x7C + 0x79) = 0x14;
+    if (p == LOCAL_P) SOUND(2);
+}
+
+/* picking up arrows (0x0802ACE8 -> 0x0802AE68): with no worn quiver the game puts them on, a matching worn quiver
+   takes them as before; otherwise a matching arrow slot, then an empty arrow slot, then the backpack */
+int apick_wrap(u32 *item, int p)
+{
+    u32 w = *item, *it = inv(p);
+    if ((LINKED && ALV[p] != 1) || !is_leg(p) || !is_arrow(w) || !is_arrow(it[2]) || same_wrap(it[2], w)) return AE68(item, p);
+    a_norm(p);
+    int n = (w >> 16) & 0xFF;
+    if (!is_regen(w))
+        for (int k = 0; k < 2 && n; k++) {
+            u32 a = ASLOT[p][k];
+            if (!is_arrow(a) || !same_wrap(a, w)) continue;
+            int c = (a >> 16) & 0xFF, m = 99 - c;
+            if (m <= 0) continue;
+            if (m > n) m = n;
+            ASLOT[p][k] = with_count(a, c + m);
+            n -= m;
+        }
+    w = with_count(w, n); *item = w;
+    if (!n) return 1;
+    for (int k = 0; k < 2; k++)
+        if (!is_arrow(ASLOT[p][k])) { ASLOT[p][k] = w; *item = with_count(w, 0); return 1; }
+    return AE68(item, p);
+}
+
+/* is this word a regenerating quiver, and its live count and max */
+static int q_info(u32 w, int *cur)
+{
+    if (!is_arrow(w)) return 0;
+    if (is_regen(w)) { *cur = (w >> 16) & 0x3F; return *cur; }
+    for (int p = 0; p < 2; p++)
+        if (QMAX[p] && w == inv(p)[2]) { *cur = (w >> 16) & 0xFF; return QMAX[p]; }
+    return 0;
+}
+
 /* what is on each hero is tracked, so taking bonuses off is always exact */
 static void set_applied(int p, volatile u16 *codes, int n)
 {
@@ -168,16 +374,9 @@ void ac24_wrap(int p, int rem)
     else if (CONFV[p]) set_applied(p, CONF[p], cnt(p));
 }
 
-/* ---- 2-player games: every GBA sends its player's slot heads once; both GBAs put the bonuses
-   on when the message arrives (the game hands a message to both on the same frame) ---- */
-void recv_c(int p, const u8 *m)
-{
-    if (p > 3) return;
-    for (int i = 0; i < 4; i++) CONF[p][i] = m[2 * i] | (m[2 * i + 1] << 8);
-    CONFV[p] = 1;
-    set_applied(p, CONF[p], cnt(p));
-}
-
+/* ---- 2-player games: every GBA sends its player's slot heads once (link message 4); recv4 (stubs.s)
+   stores them on both GBAs on the same frame and the next gameplay frame puts them on. ---- */
+static void x_check(void);
 int gp_hook(int a, int b, int c, int d)
 {
     int r = GP_FRAME(a, b, c, d);
@@ -187,23 +386,51 @@ int gp_hook(int a, int b, int c, int d)
         SPAWN(*(int *)(h + 0xAC) + (8 << 16), *(int *)(h + 0xB0), 84, (int)item_of(*(volatile u16 *)0x0203FE72), 0x708);
         *(volatile u16 *)0x0203FE70 = 0;
     }
+    if (*(volatile u16 *)0x0203FE74) {                 /* add item word 0x0203FE78 as if picked up */
+        *(volatile u32 *)0x0203FE7C = ((fn4)0x0802ACE9)(*(volatile u32 *)0x0203FE78, 0, 0, 0);
+        *(volatile u16 *)0x0203FE74 = 0;
+    }
 #endif
     if (LINKED && !SENT) {
         int p = LOCAL_P;
         SENT = 1;
         LINK_SEND(LINK_MSG, CODE[p][0] | (CODE[p][1] << 16), CODE[p][2] | (CODE[p][3] << 16), 0);
+        if (p < 2) { a_norm(p); LINK_SEND(ALINK_MSG, ASLOT[p][0], ASLOT[p][1], 0); }
     }
+    for (int p = 0; p < 2; p++)                        /* arrow slots that came from the other GBA: both GBAs, same frame */
+        if (ALV[p] == 2) { ASLOT[p][0] = ALINK[p][0]; ASLOT[p][1] = ALINK[p][1]; a_norm(p); ALV[p] = 1; }
+    for (int p = 0; p < 4; p++)                        /* heads that came from the other GBA: both GBAs, same frame */
+        if (CONFV[p] == 2) { CONFV[p] = 1; set_applied(p, CONF[p], cnt(p)); }
+    if (DUPELOCK && !SESSV) { SESSPG = PAGE; SESSV = 1; } else if (!DUPELOCK) SESSV = 0;
+    if (ACYC) { ACYC = 0; if (!LINKED && is_leg(LOCAL_P)) a_cycle(LOCAL_P, 0); }
+    if (LINKED && LOCAL_P < 2) {                       /* 2-player: GBA L flicked (changed twice within 8 ticks, no A/B/R */
+        int p = LOCAL_P, k = HELD(p), l = (k >> 9) & 1; /* between) puts on the next quiver. The page holds L for its */
+        if (k & 0x103) LTAP[p] = 0xFF;                 /* Quick Skills, so a flick is a short release or a short press. */
+        if (l != LPREV[p]) {                           /* Only this GBA sees its player's buttons, so it sends link */
+            LPREV[p] = l;                              /* message 7 and both GBAs change quivers when it comes in. */
+            if (LTAP[p] <= 8 && ALV[p] == 1 && is_leg(p)) { LINK_SEND(ACYC_MSG, p, 0, 0); LTAP[p] = 0xFF; } else LTAP[p] = 0;
+        } else if (LTAP[p] < 0xFE) LTAP[p]++;
+    }
+    for (int p = 0; p < 2; p++)
+        if (ACP[p] == 2) { ACP[p] = 0; if (ALV[p] == 1 && is_leg(p)) a_cycle(p, 1); }
+    x_check();
+    QCLK++;
+    q_frame(0);
+    if (LINKED) q_frame(1);
     return r;
 }
 
 /* ---- saves: the slot heads of save slot s live in EEPROM block 0x32 + s ---- */
-static int hdr_slot(u32 h) { for (int s = 0; s < 3; s++) if (h == SLOT_HDR + s * 0x70) return s; return -1; }
+static int hdr_slot(u32 h) { for (int s = 0; s < 4; s++) if (h == SLOT_HDR + s * 0x70) return s; return -1; }
 
 void pack_c(u8 *h, int p)
 {
     int n = cnt(p), s = hdr_slot((u32)h);
     h[0x4B] = (h[0x4B] & 0x1F) | (n << 5);
     if (s >= 0) for (int i = 0; i < 4; i++) SAVED[s][i] = (i < n ? CODE[p][i] : 0xFFFF) ^ EE_KEY;
+    if (s >= 0 && p < 2) { a_norm(p); ASAVED[s][0] = ASLOT[p][0]; ASAVED[s][1] = ASLOT[p][1]; }
+    q_sync(p);                                         /* worn regenerating quiver: packed full (header + 8 = off hand) */
+    if (QMAX[p] && h[8] == (QWORD[p] & 0xFF)) h[10] = 0x80 | QMAX[p];
 }
 
 void unpack_c(const u8 *h, int p)
@@ -214,21 +441,155 @@ void unpack_c(const u8 *h, int p)
     CONFV[p] = 0;
     APPN[p] = 0;
     SENT = 0;
+    if (p < 2) { QMAX[p] = 0; DEBTN[p] = 0; }          /* its quiver comes in packed: full */
+    if (p < 2) { ASLOT[p][0] = s >= 0 ? ASAVED[s][0] : NOARROW; ASLOT[p][1] = s >= 0 ? ASAVED[s][1] : NOARROW; a_norm(p); ALV[p] = 0; LTAP[p] = 0xFF; }
 }
+
+/* ---- a second page of 4 save slots (Jordan, 2026-11-08: "8 in total") ----
+   The EEPROM holds only 4 slots, so page 2 lives in EWRAM (PBUF) and the page keeps it on the player's account.
+   With PAGE = 1 every slot read and write goes to PBUF instead of the EEPROM. R on the slot screen (free since
+   nodelete) or the page's Page button flips the page and reads the 4 headers again. The page restores a saved-over
+   slot through UREQ (Undo). */
+static void cpy(volatile u8 *d, const volatile u8 *s, int n) { for (int i = 0; i < n; i++) d[i] = s[i]; }
+static void empty_page(void)
+{
+    for (int i = 0; i < 4 * 0x70; i++) PBUF[i] = 0;
+    for (int k = 0; k < 4; k++) {                      /* an empty slot as the game leaves it: marker 0x82, checksum 0xFF7E */
+        PBUF[k * 0x70 + 0x68] = 0x82; PBUF[k * 0x70 + 0x6E] = 0x7E; PBUF[k * 0x70 + 0x6F] = 0xFF;
+        for (int i = 0; i < 4; i++) PHEAD[k][i] = 0xFFFF ^ EE_KEY;
+    }
+    PREADY = 1; PGEN++;
+}
+
+/* ---- the 64 Kbit save chip (v124; Jordan, 2026-11-08: "Yes bigger save file") ----
+   The game's EEPROM library is set up for 64 Kbit (tools/orcslots.py: 0x0803CF8E), so blocks 64-1023 are free.
+   Page 2 and the arrow slots now live in the save file too: block 64 is the marker, 65-120 page 2's 4 slots
+   (14 blocks each, as PBUF), 121-124 their slot heads (PHEAD), 125-132 the arrow slots of every save slot (AKEEP,
+   one block per page and slot). An old 4 Kbit save has no marker (the rest reads 0xFF): the page puts its stored
+   copies in as before and then asks (XREQ) for all of it to be written. */
+#define XSTATE  (*(volatile u8 *)0x0203F314)         /* 0 not looked at yet, 1 the save file holds them, 2 not yet */
+#define XREQ    (*(volatile u8 *)0x0203F315)         /* the page: my stored copies are in, write them */
+#define XB_MARK 64
+#define XB_PAGE 65
+#define XB_HEAD 121
+#define XB_AKEEP 125
+#define XMARK0  0x52544F4Cu                          /* "LOTRXT01" */
+#define XMARK1  0x31305458u
+static void x_write_all(void)
+{
+    volatile u32 m[2];
+    if (!PREADY) empty_page();
+    EE_WRITE(XB_PAGE, 56, PBUF);
+    EE_WRITE(XB_HEAD, 4, PHEAD);
+    EE_WRITE(XB_AKEEP, 8, AKEEP);
+    m[0] = XMARK0; m[1] = XMARK1;
+    EE_WRITE(XB_MARK, 1, m);
+    XSTATE = 1;
+}
+static void x_check(void)
+{
+    if (XSTATE == 2 && XREQ) { XREQ = 0; x_write_all(); }
+    if (XSTATE) return;
+    volatile u32 m[2];
+    EE_READ(XB_MARK, 1, m);
+    if (m[0] != XMARK0 || m[1] != XMARK1) { XSTATE = 2; return; }
+    EE_READ(XB_PAGE, 56, PBUF);
+    EE_READ(XB_HEAD, 4, PHEAD);
+    EE_READ(XB_AKEEP, 8, AKEEP);
+    PREADY = 1; AREADY = 1; PGEN++; AGEN++;          /* the page keeps its backup copies of them */
+    XSTATE = 1;
+}
+static void x_akeep(int pg, int slot) { if (XSTATE == 1) EE_WRITE(XB_AKEEP + pg * 4 + slot, 1, AKEEP[pg][slot]); }
 
 int save_wrap(int src, int slot)
 {
+    x_check();
+    if (PAGE) {
+        cpy(PBUF + slot * 0x70, (const volatile u8 *)src, 0x70);
+        for (int i = 0; i < 4; i++) PHEAD[slot][i] = SAVED[slot][i];
+        AKEEP[1][slot][0] = ASAVED[slot][0]; AKEEP[1][slot][1] = ASAVED[slot][1]; AGEN++;
+        PGEN++;
+        if (XSTATE == 1) { EE_WRITE(XB_PAGE + 14 * slot, 14, PBUF + slot * 0x70); EE_WRITE(XB_HEAD + slot, 1, PHEAD[slot]); }
+        x_akeep(1, slot);
+        return 0;
+    }
+    AKEEP[0][slot][0] = ASAVED[slot][0]; AKEEP[0][slot][1] = ASAVED[slot][1]; AGEN++;
+    x_akeep(0, slot);
     int r = SLOT_WRITE(src, slot);
-    if (slot < 3) EE_WRITE(EE_BLOCK + slot, 1, (const void *)SAVED[slot]);
+    cpy(SAVEHDR + 8 + 8 * slot, (const volatile u8 *)SAVED[slot], 8);
+    volatile u16 *hw = (volatile u16 *)SAVEHDR;        /* the game's header checksum, then all 8 header blocks */
+    u16 sum = 0; hw[0x1F] = 0;
+    for (int i = 0; i < 0x20; i++) sum += hw[i];
+    hw[0x1F] = (u16)-sum;
+    EE_WRITE(0, 8, SAVEHDR);
     return r;
 }
 
 int load_wrap(int dst, int slot)
 {
+    x_check();
+    ASAVED[slot][0] = AKEEP[PAGE & 1][slot][0]; ASAVED[slot][1] = AKEEP[PAGE & 1][slot][1];
+    if (PAGE) {
+        if (!PREADY) empty_page();
+        cpy((volatile u8 *)dst, PBUF + slot * 0x70, 0x70);
+        for (int i = 0; i < 4; i++) SAVED[slot][i] = PHEAD[slot][i];
+        return 0;
+    }
     int r = SLOT_READ(dst, slot);
-    if (slot < 3) EE_READ(EE_BLOCK + slot, 1, (void *)SAVED[slot]);
+    int unset = 1;                                     /* never written (0xFF): no heads */
+    for (int i = 0; i < 8; i++) if (SAVEHDR[8 + 8 * slot + i] != 0xFF) unset = 0;
+    for (int i = 0; i < 4; i++)
+        SAVED[slot][i] = unset ? 0xFFFF ^ EE_KEY : SAVEHDR[8 + 8 * slot + 2 * i] | SAVEHDR[9 + 8 * slot + 2 * i] << 8;
     return r;
 }
+
+static void redraw(void)
+{
+    for (int k = 0; k < 4; k++) {                      /* the 4 panels and hero pictures again */
+        ((fn4)0x08030DA1)(k, *(volatile u8 *)0x030041BC, 0, 0);
+        ((fn4)0x080311E5)(k, 0, 0, 0);
+    }
+}
+
+/* A play session that has saved or loaded may only save to its own slot (tools/nodupe.py), so in save mode it
+   can't look at the other page either. */
+static int flip(void)
+{
+    if (GSTATE != 9 || SLOTSUB != 0) return 0;
+    if (SAVEMODE == 1 && DUPELOCK && SESSV && SESSPG != (PAGE ^ 1)) { SOUND(5); return 0; }
+    PAGE ^= 1;
+    READ_ALL();
+    redraw();
+    SOUND(2);
+    return 1;
+}
+void flip_r(void) { flip(); }
+
+static void undo_apply(void)
+{
+    int cur = PAGE, sl = USLOT & 3;
+    u16 keep[4];
+    u32 akeep0 = ASAVED[sl][0], akeep1 = ASAVED[sl][1];
+    for (int i = 0; i < 4; i++) keep[i] = SAVED[sl][i];
+    PAGE = UPAGE & 1;
+    for (int i = 0; i < 4; i++) SAVED[sl][i] = ((volatile u16 *)(UBUF + 0x70))[i];
+    ASAVED[sl][0] = ((volatile u32 *)(UBUF + 0x78))[0]; ASAVED[sl][1] = ((volatile u32 *)(UBUF + 0x78))[1];
+    save_wrap((int)UBUF, sl);
+    PAGE = cur;
+    if ((UPAGE & 1) == cur) cpy((volatile u8 *)(HDRS + sl * 0x70), UBUF, 0x70);
+    else { for (int i = 0; i < 4; i++) SAVED[sl][i] = keep[i]; ASAVED[sl][0] = akeep0; ASAVED[sl][1] = akeep1; }
+    DUPELOCK = ULOCK; SESSPG = ULOCKPG; SESSV = ULOCK ? 1 : 0;   /* the undone save no longer ties the session to that slot */
+    if (GSTATE == 9 && (UPAGE & 1) == cur) redraw();
+}
+
+static void menu_service(void)
+{
+    x_check();
+    if (FLIPREQ) { FLIPREQ = 0; flip(); }
+    if (UREQ) { UREQ = 0; undo_apply(); }
+}
+int slot_upd(int a, int b, int c, int d) { menu_service(); return ((fn4)0x080306ED)(a, b, c, d); }
+int pause_upd(int a, int b, int c, int d) { menu_service(); return ((fn4)0x080397FD)(a, b, c, d); }
 
 /* ---- drops: on every kill, roll for a rare, then a magic, then a normal head ---- */
 static const u16 ODDS[3][2][2] = {           /* [tier][hard enemy][special zone]: 1 in N kills */
@@ -261,18 +622,29 @@ int genitem_wrap(u32 *item, int p, int find, int type)
         r = GENITEM((int)item, p, find, type);
         if (!is_orc(*item)) break;
     }
+    if (is_arrow(*item) && RAND(1, 100) <= 3)          /* 3%: a regenerating quiver */
+        *item = with_count(*item, 0x80 | (((*item >> 16) & 0xFF) > 63 ? 63 : ((*item >> 16) & 0x3F)));
     return r;
 }
 
 /* ---- names and descriptions ---- */
 static char *put(char *d, const char *s) { while (*s) *d++ = *s++; *d = 0; return d; }
-static char *num(char *d, int v) { if (v >= 10) { int t = 0; while (v >= 10) { v -= 10; t++; } *d++ = '0' + t; } *d++ = '0' + v; *d = 0; return d; }
+static char *num(char *d, int v) { if (v >= 10) { volatile int t = 0; while (v >= 10) { v -= 10; t++; } *d++ = '0' + t; } *d++ = '0' + v; *d = 0; return d; }
 
 static const char *const TIER_NAME[3] = {"Orc Head", "Magic Orc Head", "Rare Orc Head"};
 static int tier_of(u32 item) { return is_old(item >> 16) ? 0 : (int)(item >> 30); }
 
 int name_wrap(char *buf, u32 item, int n)
 {
+    int qc, qm = q_info(item, &qc);
+    if (qm) {                                          /* "Orcish Arrows: 7/25", in the magic colour */
+        NAME(buf, with_count(item, qc), n);
+        char *d = buf;
+        while (*d && *d != ':') d++;
+        if (*d) { d = put(d, ": "); d = num(d, qc); d = put(d, "/"); num(d, qm); }
+        *(volatile u8 *)(0x03003F70 + LOCAL_P * 0x7C + 0x78) = MENU[0] == 1 ? 12 : 9;
+        return (int)buf;
+    }
     int r = NAME(buf, item, n);
     if (is_orc(item)) {
         int t = tier_of(item);
@@ -302,6 +674,13 @@ static char *bonus_text(char *d, u16 code)
 int itemdesc_wrap(char *buf, int p, u32 item, u16 *x, u16 *y, u16 *tile)
 {
     int r = ITEMDESC(buf, p, item, x, y, tile);
+    int qc;
+    if (q_info(item, &qc)) {
+        char *d = buf;
+        while (*d) d++;
+        put(d, d == buf ? "Regenerates 1 arrow a second" : ", Regenerates 1 arrow a second");
+        return (int)buf;
+    }
     if (!is_orc(item)) return r;
     char *d = bonus_text(buf, item >> 16);
     put(d, ". Works only in an Orc Head slot (the row under your backpack).");
@@ -314,6 +693,16 @@ static void desc(int cur)
     int p = LOCAL_P, c = cur - FIRST;
     CLEARTEXT(1, 15, 10, 15, 10, 0);
     TEXTCOLOR(0, 3, 0);
+    if (cur >= AFIRST) {                             /* an arrow slot: the game's own description */
+        u32 w = ASLOT[p][cur - AFIRST];
+        if (!is_arrow(w)) return;
+        u16 x = 0x79, y = 0x50, tile = 0x13;
+        char buf[0xC8];
+        for (int i = 0; i < 0xC8; i++) buf[i] = 0;
+        int r = itemdesc_wrap(buf, p, w, &x, &y, &tile);
+        if (r) DRAWTEXT(tile, x, 0x68, 0x76, r, 0);
+        return;
+    }
     if (c >= cnt(p)) return;                         /* empty: the faded head says it all */
     u16 x = 0x79, y = 0x50, tile = 0x13;
     char buf[0xC8];
@@ -324,30 +713,38 @@ static void desc(int cur)
     DRAWTEXT(tile, x, 0x68, 0x76, buf, 0);
 }
 
+static int shape_of(int n) { return n >= AFIRST ? 13 + n - AFIRST : 12 + n - FIRST; }
 static void place_cursor(u8 *ui, int n)
 {
-    int c = n - FIRST;
+    int c = n - FIRST, y = 80;
+    if (n >= AFIRST) { c = n - AFIRST + 1; y = 104; }   /* arrow slots: under Orc Head slots 2 and 3 */
     *(int *)(ui + 0xAC) = (120 + 30 * c) << 16;
-    *(int *)(ui + 0xB0) = 80 << 16;
+    *(int *)(ui + 0xB0) = y << 16;
     *(u32 *)(ui + 0xE8) |= 0x80;
     ui[0x62] = n;
-    CURSHAPE(12 + c);
+    CURSHAPE(shape_of(n));
 }
 
 /* ---- cursor movement (Backpack, no menu open): returns the cursor the game should go on with ---- */
 int nav_c(int proposed)
 {
     u8 *ui = UI;
-    int old = ui[0x62], k = KEYS(LOCAL_P), n = proposed;
-    if (old >= FIRST) {
+    int old = ui[0x62], k = KEYS(LOCAL_P), n = proposed, ar = is_leg(LOCAL_P);
+    if (old >= AFIRST) {                 /* arrow slots: up to Orc Head slots 2/3, down to the grid's top row */
+        int c = old - AFIRST;
+        if (k & 0x40) n = FIRST + 1 + c;
+        else if (k & 0x80) n = 9 + c;
+        else if (k & 0x30) n = AFIRST + (c ^ 1);
+        else n = old;
+    } else if (old >= FIRST) {
         int c = old - FIRST;
         if (k & 0x40) n = 12 + c;
-        else if (k & 0x80) n = 8 + c;
+        else if (k & 0x80) n = ar ? AFIRST + (c >= 2) : 8 + c;
         else if (k & 0x20) n = FIRST + ((c + 3) & 3);
         else if (k & 0x10) n = FIRST + ((c + 1) & 3);
         else n = old;
     } else if (old >= 12 && old <= 15 && (k & 0x80)) n = FIRST + old - 12;
-    else if (old >= 8 && old <= 11 && (k & 0x40)) n = FIRST + old - 8;
+    else if (old >= 8 && old <= 11 && (k & 0x40)) n = ar ? AFIRST + (old >= 10) : FIRST + old - 8;
     if (n < FIRST || n == old) return n;
     place_cursor(ui, n);                 /* the game then sees no change and stops */
     desc(n);
@@ -359,7 +756,7 @@ int nav_c(int proposed)
 void a_c(int cur, int p)
 {
     if (LINKED) { QUIET = 1; SOUND(5); return; }          /* not in 2-player games */
-    if (cur - FIRST >= cnt(p)) return;                    /* empty: the game's own code plays its error sound */
+    if (cur >= AFIRST ? !is_arrow(ASLOT[p][cur - AFIRST]) : cur - FIRST >= cnt(p)) return;   /* empty: the game's error sound */
     QUIET = 1;
     CLEARTEXT(1, 15, 10, 15, 10, 0);
     MENU[4] = 1;
@@ -398,6 +795,29 @@ void menu_wrap(void)
     u8 *ui = UI;
     int cur = ui[0x62], p = LOCAL_P, sel = MENU[3], j;
     u32 *it = inv(p);
+    if (cur >= AFIRST) {                                   /* an arrow slot: Unequip into the backpack, or Discard */
+        int k = cur - AFIRST;
+        if (sel == 0) {
+            for (j = 8; j < 16 && (it[j] & 0xF) != 0xF; j++) ;
+            if (j == 16) { error_text("Your backpack is full!"); return; }
+            it[j] = ASLOT[p][k];
+            ASLOT[p][k] = NOARROW;
+            MKSPRITE(j);
+        } else if (SETTINGS & 1) {
+            ASLOT[p][k] = NOARROW;
+        } else {
+            CLEARTEXT(1, 15, 10, 15, 10, 0);
+            MENU[4] = 3;
+            TEXTCOLOR(0, 3, 0);
+            DRAWTEXT(0x13, 0x79, 0x50, 0x76, TEXT(0x142), 0);
+            MENUOPT(MENU[5], MENU[5]);
+            MENUOPT(0, MENU[5]);
+            return;
+        }
+        SOUND(3);
+        MENU[4] = 2;
+        return;
+    }
     if (cur >= FIRST) {
         int c = cur - FIRST;
         if (sel == 0) {                                    /* Unequip: back into the backpack */
@@ -440,14 +860,15 @@ void menu_wrap(void)
 /* ---- "Are you sure?" Yes ---- */
 void discard_wrap(int cur, int p)
 {
-    if (cur >= FIRST) remove_slot(p, cur - FIRST);
+    if (cur >= AFIRST) ASLOT[p][cur - AFIRST] = NOARROW;
+    else if (cur >= FIRST) remove_slot(p, cur - FIRST);
     else DISCARD(cur, p);
 }
 
 /* ---- menu closed: description of the cursor ---- */
 void desc_wrap(int cur)
 {
-    if (cur >= FIRST) { CURSHAPE(12 + cur - FIRST); desc(cur); }
+    if (cur >= FIRST) { CURSHAPE(shape_of(cur)); desc(cur); }
     else GAMEDESC(cur);
 }
 
@@ -465,6 +886,40 @@ static int row_empty(const u16 *m, int r)
     return 1;
 }
 
+/* arrow slots: blue boxes (OBJ palette 2, tiles 940-955), the arrows' pictures (palettes 4/5, tiles 960-983) or a
+   faded blue quiver (palette 6, already blended with the box colour, tiles 984-995). OBJ palettes 0, 2, 4-6 are unused on this screen (the game puts its
+   own back when it returns to play). */
+extern const u8 arrow_tiles[3840], abox_tiles[512], aquiv_tiles[384];
+extern const u16 arrow_pal[160], abox_pal[16], aquiv_pal[16];
+#define OBJT(t) ((volatile u32 *)(0x06010000 + (t) * 32))
+#define OBJP(n) ((volatile u32 *)(0x05000200 + (n) * 32))
+static void cp32(volatile u32 *d, const u32 *s, int n) { for (int i = 0; i < n; i++) d[i] = s[i]; }
+static void draw_arrows(int p)
+{
+    u16 a[4];
+    cp32(OBJT(940), (const u32 *)abox_tiles, 128);
+    cp32(OBJT(984), (const u32 *)aquiv_tiles, 96);
+    cp32(OBJP(2), (const u32 *)abox_pal, 8);
+    cp32(OBJP(6), (const u32 *)aquiv_pal, 8);
+    for (int k = 0; k < 2; k++) {
+        u32 w = ASLOT[p][k];
+        int x = 150 + 30 * k, t = (w >> 8) & 0xFF, base = 984, pal = 6, fade = 0;
+        if (is_arrow(w) && t < 10) {
+            base = 960 + 12 * k; pal = 4 + k; fade = 0;
+            cp32(OBJT(base), (const u32 *)(arrow_tiles + 384 * t), 96);
+            cp32(OBJP(pal), (const u32 *)(arrow_pal + 16 * t), 8);
+        }
+        a[0] = 104 | (1 << 14) | fade; a[1] = x | (1 << 14); a[2] = base | (1 << 10) | (pal << 12); a[3] = 0;
+        OAMADD(OAM_COUNT, a);
+        a[0] = 112 | (1 << 14) | fade; a[1] = x | (2 << 14); a[2] = (base + 4) | (1 << 10) | (pal << 12);
+        OAMADD(OAM_COUNT, a);
+    }
+    for (int k = 0; k < 2; k++) {
+        a[0] = 102; a[1] = (148 + 30 * k) | (2 << 14); a[2] = 940 | (1 << 10) | (2 << 12); a[3] = 0;
+        OAMADD(OAM_COUNT, a);
+    }
+}
+
 #define SUBSTATE  (*(volatile u32 *)0x030041C0)
 #define BG0_SAVE  ((u16 *)0x0203FF80)          /* 45 entries: the panel under the grid, as the game drew it */
 
@@ -472,6 +927,7 @@ void frame_hook(void)
 {
     u16 *bg0 = (u16 *)0x0600F800;
     int sub = SUBSTATE;
+    q_sync(LOCAL_P);
     if (bg0[10 * 32 + 15] != red(bg0[7 * 32 + 15]))          /* freshly drawn by the game: keep a copy */
         for (int r = 0; r < 3; r++)
             for (int x = 15; x < 30; x++) BG0_SAVE[r * 15 + x - 15] = bg0[(10 + r) * 32 + x];
@@ -494,10 +950,10 @@ void frame_hook(void)
     u32 *dst = (u32 *)0x0600D800;
     const u32 *s32 = (const u32 *)src;
     for (int i = 0; i < 10 * 16; i++) dst[i] = s32[i];
-    u8 rows[8]; int n = 0;
+    u8 rows[8]; int n = 0, leg = is_leg(LOCAL_P);
     for (int r = 10; r < 18; r++) rows[n++] = r;
     static const u8 order[] = {12, 11, 17, 16, 15, 14, 13};
-    while (n > 6) {
+    while (n > (leg ? 5 : 6)) {
         int drop = -1;
         for (int o = 0; o < 7 && drop < 0; o++)
             for (int i = 0; i < n; i++)
@@ -506,13 +962,22 @@ void frame_hook(void)
         for (int i = drop; i < n - 1; i++) rows[i] = rows[i + 1];
         n--;
     }
-    for (int i = 10 * 16; i < 13 * 16; i++) dst[i] = 0;
-    for (int d = 0; d < 6; d++) {
-        u32 *o = dst + (13 + d) * 16;
-        if (d < n) { const u32 *q = s32 + rows[d] * 16; for (int i = 0; i < 16; i++) o[i] = q[i]; }
-        else for (int i = 0; i < 16; i++) o[i] = 0;
+    if (leg) {                                           /* Legolas: the arrow slots take rows 13-15, so the text goes
+                                                            to the bottom of the left side (rows 14-18) */
+        vu16 *d16 = (vu16 *)dst;
+        for (int r = 10; r < 20; r++)
+            for (int x = 0; x < 32; x++) d16[r * 32 + x] = (x < 15 && r < 14) ? src[r * 32 + x] : 0;
+        for (int d = 0; d < n; d++)
+            for (int x = 0; x < 15; x++) d16[(14 + d) * 32 + x] = src[rows[d] * 32 + 15 + x];
+    } else {
+        for (int i = 10 * 16; i < 13 * 16; i++) dst[i] = 0;
+        for (int d = 0; d < 6; d++) {
+            u32 *o = dst + (13 + d) * 16;
+            if (d < n) { const u32 *q = s32 + rows[d] * 16; for (int i = 0; i < 16; i++) o[i] = q[i]; }
+            else for (int i = 0; i < 16; i++) o[i] = 0;
+        }
+        for (int i = 19 * 16; i < 20 * 16; i++) dst[i] = 0;
     }
-    for (int i = 19 * 16; i < 20 * 16; i++) dst[i] = 0;
     BG1CNT = (BG1CNT & ~0x1F00) | (0x1B << 8);
 
     /* Orc Head pictures: tiles 1000-1011, palette 7 */
@@ -533,6 +998,7 @@ void frame_hook(void)
         a[0] = 88 | (1 << 14) | fade; a[1] = x | (2 << 14); a[2] = 1004 | (1 << 10) | (7 << 12);
         OAMADD(OAM_COUNT, a);
     }
+    if (leg) draw_arrows(p);
     OAMFINISH();
 }
 

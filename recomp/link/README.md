@@ -10,7 +10,7 @@ It acts like the auto except P2 stays on Auto's screen." Picture: Wide 60 fps.
   game in a `gbarecomp::GbaMultiplayerSession` joined by the link cable, shows only game 0 (P1) with
   the wide view and in-between pictures, and takes P2's buttons from the page (`rotk_link_p2`).
 - Exports for the page: `rotk_link_on`, `rotk_link_frames`, `rotk_link_iwram(i)`, `rotk_link_ewram(i)`,
-  `rotk_link_save(i, out)` (512-byte EEPROM copy, returns 1 when changed), `rotk_link_level(82)`
+  `rotk_link_save(i, out)` (8 KB EEPROM copy since v124, returns 1 when changed), `rotk_link_level(82)`
   (forces Moria on both games while the level is still pending after Choose Your Path).
 - The session needs every guest PC to have native code, so:
   - the Cult-of-GBA BIOS is recompiled too (`cobios.toml`, generated into the runtime with
@@ -64,3 +64,28 @@ difference, so v97 still ships the -O1 build without the quiet mixer.
   cache instead of a hash map in `multiplayer_slice_safe`), about 10% faster 2-player in the browser.
 - A narrower picture (288 instead of 320) gave no measurable gain, so it was not shipped; 240 was about 13%
   faster.
+
+## v121 (2026-11-08): Legolas plays like a ranger
+
+Jordan: "Legolas P2 doesn't play the way a ranger should". When P2's hero is Legolas (hero id 1 at hero + 0x19F):
+- Keeps bow distance: it plans to a shooting spot 56-72 px along the target's row, 52 px on its column or 46 px on a
+  diagonal, with a clear line to it, preferring spots near P2 and on P1's side of the target (P1 stays the front line).
+- Shoots only when lined up (row within 7 px, column within 7 px, or diagonal) with a clear line, after a 1-frame turn
+  toward the target; skills on elites and on groups of 3 or more near the target.
+- Kites: an enemy within 34 px makes it step away (toward P1's side, sideways if blocked); it swings in melee only
+  when there is no room to back off.
+- Targets the enemies near P1 first, then elites, then the nearest. Follows P1 a little further back (34 px) when
+  there is nothing to shoot.
+
+## v121: Orc Head hooks compiled natively
+
+The 2-player engine used to run the hook code (tools/orcslots) through the runtime's interpreter, like the solo
+engines still do. Nested bridges crashed it: first the Orc Head link message (type 4), whose receive case jumps back
+into the game's receive loop (0x0803FDAC), then, in long fights, a call to 0x00000008 deep inside nested bridges
+(entry depth 7). Both showed as a dispatch miss at 0x00000008 and also happened in v120.
+Now every hook entry is compiled natively: the end of `game-link.toml` lists them as `extra_func`
+(written by `orcslots/linkfuncs.py` from `tools/orcslots/orcslots.sym`). `recv4` sits at 0x0807F000, never calls
+anything and keeps its own literals; it only stores the heads, and `gp_hook` puts them on next tick.
+To regenerate after a hook change: build `tools/orcslots`, run `linkfuncs.py`, write `orcslots.bin` at 0x7F000 into
+the ROM you generate from (the toml's sha1 must match that ROM), generate, re-apply the three noquickskill edits
+(shards 002, 003, 007) and run `orcslots/genpatch.py`; compile `dispatch_table.cpp` and `symbol_map.cpp` too.

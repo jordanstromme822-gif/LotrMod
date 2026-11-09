@@ -24,13 +24,32 @@ bonuses rolled when it drops. Heads give their bonuses only from the slots.
   - Old Orc Heads (from before tiers) become normal heads with a fresh roll when a
     single player game loads.
 
+Regenerating quivers (Jordan, 2026-11-08, same code): 3% of dropped arrows regenerate
+1 arrow a second, starting 1 second after the last shot, up to the count they dropped
+with. They stay at 0 arrows instead of vanishing (you can still discard them), never
+merge with picked-up arrows, and show "Orcish Arrows: 7/25" in green with "Regenerates
+1 arrow a second" (docs/findings.md, "Arrows and quivers").
+
 How it works (details in docs/findings.md, "Orc Head slots" and "Orc Head tiers"):
   - A head's roll is the top half of its item word (the game ignores it for unique
     items): tier, difficulty table and a 12-bit seed its bonuses come from.
   - Bonuses go on and off through the game's stat routine 0x0802DDC4. Loading and
     level-ups rebuild stats (0x0802AC24 at 0x08026014); the wrapper adds the slots.
-  - The slot count is saved in header byte 0x4B bits 5-7; the slot heads in EEPROM
-    blocks 0x32-0x34 (one per save slot), which the game never uses.
+  - The slot count is saved in header byte 0x4B bits 5-7; the slot heads in the save
+    file header, bytes 8 + 8k for save slot k (v122; v120-v121 used EEPROM blocks
+    0x32-0x34, which are the start of save slot 4).
+  - Save slot pages (v122): a second page of 4 save slots kept by the page; R or the
+    page's Page button flips on the save slot screens; the page's Undo puts back a
+    saved-over slot while the save screen or pause menu is open.
+  - Arrow slots (v123): Legolas gets 2 arrow-only slots under the Orc Head slots. Picked-up
+    arrows that don't go on the worn quiver fill them before the backpack; the page's L
+    button (ACYC) puts on the next quiver.
+  - 64 Kbit save chip (v124): one byte sets the game's EEPROM library up for the 8 KB chip,
+    and page 2, its slot heads and the arrow slots are kept in blocks 64-132 (marker
+    "LOTRXT01" in block 64). Old 512-byte saves get them from the page's copies once.
+  - Arrow slots in 2-player games (v124): link message 6 sends each player's 2 slots; a
+    flick of GBA L (changed twice within 8 ticks, no A, B or R) sends link message 7, and
+    both GBAs put on the next quiver when it comes in.
   - 2-player games: each GBA sends its player's slot heads once as link message 4
     (unused by the game); both GBAs put the bonuses on when it arrives.
 
@@ -99,11 +118,31 @@ BL_SITES = [
     (0x3CC56, "00f0e5f8", "save_wrap"),
     (0x3CCDC, "00f084f8", "load_wrap"),   # save slots read from EEPROM: read the slot heads too
     (0x3CD14, "00f068f8", "load_wrap"),
-    (0x31ED0, "07f078f9", "gp_hook"),     # every gameplay frame: 2-player games send the slot heads once
+    (0x31ED0, "07f078f9", "gp_hook"),     # every gameplay frame: 2-player games send the slot heads once; quivers refill
+    # regenerating quivers
+    (0x249A2, "07f035fd", "arrow_wrap"),  # a shot uses up an arrow (4 calls)
+    (0x24A0C, "07f000fd", "arrow_wrap"),
+    (0x24BEE, "07f00ffc", "arrow_wrap"),
+    (0x44AE0, "e7f796fc", "arrow_wrap"),
+    (0x2AEAC, "03f02cfe", "same_wrap"),   # picked-up arrows join a matching quiver: never a regenerating one
+    (0x2AF22, "03f0f1fd", "same_wrap"),
+    # save slot pages
+    (0x307F0, "c046c046", "flip_r"),      # R on the save slot screen (free since tools/nodelete.py): other page
+    # arrow slots (Legolas)
+    (0x2AD0E, "00f0abf8", "apick_wrap"),  # picked-up arrows: worn quiver, then the arrow slots, then the backpack
 ]
 # link message 4 (never used by the game): send and receive cases
-LINK_CASES = [(0x3FE48, 0x0804006A, "send4"), (0x3F6AC, 0x0803FDAC, "recv4")]
+LINK_CASES = [(0x3FE48, 0x0804006A, "send4"), (0x3F6AC, 0x0803FDAC, "recv4"),
+              # link message 6 (never used either): one player's arrow slots, same 8-byte send case
+              (0x3FE50, 0x0804006A, "send4"), (0x3F6B4, 0x0803FDAC, "recv6"),
+              # link message 7: a player flicked GBA L (Legolas: next quiver on both GBAs)
+              (0x3FE54, 0x0804006A, "send4"), (0x3F6B8, 0x0803FDAC, "recv7")]
+# plain byte changes: (offset, original, new, what)
+BYTES = [(0x3CF8E, "0420", "4020", "the game's EEPROM library set up for the 64 Kbit chip (was 4 Kbit): room for page 2 and the arrow slots")]
 EXIT_PTR, EXIT_OLD = 0x6C8A8, 0x0802E875     # state 0x0A (Backpack) exit in the state table
+# more state table entries: (offset, original, hook)
+STATE_PTRS = [(0x6C898, 0x080306ED, "slot_upd"),   # state 9 (save slots) update: page flips and Undo requests
+              (0x6C8EC, 0x080397FD, "pause_upd")]  # state 0x10 (pause menu) update: Undo requests
 
 
 def patch(rom: bytearray) -> bytearray:
@@ -121,10 +160,19 @@ def patch(rom: bytearray) -> bytearray:
         if cur not in (orig, s[name]):
             raise SystemExit(f"unexpected link case at {at:#x}")
         struct.pack_into("<I", rom, at, s[name])
+    for off, old, new, _ in BYTES:
+        if bytes(rom[off:off + len(old) // 2]).hex() not in (old, new):
+            raise SystemExit(f"unexpected bytes at {off:#x}")
+        rom[off:off + len(new) // 2] = bytes.fromhex(new)
     cur = struct.unpack_from("<I", rom, EXIT_PTR)[0]
     if cur not in (EXIT_OLD, s["exit_hook"] | 1):
         raise SystemExit(f"unexpected state table entry at {EXIT_PTR:#x}")
     struct.pack_into("<I", rom, EXIT_PTR, s["exit_hook"] | 1)
+    for at, orig, name in STATE_PTRS:
+        cur = struct.unpack_from("<I", rom, at)[0]
+        if cur not in (orig, s[name] | 1):
+            raise SystemExit(f"unexpected state table entry at {at:#x}")
+        struct.pack_into("<I", rom, at, s[name] | 1)
     assert CODE_AT + len(code) <= 0x89864, "code runs into the German text bank"
     rom[CODE_AT:CODE_AT + len(code)] = code
     return rom

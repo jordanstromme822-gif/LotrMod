@@ -50,7 +50,7 @@
     } };
     // Joining without a reload (Jordan, 2026-11-08): tapping P2 pauses the game, picking a hero unpauses it
     // straight into the 2-player game (from the saved games), Cancel just unpauses.
-    let held = false;
+    let held = false, playLvl = 0;   // playLvl: the level last seen in play
     const hold = (on) => { if (held === on) return; held = on; try { M._rotk_pause(on ? 1 : 0); } catch (e) {} };
     const doJoin = async (cfg) => {
       if (disposed) return;
@@ -78,7 +78,7 @@
         add("Cancel", close);
         return;
       }
-      const m = mem(0), cur = m.ok ? m.r8(0x03005834) : -1, lvl = m.ok ? m.r8(0x030041F8) : 0;
+      const m = mem(0), cur = m.ok ? m.r8(0x03005834) : -1, lvl = playLvl || (m.ok ? m.r8(0x030041F8) : 0);
       const list = p2SlotInfo(readSave() || save).filter((s) => s && s.slot !== cur);
       if (list.length) { hold(true); try { prefetch && prefetch().catch(() => {}); } catch (e) {} }   // paused while picking; fetch the 2-player engine now
       h.textContent = list.length ? "Pick P2's hero" : "No other saved heroes";
@@ -86,7 +86,7 @@
       n.textContent = list.length ? "Game paused. Pick a hero to unpause with P2; the level starts again from your last save" + (lvl === 82 ? " (back in Moria)" : "") + "." : "Start another hero in a free slot first, then P2 can play it.";
       panel.appendChild(n);
       for (const s of list) add((P2_HEROES[s.hero] || "Hero") + " · level " + s.level, () => {
-        close(); doJoin({ p1: cur, p2: s.slot, moria: lvl === 82 });
+        close(); doJoin({ p1: cur, p2: s.slot, moria: lvl === 82, level: lvl });
       }, "p2-hero");
       add("Cancel", () => { close(); hold(false); });
     };
@@ -101,8 +101,9 @@
     if (linkOn) window.__mirrorIw = (off) => { const H8 = M.HEAPU8; H8[M._rotk_link_iwram(1) + off] = H8[M._rotk_link_iwram(0) + off]; };
     // The button shows while a hero is loaded in a level (state 1) or the game is paused, and always in a P2 game.
     every(() => {
-      let vis = linkOn;
-      if (!vis) try { const m = mem(0); const st = m.r32(0x030041B0) & 255; vis = m.ok && (st === 1 || st === 16) && m.r8(0x03005834) < 4; } catch (e) {}
+      // Only in the game's pause menu (Jordan, 2026-11-08), in 1 player and in a P2 game.
+      let vis = false;
+      try { const m = mem(0); const st = m.r32(0x030041B0) & 255; vis = m.ok && st === 16 && (linkOn || m.r8(0x03005834) < 4); if (m.ok && st === 1 && m.r8(0x030041F8)) playLvl = m.r8(0x030041F8); } catch (e) {}
       btn.hidden = !vis; if (!vis && !panel.hidden) { close(); hold(false); }
     }, 500);
     if (!link) return ctl;
@@ -116,7 +117,8 @@
     // Presses: [frame to start, p1 keys, p2 keys, frames held]. The boot runs from the title to the level start.
     let boot = { phase: "title", t: 0, presses: [], tries: 0 }, macro = null;
     const press = (p1k, p2k, hold, after) => { const f0 = boot.presses.length ? boot.presses[boot.presses.length - 1].end : frames(); boot.presses.push({ at: f0, p1: p1k, p2: p2k, until: f0 + hold, end: f0 + hold + after }); };
-    if (link.moria) try { M._rotk_link_level(82); } catch (e) {}
+    // P2 joins in the level you paused in (Jordan, 2026-11-08): Moria, a hero's own campaign, any level.
+    { const lv = link.level > 0 && link.level < 256 ? link.level : link.moria ? 82 : 0; if (lv) try { M._rotk_link_level(lv); } catch (e) {} }
     setBoot(0);
     const say = (t) => { $("mpBanner").textContent = t; $("mpBanner").hidden = !t; };
     // Gems P2 picks up go into your gem total too (Jordan, 2026-11-08): P2's own game is where its pickups count, so each
@@ -181,7 +183,9 @@
       }
     };
     const fail = (why) => { try { M._rotk_link_turbo && M._rotk_link_turbo(0); } catch (e) {} slog("boot failed: " + why); boot = null; setBoot(null); p2(0); say(""); p2Loading(false); show("P2 couldn't start the game: " + why + ". You can play on as P1.", 6000); };
-    const done = () => { try { M._rotk_link_turbo && M._rotk_link_turbo(0); } catch (e) {} slog("boot done, P1 slot " + link.p1 + ", P2 slot " + link.p2 + ", level " + mem(0).r8(0x030041F8)); boot = null; setBoot(null); p2(0); say(""); p2Loading(false); show("P2 joined", 2500); };
+    const done = () => { try { M._rotk_link_turbo && M._rotk_link_turbo(0); } catch (e) {} slog("boot done, P1 slot " + link.p1 + ", P2 slot " + link.p2 + ", level " + mem(0).r8(0x030041F8)); boot = null; setBoot(null); p2(0); say(""); p2Loading(false); show("P2 joined", 2500);
+      // The level's first seconds stay quiet and the sound fades in (Jordan heard extra music for ~4 s as P2 joined).
+      try { const g = window.GbrHost && window.GbrHost.gain, c = g && g.context; if (g && c) { g.gain.cancelScheduledValues(c.currentTime); g.gain.setValueAtTime(0, c.currentTime); g.gain.setValueAtTime(0, c.currentTime + 4); g.gain.linearRampToValueAtTime(1.1, c.currentTime + 5); } } catch (e) {} };
 
     // ---- Saves: both games keep their own copy; slot p2 comes from P2's game, the rest from P1's. ----
     const buf = M._malloc(512), copies = [save.slice(0, 512), save.slice(0, 512)], so = 0x40 + link.p2 * 0x70;
@@ -252,6 +256,7 @@
     // P2 picks up gear only when it beats what P2 wears (and anything of that kind in its pack) and the pack has room; it
     // never wears or throws gear away itself (Jordan, 2026-11-08), so it stays in the pack for you.
     const P2_WEARS = false;
+    let kiteT = 0, rangerShots = 0, p2CycT = 0;
     let plan = null, lastNote = 0, retreatT = 0, retreatCool = 0, castT2 = 0, castPend = null, eqPend = null, side = 1, lastGoalKey = "";
     const p2casts = {}, p2eq = [];
     const w8both = (a, v) => { const o = a & 0x7fff, H8 = M.HEAPU8; H8[M._rotk_link_iwram(0) + o] = v; H8[M._rotk_link_iwram(1) + o] = v; };
@@ -394,14 +399,41 @@
       const elite = (p) => (m.r8(p + 0x60) & 1) === 0 || (m.r16(p + 0x5A) << 16 >> 16) >= 40;
       const dist = (p) => { const [ex, ey] = pos(p); return Math.abs(ex - x) + Math.abs(ey - y); };
       const close = en.some((p) => dist(p) < 70);
+      // Ranger (Legolas, Jordan 2026-11-08): keeps bow distance behind P1, lines up on a row, column or diagonal
+      // before shooting, steps back when an enemy gets close, and shoots the enemies on P1 first.
+      const ranger = m.r8(P + 0x19F) === 1;
+      const onP1 = (p) => { const [ex, ey] = pos(p); return Math.abs(ex - px) + Math.abs(ey - py) < 44; };
+      const lined = (ex, ey) => {
+        const dx = ex - x, dy = ey - y, ax = Math.abs(dx), ay = Math.abs(dy);
+        if (ay <= 7 && ax >= 20 && ax <= 112) return true;
+        if (ax <= 7 && ay >= 20 && ay <= 76) return true;
+        return Math.abs(ax - ay) <= 8 && ax >= 18 && ax <= 76;
+      };
+      const rTargets = ranger ? en.slice().sort((a, b) => (onP1(b) - onP1(a)) * 2 + (elite(b) - elite(a)) || dist(a) - dist(b)) : [];
+      // spots to shoot target p from, nearest P2 first: on its row (either side), its column, its diagonals
+      const aimSpots = (p) => {
+        const [ex, ey] = pos(p), out = [];
+        for (const [ox, oy] of [[72, 0], [-72, 0], [56, 0], [-56, 0], [0, 52], [0, -52], [46, 46], [-46, 46], [46, -46], [-46, -46]]) {
+          const sx = ex + ox, sy = ey + oy;
+          if (freeAt(sx, sy) && clear(sx, sy, ex, ey)) out.push([sx, sy]);
+        }
+        // nearest P2, and on P1's side of the target (P1 stays the front line)
+        const c = (q) => Math.abs(q[0] - x) + Math.abs(q[1] - y) + 0.6 * (Math.abs(q[0] - px) + Math.abs(q[1] - py));
+        return out.sort((a, b) => c(a) - c(b));
+      };
       const fighting = now - p2HurtAt < 3000 && close;
       const food = (t) => t === 15 || t === 16 || t === 19, gear = (t) => t >= 25;
       const want = items.filter((p) => { const t = m.r8(p + 0x60); return food(t) ? hp < mhp && (!fighting || low) : !fighting && !(gear(t) && close); });
       en.sort((a, b) => elite(b) - elite(a));
-      dbg = { x, y, px, py, en: en.length, items: items.length, hp, mhp, retreat: !!retreatT, goal: lastGoalKey };
+      dbg = { x, y, px, py, en: en.length, items: items.length, hp, mhp, retreat: !!retreatT, goal: lastGoalKey, ranger, shots: rangerShots, near: en.length ? Math.min(...en.map(dist)) : -1 };
       const at = (p, r) => { const [ix, iy] = pos(p); return Math.abs(ix - x) <= r && Math.abs(iy - y) <= r; };
       // Low HP: food right next to P2 comes before anything else.
       if (low) for (const p of want) if (food(m.r8(p + 0x60)) && at(p, 8)) { seq([[K.R, 4], [0, 6]], f); return; }
+      // Legolas out of arrows: a short press of L puts on the next quiver from his arrow slots (v124, tools/orcslots).
+      if (ranger && now - p2CycT > 1500) {
+        const w = m.r32(P + 0x44), full = (v) => (v & 15) === 7 && ((v >>> 16) & 255) > 0;
+        if (!full(w) && (full(m.r32(0x0203F2A0 + 8 * idx)) || full(m.r32(0x0203F2A4 + 8 * idx))) && m.r8(0x0203F340 + idx) === 1) { p2CycT = now; seq([[K.L, 6], [0, 8]], f); return; }
+      }
       // Wear an upgrade picked up earlier (the game's Backpack menu: Start, move to it, A, A), when no enemy is near.
       if (P2_WEARS && !close && !eqPend && now - (wearT || 0) > 3000) {
         const k = toWear(m, P);
@@ -422,6 +454,37 @@
       // An unopened chest at P2's feet: open it (B, which works as R there, like the player's B).
       for (const p of list) if (m.r32(p + 0x14) === 0x08014a3d && !m.r8(p + 0x85) && (p2Tries.get(p) || 0) <= 6) {
         const [bx, by] = pos(p); if (bx - x >= -18 && bx - x <= 22 && Math.abs(by - y) <= 24) { p2Tries.set(p, (p2Tries.get(p) || 0) + 1); seq([[0, 6], [K.R, 6], [0, 20]], f); return; }
+      }
+      if (!retreatT && ranger && en.length) {
+        // Too close: step back away from the nearest enemy (toward P1's side), unless there is no room.
+        let near = null, nd = 1e9;
+        for (const p of en) { const d = dist(p); if (d < nd) { nd = d; near = p; } }
+        if (near && nd < 34 && now - (kiteT || 0) > 250) {
+          const [ex, ey] = pos(near); let ax = x - ex, ay = y - ey; const l = Math.hypot(ax, ay) || 1; ax /= l; ay /= l;
+          const bx = px - x, by = py - y, bl = Math.hypot(bx, by) || 1;
+          let tx = x + ax * 30 + bx / bl * 10, ty = y + ay * 24 + by / bl * 8;
+          if (!freeAt(Math.round(tx), Math.round(ty)) || !clear(x, y, tx, ty)) { tx = x + ay * 30; ty = y - ax * 24; if (!freeAt(Math.round(tx), Math.round(ty)) || !clear(x, y, tx, ty)) { tx = x - ay * 30; ty = y + ax * 24; } }
+          if (freeAt(Math.round(tx), Math.round(ty)) && clear(x, y, tx, ty)) { kiteT = now; plan = null; seq([[steerTo(x, y, tx, ty), 7]], f); return; }
+        }
+        // Lined up with a target and a clear shot: face it and shoot (skills on elites and groups).
+        for (const p of rTargets) {
+          const [ex, ey] = pos(p);
+          if (!lined(ex, ey) || !clear(x, y, ex, ey)) continue;
+          const face = steerTo(x, y, ex, ey) || 0;
+          const group = en.filter((q) => { const [qx, qy] = pos(q); return Math.abs(qx - ex) + Math.abs(qy - ey) <= 48; }).length >= 3;
+          if ((elite(p) || group) && now - castT2 > 1500 + Math.random() * 600) {
+            const s = pickSkill2(m, P, now);
+            if (s >= 0) {
+              castT2 = now;
+              w8both(0x03005820, m.r8(0x03005820) | 8); w8both(P + 0x19A, m.r8(P + 0x19A) | 2);
+              castPend = { s, old: m.r8(P + 0x193), sp0: m.r16(P + 0x17E), at: f + 40 };
+              w8both(P + 0x193, s);
+              seq([[face, 1], [K.L, 5], [K.L | K.R, 8], [K.L, 4], [0, 21]], f); return;
+            }
+          }
+          rangerShots++;
+          seq([[face, 1], [K.B, 4], [0, 4 + ((Math.random() * 5) | 0)]], f); return;
+        }
       }
       if (!retreatT) {
         // Hit an enemy next to P2 (elites first); skills on elites and groups.
@@ -461,7 +524,11 @@
           consider(Math.round(px + dx / l * 28), Math.round(py + dy / l * 20), 2, 0, "back");
         }
         if (!best && low) for (const p of want) { if (!food(m.r8(p + 0x60))) continue; const [ix, iy] = pos(p); consider(ix, iy, 1, 0, "food"); }
-        if (!best && !retreatT) for (const p of en) {
+        if (!best && !retreatT && ranger) for (const p of rTargets.slice(0, 3)) {
+          const sp = aimSpots(p);
+          for (const [sx, sy] of sp.slice(0, 3)) consider(sx, sy, 1, onP1(p) ? 30 : elite(p) ? 15 : 0, "aim");
+        }
+        if (!best && !retreatT && !ranger) for (const p of en) {
           let [ex, ey] = pos(p);
           // P1 is on this enemy already: come at it from the other side.
           const fx = ex - px, fy = ey - py, fl = Math.hypot(fx, fy);
@@ -473,6 +540,7 @@
           // Beside P1, on the side P2 is already on.
           if (Math.abs(x - px) > 10) side = x < px ? -1 : 1;
           let sx = px + side * 26, sy = py + 4;
+          if (ranger) { sx = px + side * 34; sy = py + 10; }
           if (!freeAt(sx, sy)) { sx = px - side * 26; if (freeAt(sx, sy)) side = -side; else { sx = px; sy = py; } }
           if (Math.abs(sx - x) + Math.abs(sy - y) > 18) consider(sx, sy, 1, 0, "follow");
         }
@@ -678,6 +746,11 @@
     } catch (e) { (window.__wideLog || (window.__wideLog = [])).push("sharp: " + (e && e.message || e)); return null; }
   }
   // Page side of the wide-view engine: pictures, buttons and sound go through one shared block in the engine's memory.
+  window.__wideHold = (ms) => {
+    WideHost.holdT = performance.now() + ms;
+    const g = WideHost.gain; if (!g || !g.gain || g.gain.value === 0) return;
+    const v = g.gain.value; g.gain.value = 0; setTimeout(() => { if (g.gain.value === 0) g.gain.value = v; }, ms);
+  };
   const WideHost = {
     canvas: null, ctx: null, img: null, keys: 1023, audio: null, out: null, audioT: 0, frames: 0, front: 0, d: null,
     attach(getBuf, ptr, d) { this.getBuf = getBuf; this.ptr = ptr; this.d = d; this.st("audioReady", 1); this.st("hostRate", 48000); return true; },
@@ -698,6 +771,7 @@
       this.st("keys", this.keys);
       const m = this.ld("middle");
       if (m & 4) { this.st("middle", this.front); this.front = m & 3; this.frames++; } else { this.pumpAudio(); return; }
+      if (this.holdT && performance.now() < this.holdT) { this.pumpAudio(); return; }   // picture held still (Undo's redraw flip)
       const base = this.ptr + this.d.video + this.front * this.d.videoStride, u = this.u32(), w = u[base >> 2], h = u[(base >> 2) + 1];
       if (w && h && w <= this.d.maxWidth && h <= this.d.maxHeight) {
         // The canvas matches the screen's own pixels and the picture fills the whole game area (Jordan, 2026-11-08).
