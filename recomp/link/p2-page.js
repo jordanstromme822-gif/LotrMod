@@ -256,7 +256,7 @@
     // P2 picks up gear only when it beats what P2 wears (and anything of that kind in its pack) and the pack has room; it
     // never wears or throws gear away itself (Jordan, 2026-11-08), so it stays in the pack for you.
     const P2_WEARS = false;
-    let kiteT = 0, rangerShots = 0;
+    let kiteT = 0, rangerShots = 0, p2CycT = 0;
     let plan = null, lastNote = 0, retreatT = 0, retreatCool = 0, castT2 = 0, castPend = null, eqPend = null, side = 1, lastGoalKey = "";
     const p2casts = {}, p2eq = [];
     const w8both = (a, v) => { const o = a & 0x7fff, H8 = M.HEAPU8; H8[M._rotk_link_iwram(0) + o] = v; H8[M._rotk_link_iwram(1) + o] = v; };
@@ -429,6 +429,11 @@
       const at = (p, r) => { const [ix, iy] = pos(p); return Math.abs(ix - x) <= r && Math.abs(iy - y) <= r; };
       // Low HP: food right next to P2 comes before anything else.
       if (low) for (const p of want) if (food(m.r8(p + 0x60)) && at(p, 8)) { seq([[K.R, 4], [0, 6]], f); return; }
+      // Legolas out of arrows: a short press of L puts on the next quiver from his arrow slots (v124, tools/orcslots).
+      if (ranger && now - p2CycT > 1500) {
+        const w = m.r32(P + 0x44), full = (v) => (v & 15) === 7 && ((v >>> 16) & 255) > 0;
+        if (!full(w) && (full(m.r32(0x0203F2A0 + 8 * idx)) || full(m.r32(0x0203F2A4 + 8 * idx))) && m.r8(0x0203F340 + idx) === 1) { p2CycT = now; seq([[K.L, 6], [0, 8]], f); return; }
+      }
       // Wear an upgrade picked up earlier (the game's Backpack menu: Start, move to it, A, A), when no enemy is near.
       if (P2_WEARS && !close && !eqPend && now - (wearT || 0) > 3000) {
         const k = toWear(m, P);

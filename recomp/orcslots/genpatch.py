@@ -35,6 +35,10 @@ PAIRS = [(0x0802DBE0, "db90_stub"), (0x0803CC08, "pack_stub"), (0x0802CC60, "nav
          (0x0803A6EC, "drop_stub"), (0x0803A746, "find_cap"), (0x0802EF32, "chest_cap"), (0x0803AF54, "gem_cap"),
          (0x080307F0, "flip_r")]
 
+# movs r0,#4 -> #0x40 at 0x0803CF8E: the game's EEPROM library set up for the 64 Kbit chip (v124)
+IMM = [(0x0803CF8E, "0x00000004u", "0x00000040u")]
+IMM_WHY = {0x0803CF8E: "64 Kbit EEPROM"}
+
 CALL = """    /* {S:08X}  LotrMod Orc Head slots: bl {name} */
     {{
     g_cpu.R[15] = 0x{S:08X}u;
@@ -79,6 +83,8 @@ def main(gen, symfile):
         for a, name in BL:
             pat = re.compile(r"(uint32_t _blt_%08X = )[^;]*;" % a)
             new = pat.sub(lambda m: m.group(1) + "0x%08Xu; /* LotrMod Orc Head slots: %s */" % (sym[name], name), new)
+        for a, old, val in IMM:   # plain constant changes (tools/orcslots.py BYTES)
+            new = new.replace("_r_%08X = %s;" % (a, old), "_r_%08X = %s; /* LotrMod: %s */" % (a, val, IMM_WHY[a]))
         for s, name in PAIRS:
             b = block(new, s)
             if not b:

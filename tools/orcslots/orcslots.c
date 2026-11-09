@@ -213,6 +213,16 @@ static u32 with_count(u32 w, int n) { return (w & 0xFF00FFFFu) | ((u32)(n & 0xFF
 #define AREADY  (*(volatile u8 *)0x0203F312)         /* the page has put the stored AKEEP in */
 #define ACYC    (*(volatile u8 *)0x0203F313)         /* the page's L button (Legolas, in play): next quiver */
 #define NOARROW 0xFFFFFFFFu
+/* 2-player games (v124): each GBA sends its player's 2 slots once (link message 6, recv6 in stubs.s), both GBAs
+   take them on the same frame (ALV[p] = 1 from then on), and pickups and quiver changes run the same on both. */
+#define ALINK   ((volatile u32 (*)[2])0x0203F320)    /* [player][2]: slots that came in by link message 6 */
+#define ALV     ((volatile u8 *)0x0203F340)          /* [player]: 2 = just came in, 1 = in step on both GBAs */
+#define LTAP    ((volatile u8 *)0x0203F344)          /* [player]: ticks since GBA L last changed (0xFF = none, or A/B/R since) */
+#define LPREV   ((volatile u8 *)0x0203F348)          /* [player]: GBA L held at the last gameplay tick */
+#define ACP     ((volatile u8 *)0x0203F34C)          /* [player]: 2 = link message 7 came in: next quiver (recv7) */
+#define ACYC_MSG 7
+#define HELD(p) (*(volatile u16 *)(0x03004088u + 2u * (p)))
+#define ALINK_MSG 6
 #define AFIRST  24                                  /* cursor values 24, 25 are the arrow slots */
 #define HERO_ID(p) (*(volatile u8 *)(HERO + (p) * HERO_SZ + 0x19F))
 #define AE68(it, p)            ((fn4)0x0802AE69)((int)(it), p, 0, 0)
@@ -290,13 +300,13 @@ int same_wrap(u32 a, u32 b)
 
 /* the page's L: the worn quiver goes to the end of the arrow slots and the first one is put on, with the game's own
    item stat steps (take off, put on, weapon flags) */
-static void a_cycle(int p)
+static void a_cycle(int p, int quiet)
 {
     u32 *it = inv(p);
     q_sync(p);
     a_norm(p);
     u32 w0 = it[2], n0 = w0, n1 = ASLOT[p][0], n2 = ASLOT[p][1];
-    if ((!is_arrow(w0) && (w0 & 0xF) != 0xF) || (!is_arrow(n1) && !is_arrow(n2))) { SOUND(5); return; }
+    if ((!is_arrow(w0) && (w0 & 0xF) != 0xF) || (!is_arrow(n1) && !is_arrow(n2))) { if (!quiet) SOUND(5); return; }
     for (int k = 0; k < 2; k++) { u32 t = n0; n0 = n1; n1 = n2; n2 = t; if (is_arrow(n0)) break; }
     ASLOT[p][0] = is_arrow(n1) ? n1 : NOARROW;
     ASLOT[p][1] = is_arrow(n2) ? n2 : NOARROW;
@@ -308,7 +318,7 @@ static void a_cycle(int p)
     if ((it[2] >> 16) & 0xFF) HFLAGS(p) |= ARROWS_ON;
     *(volatile u32 *)(0x03003F70 + p * 0x7C + 0x70) |= 0x4000;   /* the game's arrow count label */
     *(volatile u8 *)(0x03003F70 + p * 0x7C + 0x79) = 0x14;
-    SOUND(2);
+    if (p == LOCAL_P) SOUND(2);
 }
 
 /* picking up arrows (0x0802ACE8 -> 0x0802AE68): with no worn quiver the game puts them on, a matching worn quiver
@@ -316,7 +326,7 @@ static void a_cycle(int p)
 int apick_wrap(u32 *item, int p)
 {
     u32 w = *item, *it = inv(p);
-    if (LINKED || !is_leg(p) || !is_arrow(w) || !is_arrow(it[2]) || same_wrap(it[2], w)) return AE68(item, p);
+    if ((LINKED && ALV[p] != 1) || !is_leg(p) || !is_arrow(w) || !is_arrow(it[2]) || same_wrap(it[2], w)) return AE68(item, p);
     a_norm(p);
     int n = (w >> 16) & 0xFF;
     if (!is_regen(w))
@@ -366,6 +376,7 @@ void ac24_wrap(int p, int rem)
 
 /* ---- 2-player games: every GBA sends its player's slot heads once (link message 4); recv4 (stubs.s)
    stores them on both GBAs on the same frame and the next gameplay frame puts them on. ---- */
+static void x_check(void);
 int gp_hook(int a, int b, int c, int d)
 {
     int r = GP_FRAME(a, b, c, d);
@@ -384,11 +395,25 @@ int gp_hook(int a, int b, int c, int d)
         int p = LOCAL_P;
         SENT = 1;
         LINK_SEND(LINK_MSG, CODE[p][0] | (CODE[p][1] << 16), CODE[p][2] | (CODE[p][3] << 16), 0);
+        if (p < 2) { a_norm(p); LINK_SEND(ALINK_MSG, ASLOT[p][0], ASLOT[p][1], 0); }
     }
+    for (int p = 0; p < 2; p++)                        /* arrow slots that came from the other GBA: both GBAs, same frame */
+        if (ALV[p] == 2) { ASLOT[p][0] = ALINK[p][0]; ASLOT[p][1] = ALINK[p][1]; a_norm(p); ALV[p] = 1; }
     for (int p = 0; p < 4; p++)                        /* heads that came from the other GBA: both GBAs, same frame */
         if (CONFV[p] == 2) { CONFV[p] = 1; set_applied(p, CONF[p], cnt(p)); }
     if (DUPELOCK && !SESSV) { SESSPG = PAGE; SESSV = 1; } else if (!DUPELOCK) SESSV = 0;
-    if (ACYC) { ACYC = 0; if (!LINKED && is_leg(LOCAL_P)) a_cycle(LOCAL_P); }
+    if (ACYC) { ACYC = 0; if (!LINKED && is_leg(LOCAL_P)) a_cycle(LOCAL_P, 0); }
+    if (LINKED && LOCAL_P < 2) {                       /* 2-player: GBA L flicked (changed twice within 8 ticks, no A/B/R */
+        int p = LOCAL_P, k = HELD(p), l = (k >> 9) & 1; /* between) puts on the next quiver. The page holds L for its */
+        if (k & 0x103) LTAP[p] = 0xFF;                 /* Quick Skills, so a flick is a short release or a short press. */
+        if (l != LPREV[p]) {                           /* Only this GBA sees its player's buttons, so it sends link */
+            LPREV[p] = l;                              /* message 7 and both GBAs change quivers when it comes in. */
+            if (LTAP[p] <= 8 && ALV[p] == 1 && is_leg(p)) { LINK_SEND(ACYC_MSG, p, 0, 0); LTAP[p] = 0xFF; } else LTAP[p] = 0;
+        } else if (LTAP[p] < 0xFE) LTAP[p]++;
+    }
+    for (int p = 0; p < 2; p++)
+        if (ACP[p] == 2) { ACP[p] = 0; if (ALV[p] == 1 && is_leg(p)) a_cycle(p, 1); }
+    x_check();
     QCLK++;
     q_frame(0);
     if (LINKED) q_frame(1);
@@ -417,7 +442,7 @@ void unpack_c(const u8 *h, int p)
     APPN[p] = 0;
     SENT = 0;
     if (p < 2) { QMAX[p] = 0; DEBTN[p] = 0; }          /* its quiver comes in packed: full */
-    if (p < 2) { ASLOT[p][0] = s >= 0 ? ASAVED[s][0] : NOARROW; ASLOT[p][1] = s >= 0 ? ASAVED[s][1] : NOARROW; a_norm(p); }
+    if (p < 2) { ASLOT[p][0] = s >= 0 ? ASAVED[s][0] : NOARROW; ASLOT[p][1] = s >= 0 ? ASAVED[s][1] : NOARROW; a_norm(p); ALV[p] = 0; LTAP[p] = 0xFF; }
 }
 
 /* ---- a second page of 4 save slots (Jordan, 2026-11-08: "8 in total") ----
@@ -436,16 +461,60 @@ static void empty_page(void)
     PREADY = 1; PGEN++;
 }
 
+/* ---- the 64 Kbit save chip (v124; Jordan, 2026-11-08: "Yes bigger save file") ----
+   The game's EEPROM library is set up for 64 Kbit (tools/orcslots.py: 0x0803CF8E), so blocks 64-1023 are free.
+   Page 2 and the arrow slots now live in the save file too: block 64 is the marker, 65-120 page 2's 4 slots
+   (14 blocks each, as PBUF), 121-124 their slot heads (PHEAD), 125-132 the arrow slots of every save slot (AKEEP,
+   one block per page and slot). An old 4 Kbit save has no marker (the rest reads 0xFF): the page puts its stored
+   copies in as before and then asks (XREQ) for all of it to be written. */
+#define XSTATE  (*(volatile u8 *)0x0203F314)         /* 0 not looked at yet, 1 the save file holds them, 2 not yet */
+#define XREQ    (*(volatile u8 *)0x0203F315)         /* the page: my stored copies are in, write them */
+#define XB_MARK 64
+#define XB_PAGE 65
+#define XB_HEAD 121
+#define XB_AKEEP 125
+#define XMARK0  0x52544F4Cu                          /* "LOTRXT01" */
+#define XMARK1  0x31305458u
+static void x_write_all(void)
+{
+    volatile u32 m[2];
+    if (!PREADY) empty_page();
+    EE_WRITE(XB_PAGE, 56, PBUF);
+    EE_WRITE(XB_HEAD, 4, PHEAD);
+    EE_WRITE(XB_AKEEP, 8, AKEEP);
+    m[0] = XMARK0; m[1] = XMARK1;
+    EE_WRITE(XB_MARK, 1, m);
+    XSTATE = 1;
+}
+static void x_check(void)
+{
+    if (XSTATE == 2 && XREQ) { XREQ = 0; x_write_all(); }
+    if (XSTATE) return;
+    volatile u32 m[2];
+    EE_READ(XB_MARK, 1, m);
+    if (m[0] != XMARK0 || m[1] != XMARK1) { XSTATE = 2; return; }
+    EE_READ(XB_PAGE, 56, PBUF);
+    EE_READ(XB_HEAD, 4, PHEAD);
+    EE_READ(XB_AKEEP, 8, AKEEP);
+    PREADY = 1; AREADY = 1; PGEN++; AGEN++;          /* the page keeps its backup copies of them */
+    XSTATE = 1;
+}
+static void x_akeep(int pg, int slot) { if (XSTATE == 1) EE_WRITE(XB_AKEEP + pg * 4 + slot, 1, AKEEP[pg][slot]); }
+
 int save_wrap(int src, int slot)
 {
+    x_check();
     if (PAGE) {
         cpy(PBUF + slot * 0x70, (const volatile u8 *)src, 0x70);
         for (int i = 0; i < 4; i++) PHEAD[slot][i] = SAVED[slot][i];
         AKEEP[1][slot][0] = ASAVED[slot][0]; AKEEP[1][slot][1] = ASAVED[slot][1]; AGEN++;
         PGEN++;
+        if (XSTATE == 1) { EE_WRITE(XB_PAGE + 14 * slot, 14, PBUF + slot * 0x70); EE_WRITE(XB_HEAD + slot, 1, PHEAD[slot]); }
+        x_akeep(1, slot);
         return 0;
     }
     AKEEP[0][slot][0] = ASAVED[slot][0]; AKEEP[0][slot][1] = ASAVED[slot][1]; AGEN++;
+    x_akeep(0, slot);
     int r = SLOT_WRITE(src, slot);
     cpy(SAVEHDR + 8 + 8 * slot, (const volatile u8 *)SAVED[slot], 8);
     volatile u16 *hw = (volatile u16 *)SAVEHDR;        /* the game's header checksum, then all 8 header blocks */
@@ -458,6 +527,7 @@ int save_wrap(int src, int slot)
 
 int load_wrap(int dst, int slot)
 {
+    x_check();
     ASAVED[slot][0] = AKEEP[PAGE & 1][slot][0]; ASAVED[slot][1] = AKEEP[PAGE & 1][slot][1];
     if (PAGE) {
         if (!PREADY) empty_page();
@@ -514,6 +584,7 @@ static void undo_apply(void)
 
 static void menu_service(void)
 {
+    x_check();
     if (FLIPREQ) { FLIPREQ = 0; flip(); }
     if (UREQ) { UREQ = 0; undo_apply(); }
 }

@@ -22,7 +22,7 @@ sha1 = "dd6d504c587ce487c983968f4f01748457b30ed8"
 
 [save]
 type = "eeprom"
-size = 512
+size = 8192
 path = "saves/rotk-modded.sav"
 
 [runtime]
@@ -1892,43 +1892,31 @@ addr = 0x0807F02C
 mode = "thumb"
 
 [[extra_func]]
-addr = 0x0807F052
+addr = 0x0807F044
 mode = "thumb"
 
 [[extra_func]]
-addr = 0x0807F066
+addr = 0x0807F070
 mode = "thumb"
 
 [[extra_func]]
-addr = 0x0807F078
+addr = 0x0807F096
 mode = "thumb"
 
 [[extra_func]]
-addr = 0x0807F092
+addr = 0x0807F0AA
 mode = "thumb"
 
 [[extra_func]]
-addr = 0x0807F0A4
+addr = 0x0807F0BC
 mode = "thumb"
 
 [[extra_func]]
-addr = 0x0807F0BA
+addr = 0x0807F0D6
 mode = "thumb"
 
 [[extra_func]]
-addr = 0x0807F0C6
-mode = "thumb"
-
-[[extra_func]]
-addr = 0x0807F0D2
-mode = "thumb"
-
-[[extra_func]]
-addr = 0x0807F0E2
-mode = "thumb"
-
-[[extra_func]]
-addr = 0x0807F0EE
+addr = 0x0807F0E8
 mode = "thumb"
 
 [[extra_func]]
@@ -1936,153 +1924,185 @@ addr = 0x0807F0FE
 mode = "thumb"
 
 [[extra_func]]
-addr = 0x0807F10C
+addr = 0x0807F10A
 mode = "thumb"
 
 [[extra_func]]
-addr = 0x0807F140
+addr = 0x0807F116
 mode = "thumb"
 
 [[extra_func]]
-addr = 0x0807F1D4
+addr = 0x0807F126
 mode = "thumb"
 
 [[extra_func]]
-addr = 0x0807F248
+addr = 0x0807F132
 mode = "thumb"
 
 [[extra_func]]
-addr = 0x0807F3C8
+addr = 0x0807F142
 mode = "thumb"
 
 [[extra_func]]
-addr = 0x0807F554
+addr = 0x0807F150
 mode = "thumb"
 
 [[extra_func]]
-addr = 0x0807F5CC
+addr = 0x0807F184
 mode = "thumb"
 
 [[extra_func]]
-addr = 0x0807F828
+addr = 0x0807F218
 mode = "thumb"
 
 [[extra_func]]
-addr = 0x0807F8A4
+addr = 0x0807F28C
 mode = "thumb"
 
 [[extra_func]]
-addr = 0x0807F99C
+addr = 0x0807F41C
 mode = "thumb"
 
 [[extra_func]]
-addr = 0x0807FB3C
+addr = 0x0807F5A8
 mode = "thumb"
 
 [[extra_func]]
-addr = 0x0807FC18
+addr = 0x0807F620
 mode = "thumb"
 
 [[extra_func]]
-addr = 0x0807FCF8
+addr = 0x0807F8E4
 mode = "thumb"
 
 [[extra_func]]
-addr = 0x0807FE26
+addr = 0x0807FA3C
 mode = "thumb"
 
 [[extra_func]]
-addr = 0x0807FE34
+addr = 0x0807FB38
 mode = "thumb"
 
 [[extra_func]]
-addr = 0x0807FEEC
+addr = 0x0807FBB4
 mode = "thumb"
 
 [[extra_func]]
-addr = 0x0807FF1C
+addr = 0x0807FCAC
 mode = "thumb"
 
 [[extra_func]]
-addr = 0x08080050
+addr = 0x0807FE4C
 mode = "thumb"
 
 [[extra_func]]
-addr = 0x08080080
+addr = 0x0807FF3C
 mode = "thumb"
 
 [[extra_func]]
-addr = 0x080801B0
+addr = 0x08080088
 mode = "thumb"
 
 [[extra_func]]
-addr = 0x0808023C
+addr = 0x08080168
 mode = "thumb"
 
 [[extra_func]]
-addr = 0x08080394
+addr = 0x080801E8
 mode = "thumb"
 
 [[extra_func]]
-addr = 0x0808040C
+addr = 0x080801F4
 mode = "thumb"
 
 [[extra_func]]
-addr = 0x080804B8
+addr = 0x080802AC
 mode = "thumb"
 
 [[extra_func]]
-addr = 0x08080580
+addr = 0x080802DC
 mode = "thumb"
 
 [[extra_func]]
-addr = 0x08080708
+addr = 0x08080414
 mode = "thumb"
 
 [[extra_func]]
-addr = 0x0808085C
+addr = 0x08080444
 mode = "thumb"
 
 [[extra_func]]
-addr = 0x08080954
+addr = 0x08080574
 mode = "thumb"
 
 [[extra_func]]
-addr = 0x08080BA0
+addr = 0x08080600
 mode = "thumb"
 
 [[extra_func]]
-addr = 0x08080C10
+addr = 0x08080758
 mode = "thumb"
 
 [[extra_func]]
-addr = 0x08080C60
+addr = 0x080807D0
 mode = "thumb"
 
 [[extra_func]]
-addr = 0x08080CAC
+addr = 0x0808087C
 mode = "thumb"
 
 [[extra_func]]
-addr = 0x08080CF4
+addr = 0x08080944
 mode = "thumb"
 
 [[extra_func]]
-addr = 0x08080D3C
+addr = 0x08080ACC
 mode = "thumb"
 
 [[extra_func]]
-addr = 0x08080D6C
+addr = 0x08080C20
 mode = "thumb"
 
 [[extra_func]]
-addr = 0x080812D4
+addr = 0x08080D18
 mode = "thumb"
 
 [[extra_func]]
-addr = 0x0808130C
+addr = 0x08080F64
 mode = "thumb"
 
 [[extra_func]]
-addr = 0x08081354
+addr = 0x08080FD4
+mode = "thumb"
+
+[[extra_func]]
+addr = 0x08081024
+mode = "thumb"
+
+[[extra_func]]
+addr = 0x08081070
+mode = "thumb"
+
+[[extra_func]]
+addr = 0x080810B8
+mode = "thumb"
+
+[[extra_func]]
+addr = 0x08081100
+mode = "thumb"
+
+[[extra_func]]
+addr = 0x08081130
+mode = "thumb"
+
+[[extra_func]]
+addr = 0x08081698
+mode = "thumb"
+
+[[extra_func]]
+addr = 0x080816D0
+mode = "thumb"
+
+[[extra_func]]
+addr = 0x08081718
 mode = "thumb"

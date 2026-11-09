@@ -10,7 +10,7 @@ It acts like the auto except P2 stays on Auto's screen." Picture: Wide 60 fps.
   game in a `gbarecomp::GbaMultiplayerSession` joined by the link cable, shows only game 0 (P1) with
   the wide view and in-between pictures, and takes P2's buttons from the page (`rotk_link_p2`).
 - Exports for the page: `rotk_link_on`, `rotk_link_frames`, `rotk_link_iwram(i)`, `rotk_link_ewram(i)`,
-  `rotk_link_save(i, out)` (512-byte EEPROM copy, returns 1 when changed), `rotk_link_level(82)`
+  `rotk_link_save(i, out)` (8 KB EEPROM copy since v124, returns 1 when changed), `rotk_link_level(82)`
   (forces Moria on both games while the level is still pending after Choose Your Path).
 - The session needs every guest PC to have native code, so:
   - the Cult-of-GBA BIOS is recompiled too (`cobios.toml`, generated into the runtime with

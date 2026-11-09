@@ -356,7 +356,7 @@ static int run_link(const gbarecomp::RunOptions& opts) {
         m.bus.set_bios(&g_link_bios);
         m.bus.set_rom(g_link_rom.data(), g_link_rom.size());
         auto& save = m.bus.save();
-        save.configure_eeprom(512);
+        save.configure_eeprom(8192);   // the 64 Kbit chip (v124); an older 512-byte save is its first blocks
         const auto bytes = read_all(sav[i]);
         if (!bytes.empty() && !save.load_eeprom_bytes(bytes.data(), bytes.size()))
             std::fprintf(stderr, "[rotk:link] save %u has the wrong size\n", i);
@@ -506,12 +506,15 @@ unsigned rotk_link_hash() {
     }
     return h;
 }
-// Copies game i's 512-byte save into out; returns 1 if it changed since the last call for that game.
+// Copies game i's save (8 KB, the 64 Kbit chip; padded with 0xFF if smaller) into out; returns 1 if it changed
+// since the last call for that game.
 int rotk_link_save(int i, std::uint8_t* out) {
     if (!g_link) return -1;
     auto& s = g_link->machine(i & 1).bus.save();
     const auto b = s.eeprom_bytes();
-    std::memcpy(out, b.data(), std::min<std::size_t>(b.size(), 512));
+    const std::size_t n = std::min<std::size_t>(b.size(), 8192);
+    std::memcpy(out, b.data(), n);
+    if (n < 8192) std::memset(out + n, 0xFF, 8192 - n);
     const bool dirty = s.dirty(); s.clear_dirty();
     return dirty ? 1 : 0;
 }

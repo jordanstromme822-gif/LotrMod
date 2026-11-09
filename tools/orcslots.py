@@ -43,8 +43,13 @@ How it works (details in docs/findings.md, "Orc Head slots" and "Orc Head tiers"
     saved-over slot while the save screen or pause menu is open.
   - Arrow slots (v123): Legolas gets 2 arrow-only slots under the Orc Head slots. Picked-up
     arrows that don't go on the worn quiver fill them before the backpack; the page's L
-    button (ACYC) puts on the next quiver. The page keeps them per save slot (the EEPROM
-    is full). Off in 2-player games.
+    button (ACYC) puts on the next quiver.
+  - 64 Kbit save chip (v124): one byte sets the game's EEPROM library up for the 8 KB chip,
+    and page 2, its slot heads and the arrow slots are kept in blocks 64-132 (marker
+    "LOTRXT01" in block 64). Old 512-byte saves get them from the page's copies once.
+  - Arrow slots in 2-player games (v124): link message 6 sends each player's 2 slots; a
+    flick of GBA L (changed twice within 8 ticks, no A, B or R) sends link message 7, and
+    both GBAs put on the next quiver when it comes in.
   - 2-player games: each GBA sends its player's slot heads once as link message 4
     (unused by the game); both GBAs put the bonuses on when it arrives.
 
@@ -127,7 +132,13 @@ BL_SITES = [
     (0x2AD0E, "00f0abf8", "apick_wrap"),  # picked-up arrows: worn quiver, then the arrow slots, then the backpack
 ]
 # link message 4 (never used by the game): send and receive cases
-LINK_CASES = [(0x3FE48, 0x0804006A, "send4"), (0x3F6AC, 0x0803FDAC, "recv4")]
+LINK_CASES = [(0x3FE48, 0x0804006A, "send4"), (0x3F6AC, 0x0803FDAC, "recv4"),
+              # link message 6 (never used either): one player's arrow slots, same 8-byte send case
+              (0x3FE50, 0x0804006A, "send4"), (0x3F6B4, 0x0803FDAC, "recv6"),
+              # link message 7: a player flicked GBA L (Legolas: next quiver on both GBAs)
+              (0x3FE54, 0x0804006A, "send4"), (0x3F6B8, 0x0803FDAC, "recv7")]
+# plain byte changes: (offset, original, new, what)
+BYTES = [(0x3CF8E, "0420", "4020", "the game's EEPROM library set up for the 64 Kbit chip (was 4 Kbit): room for page 2 and the arrow slots")]
 EXIT_PTR, EXIT_OLD = 0x6C8A8, 0x0802E875     # state 0x0A (Backpack) exit in the state table
 # more state table entries: (offset, original, hook)
 STATE_PTRS = [(0x6C898, 0x080306ED, "slot_upd"),   # state 9 (save slots) update: page flips and Undo requests
@@ -149,6 +160,10 @@ def patch(rom: bytearray) -> bytearray:
         if cur not in (orig, s[name]):
             raise SystemExit(f"unexpected link case at {at:#x}")
         struct.pack_into("<I", rom, at, s[name])
+    for off, old, new, _ in BYTES:
+        if bytes(rom[off:off + len(old) // 2]).hex() not in (old, new):
+            raise SystemExit(f"unexpected bytes at {off:#x}")
+        rom[off:off + len(new) // 2] = bytes.fromhex(new)
     cur = struct.unpack_from("<I", rom, EXIT_PTR)[0]
     if cur not in (EXIT_OLD, s["exit_hook"] | 1):
         raise SystemExit(f"unexpected state table entry at {EXIT_PTR:#x}")

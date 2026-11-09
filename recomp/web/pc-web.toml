@@ -22,7 +22,7 @@ sha1 = "dd6d504c587ce487c983968f4f01748457b30ed8"
 
 [save]
 type = "eeprom"
-size = 512
+size = 8192
 path = "saves/rotk-modded.sav"
 
 [runtime]

@@ -27,6 +27,42 @@ recv4:
     bx r0
     .pool
     .align 2
+@ Receive case for link message 7 (v124): player r9 flicked L (Legolas: next quiver). ACP[p] = 2; gp_hook does it.
+    .global recv7
+    .thumb_func
+recv7:
+    mov r0, r9
+    cmp r0, #1
+    bhi 1f
+    ldr r2, =0x0203F34C
+    movs r1, #2
+    strb r1, [r2, r0]
+1:  ldr r0, =0x0803FDAD
+    bx r0
+    .pool
+    .align 2
+@ Receive case for link message 6 (v124): one player's 2 arrow slots (Legolas). Self-contained like recv4.
+@ Stores them (ALINK[p], 0x0203F320 + 8 p) and marks them pending (ALV[p] = 2); gp_hook puts them in.
+    .global recv6
+    .thumb_func
+recv6:
+    mov r0, r9
+    cmp r0, #1
+    bhi 1f
+    lsls r1, r0, #3
+    ldr r2, =0x0203F320
+    adds r2, r2, r1
+    ldr r1, [r6, #4]
+    str r1, [r2]
+    ldr r1, [r6, #8]
+    str r1, [r2, #4]
+    ldr r2, =0x0203F340
+    movs r1, #2
+    strb r1, [r2, r0]
+1:  ldr r0, =0x0803FDAD
+    bx r0
+    .pool
+    .align 2
 @ 0x0802DBE0: keepsake path of the item stat routine. r5 = item, sl = slot, sb = player.
 @ For an Orc Head in slots 0-15, hand back a base that makes the hero-id check right after
 @ (byte at hero + 0x19F == 7, Smeagol, who gets no keepsake bonus) take its "no bonus" exit.
