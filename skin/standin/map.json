@@ -1,0 +1,10 @@
+{
+ "cell": 36,
+ "per": 16,
+ "keys": [
+  "standin:wayfarer/idle/0",
+  "standin:wayfarer/idle/1",
+  "standin:wayfarer/stride/0",
+  "standin:wayfarer/stride/1"
+ ]
+}

@@ -1,0 +1,30 @@
+{
+ "standin": true,
+ "tiles": [
+  {
+   "key": "standin:wayfarer/idle/0",
+   "name": "wayfarer/idle/0",
+   "frame": "idle",
+   "standin": true
+  },
+  {
+   "key": "standin:wayfarer/idle/1",
+   "name": "wayfarer/idle/1",
+   "frame": "idle",
+   "standin": true
+  },
+  {
+   "key": "standin:wayfarer/stride/0",
+   "name": "wayfarer/stride/0",
+   "frame": "stride",
+   "standin": true
+  },
+  {
+   "key": "standin:wayfarer/stride/1",
+   "name": "wayfarer/stride/1",
+   "frame": "stride",
+   "standin": true
+  }
+ ],
+ "dropIn": "Replace standin: keys with the cut.py FNV key (%08x%08x%d of tile bytes, palette bytes, 8bpp flag). Author tiles at 16x16. Copy atlas.png, map.json and normals.png to the Play Room skin/ folder. Crisp skin stays off until rotk-crisp is on."
+}
