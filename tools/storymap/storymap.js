@@ -85,6 +85,7 @@
           const x = document.createElement("button"); x.type = "button"; x.className = "sm-close"; x.textContent = "Close"; x.addEventListener("click", (e) => { e.preventDefault(); close(); }); top.appendChild(x);
           box.appendChild(top);
           const sc = document.createElement("div"); sc.className = "sm-scroll"; box.appendChild(sc);
+          pinch(sc);
           sc.addEventListener("click", (e) => { const b = e.target.closest(".sm-b[data-l]"); if (b) { e.preventDefault(); pic(+b.dataset.l); } });
           if (tab === "bonus") { bonusGrid(sc, window.innerHeight <= 500); return box; }
           const g = document.createElement("div"); g.className = "sm-grid"; const small = window.innerHeight <= 500; g.style.gridTemplateColumns = (small ? "78px" : "112px") + " repeat(" + L.cols + ", " + (small ? 72 : 92) + "px)"; sc.appendChild(g);
@@ -112,6 +113,25 @@
           foot.textContent = "Enemy counts are the monsters placed on each screen, sized by hit points (small under 40, medium under 150, large 150 and up). Spawners keep making more. Read from the game: where each mission starts, which screen each exit leads to, and the story scenes. Red marks are my reading of the story scenes; a few side screens the story never walks through are left out.";
           sc.appendChild(foot);
           return box;
+        }
+        // Pinch with two fingers (or Ctrl + mouse wheel / trackpad pinch on PC) to zoom the whole grid in and out (Jordan, 2026-11-10).
+        let gz = 1;
+        function pinch(sc) {
+          const setZ = (z, fx, fy) => {
+            z = Math.min(2.5, Math.max(0.25, z)); const kids = sc.children; if (!kids.length) return;
+            const r = sc.getBoundingClientRect(), x = fx - r.left, y = fy - r.top, px = (sc.scrollLeft + x) / gz, py = (sc.scrollTop + y) / gz;
+            gz = z; for (const k of kids) k.style.zoom = z;
+            sc.scrollLeft = px * z - x; sc.scrollTop = py * z - y;
+          };
+          requestAnimationFrame(() => { for (const k of sc.children) k.style.zoom = gz; });
+          let st = null;
+          const dist = (t) => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
+          sc.addEventListener("touchstart", (e) => { if (e.touches.length === 2) { st = { d: dist(e.touches), z: gz }; e.preventDefault(); } }, { passive: false });
+          sc.addEventListener("touchmove", (e) => { if (st && e.touches.length === 2) { e.preventDefault(); const t = e.touches; setZ(st.z * dist(t) / st.d, (t[0].clientX + t[1].clientX) / 2, (t[0].clientY + t[1].clientY) / 2); } }, { passive: false });
+          sc.addEventListener("touchend", (e) => { if (e.touches.length < 2) st = null; });
+          // iPhone Safari sends its own gesture events for a pinch; stop the page zooming.
+          ["gesturestart", "gesturechange"].forEach((n) => sc.addEventListener(n, (e) => e.preventDefault()));
+          sc.addEventListener("wheel", (e) => { if (e.ctrlKey) { e.preventDefault(); setZ(gz * Math.exp(-e.deltaY / 200), e.clientX, e.clientY); } }, { passive: false });
         }
         // Tap or click a block: overhead picture of the screen with no monsters (captured from the game, tools/storymap/cap.py).
         let pv = null, zoom = 0;

@@ -206,7 +206,8 @@
   #storyMap .sm-leg { display: flex; gap: 14px; flex-wrap: wrap; flex: 1; font-size: 12px; color: #c9c7bf; }
   #storyMap .sm-leg b { display: inline-block; width: 14px; height: 14px; border-radius: 3px; vertical-align: -3px; margin-right: 5px; }
   #storyMap .sm-close { height: 36px; padding: 0 16px; border-radius: 18px; border: 2px solid #d8b25a; background: rgba(14,11,8,0.82); color: #f3ead6; font: 700 14px var(--display, serif); cursor: pointer; }
-  #storyMap .sm-scroll { flex: 1; overflow: auto; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; }
+  #storyMap .sm-scroll { flex: 1; overflow: auto; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; touch-action: pan-x pan-y; }
+  #mapBtn { display: none !important; }
   #storyMap .sm-grid { display: grid; gap: 6px; grid-auto-rows: 118px; width: max-content; }
   #storyMap .sm-b .sm-cnt { display: block; width: 100%; max-width: 92px; font-size: 9px; line-height: 1.2; margin-top: 3px; color: #e6e2d6; }
   #storyMap .sm-cnt > span { display: flex; justify-content: space-between; gap: 4px; padding: 0 3px; }
@@ -5394,6 +5395,7 @@ void main()
           const x = document.createElement("button"); x.type = "button"; x.className = "sm-close"; x.textContent = "Close"; x.addEventListener("click", (e) => { e.preventDefault(); close(); }); top.appendChild(x);
           box.appendChild(top);
           const sc = document.createElement("div"); sc.className = "sm-scroll"; box.appendChild(sc);
+          pinch(sc);
           sc.addEventListener("click", (e) => { const b = e.target.closest(".sm-b[data-l]"); if (b) { e.preventDefault(); pic(+b.dataset.l); } });
           if (tab === "bonus") { bonusGrid(sc, window.innerHeight <= 500); return box; }
           const g = document.createElement("div"); g.className = "sm-grid"; const small = window.innerHeight <= 500; g.style.gridTemplateColumns = (small ? "78px" : "112px") + " repeat(" + L.cols + ", " + (small ? 72 : 92) + "px)"; sc.appendChild(g);
@@ -5421,6 +5423,25 @@ void main()
           foot.textContent = "Enemy counts are the monsters placed on each screen, sized by hit points (small under 40, medium under 150, large 150 and up). Spawners keep making more. Read from the game: where each mission starts, which screen each exit leads to, and the story scenes. Red marks are my reading of the story scenes; a few side screens the story never walks through are left out.";
           sc.appendChild(foot);
           return box;
+        }
+        // Pinch with two fingers (or Ctrl + mouse wheel / trackpad pinch on PC) to zoom the whole grid in and out (Jordan, 2026-11-10).
+        let gz = 1;
+        function pinch(sc) {
+          const setZ = (z, fx, fy) => {
+            z = Math.min(2.5, Math.max(0.25, z)); const kids = sc.children; if (!kids.length) return;
+            const r = sc.getBoundingClientRect(), x = fx - r.left, y = fy - r.top, px = (sc.scrollLeft + x) / gz, py = (sc.scrollTop + y) / gz;
+            gz = z; for (const k of kids) k.style.zoom = z;
+            sc.scrollLeft = px * z - x; sc.scrollTop = py * z - y;
+          };
+          requestAnimationFrame(() => { for (const k of sc.children) k.style.zoom = gz; });
+          let st = null;
+          const dist = (t) => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
+          sc.addEventListener("touchstart", (e) => { if (e.touches.length === 2) { st = { d: dist(e.touches), z: gz }; e.preventDefault(); } }, { passive: false });
+          sc.addEventListener("touchmove", (e) => { if (st && e.touches.length === 2) { e.preventDefault(); const t = e.touches; setZ(st.z * dist(t) / st.d, (t[0].clientX + t[1].clientX) / 2, (t[0].clientY + t[1].clientY) / 2); } }, { passive: false });
+          sc.addEventListener("touchend", (e) => { if (e.touches.length < 2) st = null; });
+          // iPhone Safari sends its own gesture events for a pinch; stop the page zooming.
+          ["gesturestart", "gesturechange"].forEach((n) => sc.addEventListener(n, (e) => e.preventDefault()));
+          sc.addEventListener("wheel", (e) => { if (e.ctrlKey) { e.preventDefault(); setZ(gz * Math.exp(-e.deltaY / 200), e.clientX, e.clientY); } }, { passive: false });
         }
         // Tap or click a block: overhead picture of the screen with no monsters (captured from the game, tools/storymap/cap.py).
         let pv = null, zoom = 0;
@@ -5463,7 +5484,6 @@ void main()
           try { const M = window.__wideM; if (M && M.HEAPU8) { const iw = M._rotk_link_iwram ? M._rotk_link_iwram((window.__mp && window.__mp.me) || 0) : M._rotk_iwram(); st = iw ? M.HEAPU8[iw + 0x41B0] : -1; vis = st === 5 || st === 8; } } catch (e) {}
           if (b.hidden === vis) b.hidden = !vis;
           // Close it if the game leaves the title or menu; opened from the setup screen (no game yet) it stays open.
-          if (st >= 0 && !vis && StoryMap.isOpen()) StoryMap.close();
         }, 300);
       })();
 
