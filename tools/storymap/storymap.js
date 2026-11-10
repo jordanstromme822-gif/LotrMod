@@ -57,6 +57,73 @@
           { name: "Entwood", s: [[37], [38], [39], [36, "Troll", "525 HP"]] },
         ];
         let tab = "story";
+        // Siege layout (Jordan, 2026-11-10): pick which existing screen goes in each of the 8 Siege spots. Helm's Deep is the
+        // fixed start at the bottom. Walk time = the long side of the screen at the hero's walking speed (1.5 pixels a frame,
+        // 90 a second, measured on Hornburg Valley), so real paths with turns take longer.
+        const WALK = {"0":21,"1":5,"2":17,"3":20,"4":9,"5":11,"6":16,"7":11,"8":9,"9":11,"10":15,"12":16,"13":27,"14":6,"15":6,"16":18,"17":12,"18":14,"19":5,"20":12,"21":17,"22":15,"23":14,"24":6,"25":12,"26":5,"27":14,"28":14,"29":20,"30":9,"31":5,"32":20,"34":12,"36":5,"37":21,"38":18,"39":18,"40":7,"41":23,"42":21,"43":9,"46":17,"47":9,"48":22,"49":13,"50":9,"51":14,"52":20,"53":14,"54":9,"55":9,"56":5,"57":25,"58":14,"59":23,"60":18,"61":6,"63":11,"67":9,"68":3,"69":18,"71":17,"72":11,"73":13,"74":14,"75":5,"76":11,"77":18,"78":21,"79":11,"80":18,"81":20,"82":23,"83":19,"84":23,"85":11,"86":9,"87":16,"88":18,"89":15,"90":10,"91":10,"92":14,"93":13,"94":11,"95":17,"96":9,"97":14,"98":5,"99":16,"100":5,"101":15,"102":12,"103":11,"104":18,"105":23,"106":21,"107":12,"108":5,"109":7,"110":23,"111":12,"112":14,"113":11,"114":24,"115":16,"116":22,"117":22,"121":8,"122":21,"123":5,"124":13,"125":11,"126":28,"127":13,"128":14,"129":9};
+        const SLOTS = [
+          { k: "nw", n: "North-west corner", r: 1, c: 1 }, { k: "bg", n: "Black Gate", r: 1, c: 2 }, { k: "ne", n: "North-east corner", r: 1, c: 3 },
+          { k: "mid", n: "Middle section", r: 2, c: 2 },
+          { k: "sw", n: "South-west corner", r: 3, c: 1 }, { k: "app", n: "Outer Gate approach", r: 3, c: 2 }, { k: "se", n: "South-east corner", r: 3, c: 3 },
+          { k: "hd", n: "Helm's Deep (start)", r: 4, c: 2, fixed: 46 },
+        ];
+        let siege = { bg: 58, app: 47, hd: 46 }, sel = "nw";
+        try { const v = JSON.parse(localStorage.getItem("rotk-siege") || "null"); if (v && typeof v === "object") siege = Object.assign(siege, v, { hd: 46 }); } catch (e) {}
+        const siegeDb = (async () => { const use = window.claude && window.claude.use; if (!use) return null; const [db, user] = await Promise.all([use("db"), use("user")]); const id = db && user && await user.id(); return id ? db.doc("data/users/" + id + "/siege-layout") : null; })().catch(() => null);
+        let siegeLoaded = false, siegeRedraw = null;
+        function siegeLoad() {
+          if (siegeLoaded) return; siegeLoaded = true;
+          siegeDb.then((d) => d && d.get()).then((r) => { if (r && r.exists) { const v = r.data(); if (v && v.slots) { siege = Object.assign({ bg: 58, app: 47, hd: 46 }, v.slots, { hd: 46 }); try { localStorage.setItem("rotk-siege", JSON.stringify(siege)); } catch (e) {} if (siegeRedraw) siegeRedraw(); } } }).catch(() => {});
+        }
+        let saveT = 0;
+        function siegeSave(msg) {
+          try { localStorage.setItem("rotk-siege", JSON.stringify(siege)); } catch (e) {}
+          clearTimeout(saveT); msg.textContent = "Saving…";
+          saveT = setTimeout(() => siegeDb.then((d) => { if (!d) { msg.textContent = "Saved on this device."; return; } return d.set({ slots: siege, at: Date.now() }).then(() => { msg.textContent = "Saved to your account."; }); }).catch(() => { msg.textContent = "Saved on this device (account save failed)."; }), 600);
+        }
+        const thumb = (l) => '<span class="sg-img"><img loading="lazy" alt="" src="maps/t/L' + l + '.webp"><em>~' + (WALK[l] || "?") + " s to cross</em></span>";
+        function siegeView(sc) {
+          siegeLoad();
+          const wrap = document.createElement("div"); wrap.className = "sg";
+          const top = document.createElement("div"); top.className = "sg-top"; wrap.appendChild(top);
+          const hint = document.createElement("div"); hint.className = "sg-hint"; top.appendChild(hint);
+          const strip = document.createElement("div"); strip.className = "sg-strip"; top.appendChild(strip);
+          const order = Object.keys(WALK).map(Number).sort((a, b) => (region(a) + NAMES[a]).localeCompare(region(b) + NAMES[b]));
+          order.forEach((l) => {
+            const c = document.createElement("button"); c.type = "button"; c.className = "sg-card"; c.dataset.pick = l;
+            c.innerHTML = thumb(l) + "<b>" + NAMES[l] + "</b><i>" + region(l) + "</i>"; strip.appendChild(c);
+          });
+          const grid = document.createElement("div"); grid.className = "sg-grid"; wrap.appendChild(grid);
+          const msg = document.createElement("div"); msg.className = "sg-msg"; wrap.appendChild(msg);
+          function draw() {
+            grid.innerHTML = "";
+            const used = {}; SLOTS.forEach((t) => { if (siege[t.k] != null) used[siege[t.k]] = t.n; });
+            strip.querySelectorAll(".sg-card").forEach((c) => c.classList.toggle("used", !!used[c.dataset.pick]));
+            const cur = SLOTS.find((t) => t.k === sel);
+            hint.innerHTML = cur && !cur.fixed ? "Picking for <b>" + cur.n + "</b>. Scroll the screens below sideways and tap one to put it there." : "Tap a spot in the layout, then pick a screen for it.";
+            SLOTS.forEach((t) => {
+              const d = document.createElement("div"); d.className = "sg-slot" + (t.k === sel ? " on" : "") + (t.fixed ? " fixed" : "") + (t.k === "bg" ? " boss" : t.k === "hd" ? " home" : "");
+              d.style.gridRow = t.r; d.style.gridColumn = t.c; d.dataset.slot = t.k;
+              const l = siege[t.k];
+              d.innerHTML = '<div class="sg-sn">' + t.n + (t.fixed ? " 🔒" : "") + "</div>" + (l != null ? thumb(l) + "<b>" + NAMES[l] + "</b>" + (t.fixed ? "" : '<button type="button" class="sg-x" data-clear="' + t.k + '" aria-label="Clear">×</button>') + '<button type="button" class="sg-v" data-view="' + l + '">View</button>' : '<div class="sg-empty">Tap to choose</div>');
+              grid.appendChild(d);
+            });
+          }
+          siegeRedraw = draw; draw();
+          wrap.addEventListener("click", (e) => {
+            const x = e.target.closest("[data-clear]"), v = e.target.closest("[data-view]"), pk = e.target.closest("[data-pick]"), sl = e.target.closest("[data-slot]");
+            if (x) { e.preventDefault(); e.stopPropagation(); delete siege[x.dataset.clear]; sel = x.dataset.clear; draw(); siegeSave(msg); return; }
+            if (v) { e.preventDefault(); e.stopPropagation(); pic(+v.dataset.view); return; }
+            if (pk) { e.preventDefault(); e.stopPropagation(); const t = SLOTS.find((q) => q.k === sel); if (!t || t.fixed) { msg.textContent = "Tap a spot in the layout first."; return; }
+              siege[sel] = +pk.dataset.pick; const nx = SLOTS.find((q) => !q.fixed && siege[q.k] == null); if (nx) sel = nx.k; draw(); siegeSave(msg); return; }
+            if (sl) { e.preventDefault(); e.stopPropagation(); const t = SLOTS.find((q) => q.k === sl.dataset.slot); if (t.fixed) { pic(t.fixed); return; } sel = t.k; draw(); return; }
+          });
+          sc.appendChild(wrap);
+          const foot = document.createElement("div"); foot.className = "sm-foot";
+          foot.textContent = "Siege layout: Helm's Deep is the start. Walk times are the long side of each screen at the hero's walking speed, so a winding path takes longer. Picks save to your account. Nothing in the game changes yet; this is the plan the Siege map will be built from.";
+          sc.appendChild(foot);
+        }
+
         function bonusGrid(sc, small) {
           const cols = Math.max(...BONUS.map((m) => m.s.length));
           const g = document.createElement("div"); g.className = "sm-grid"; g.style.gridTemplateColumns = (small ? "78px" : "112px") + " repeat(" + cols + ", " + (small ? 96 : 120) + "px)"; g.style.gridTemplateRows = BONUS.map((m, i) => (i ? "18px " : "") + (small ? "100px" : "118px")).join(" "); sc.appendChild(g);
@@ -79,8 +146,8 @@
         function render() {
           const L = layout(), box = document.createElement("div"); box.id = "storyMap";
           const top = document.createElement("div"); top.className = "sm-top";
-          const leg = tab === "story" ? '<span><b class="n"></b>Screen</span><span><b class="boss"></b>Big fight</span><span><b class="side"></b>Side quest</span><span><b class="team"></b>Team-up (both heroes walk it)</span><span><b class="n orc"></b>More Orc Heads</span>' : '<span><b class="n"></b>Screen</span><span><b class="boss"></b>Big monster</span>';
-          top.innerHTML = '<div class="sm-tabs"><button type="button" data-t="story"' + (tab === "story" ? ' class="on"' : "") + '>Story</button><button type="button" data-t="bonus"' + (tab === "bonus" ? ' class="on"' : "") + '>Bonus maps</button></div><div class="sm-leg">' + leg + "</div>";
+          const leg = tab === "story" ? '<span><b class="n"></b>Screen</span><span><b class="boss"></b>Big fight</span><span><b class="side"></b>Side quest</span><span><b class="team"></b>Team-up (both heroes walk it)</span><span><b class="n orc"></b>More Orc Heads</span>' : tab === "bonus" ? '<span><b class="n"></b>Screen</span><span><b class="boss"></b>Big monster</span>' : "";
+          top.innerHTML = '<div class="sm-tabs"><button type="button" data-t="story"' + (tab === "story" ? ' class="on"' : "") + '>Story</button><button type="button" data-t="bonus"' + (tab === "bonus" ? ' class="on"' : "") + '>Bonus maps</button><button type="button" data-t="siege"' + (tab === "siege" ? ' class="on"' : "") + '>Siege</button></div><div class="sm-leg">' + leg + "</div>";
           top.querySelectorAll(".sm-tabs button").forEach((b) => b.addEventListener("click", (e) => { e.preventDefault(); if (tab === b.dataset.t) return; tab = b.dataset.t; const n = render(); el.replaceWith(n); el = n; }));
           const x = document.createElement("button"); x.type = "button"; x.className = "sm-close"; x.textContent = "Close"; x.addEventListener("click", (e) => { e.preventDefault(); close(); }); top.appendChild(x);
           box.appendChild(top);
@@ -88,6 +155,7 @@
           pinch(sc);
           sc.addEventListener("click", (e) => { const b = e.target.closest(".sm-b[data-l]"); if (b) { e.preventDefault(); pic(+b.dataset.l); } });
           if (tab === "bonus") { bonusGrid(sc, window.innerHeight <= 500); return box; }
+          if (tab === "siege") { siegeView(sc); return box; }
           const g = document.createElement("div"); g.className = "sm-grid"; const small = window.innerHeight <= 500; g.style.gridTemplateColumns = (small ? "78px" : "112px") + " repeat(" + L.cols + ", " + (small ? 72 : 92) + "px)"; sc.appendChild(g);
           for (let r = 0; r < L.rows; r++) {
             const head = document.createElement("div"); head.className = r % 2 ? "sm-gaphead" : "sm-hero";
