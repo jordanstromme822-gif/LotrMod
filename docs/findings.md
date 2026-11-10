@@ -275,3 +275,61 @@ or `0x08` (ROM as the CPU sees it).
 - Siege layout picker (v145, Jordan 2026-11-10): Siege tab on the story map with 8 spots (NW/NE corners, Black Gate, middle, SW/SE corners, Outer Gate approach, Helm's Deep fixed = level 46). Picks are saved to the account db doc data/users/<id>/siege-layout {slots:{nw,bg,ne,mid,sw,app,se,hd}} plus localStorage rotk-siege. Hero walking speed measured on Hornburg Valley: 1.5 pixels a frame (90 a second, camera moves the same), so hero positions are screen pixels. Walk time shown = long side of the screen picture / 90 (tools/storymap/walk.json). Exit records are mostly one per screen (entry points live elsewhere), so exit-to-exit distance wasn't usable.
 - Siege v146 (Jordan 2026-11-10): 5 x 5 grid, keys r{row}c{col} (rows A-E top to bottom), Helm's Deep fixed at r5c3, defaults r1c3 Black Gate 58, r4c3 approach 47; old v145 keys (nw, bg, ne, mid, sw, app, se) are mapped over. Screens grouped by look (LOOK in storymap.js, sorted by eye from contact sheets): Woods, Plains, River & water, Ships & docks, Camps & houses, Snow & ice, Lava, Wasteland, Mountains, Red rock, Fortress, City, Dwarf halls, Caves, Ruins.
 - Entrances and exits (v147, Jordan 2026-11-10): tools/storymap/ent.py warps to each level, puts the hero on every exit record (type 3, x/y at +0xC/+0xE, entry +0x12, destination +0x13) on the normal ROM and reads the level (0x03004174) and hero position (hero+0xAE x, +0xB2 y as whole pixels) after the move. 104 of 142 exits changed level; the rest are locked until a story step, lead to level 0 (bonus map end), or play a story scene into another level. Way-in points = arrival spots plus each level's warp start. Stored as thousandths of the picture in ee.json. Siege rotate/mirror is saved per spot as tf {r: 0/90/180/270, m: mirror, v: flip} in the siege-layout doc; plan only (the game's art is drawn from one angle, so in-game rotation isn't possible; left-right mirroring might be, later).
+
+## Engine limits for big scenes (2026-11-10)
+
+Measured on the original ROM in mGBA (Hornburg Valley, level 47) with `tools/engine/build_spawntest.py`
+(test-only ROM that clones the level's enemy groups next to the hero) and `tools/runprof.c` (cycle-weighted profile).
+- Objects: one pool of 256 objects of 0x148 bytes (0x0800064C: malloc 0x14800 at [0x030015B8], pool head 0x030015C0,
+  alloc 0x0800169C -> 0x08030518) plus a 40-object pool at 0x030015C4. Live list 0x03002420. Monsters, missiles, items
+  and effects all share it. 102 extra monsters (158 objects) still spawned and ran, so the pool is not the first limit.
+- Groups: 0x0800C0EC(group) spawns every record of a spawn group whose +0 pointer is 0 (constructor table 0x08050440
+  by record type +8); triggers call 0x0800C4AC(group, script). Hornburg Valley enemy records are types 25/26, trolls 22.
+- Counters: 0x030041A4 counts game frames (30 a second), 0x0300411C counts VBlanks (60).
+- Speed: game frames per second with extra monsters near the hero: +8: 30, +16: 30, +24: 25.5, +32: 21, +34 (all
+  groups once): 16, +68: 11, +102: 8. With nothing extra the CPU idles about half of each frame in the VBlank wait
+  (0x0802A3xx). The cost is spread over every object's update (AI, movement, animation, mixer), so a faster CPU is
+  the main fix: about 2x for ~40 monsters on screen, 3x for ~70.
+- Sprite tiles (OBJ VRAM, 1024 tiles): 0x08049AB8(gfx, bytes) finds a free run in the bitmap 0x030022D8 (1 bit per tile,
+  ARM search copied to 0x03007690, returns 0xFFFF when full), marks it (0x08049C80) and uploads; free 0x08049C28.
+  Frames are shared and refcounted per anim set (0x08003240..0x0800328E). With +68 monsters the search failed 403
+  times in 60 frames (callers 0x080032A4 and 0x0800332A), so sprite frames go missing, and the search is ~13% of
+  the CPU time. Big frames ask for up to 99 tiles.
+- OAM: entries go through 0x08036540 into the shadow buffers at [0x03004B40] (two 0x400 halves), count byte
+  0x03004220 (stops at 128), 0x080366A4 hides the rest. Seen at most 83 entries with +68 monsters, so 128 is close.
+
+### Engine upgrade results (2026-11-10)
+
+- CPU speed (recomp/gbarecomp-cpu-speed.patch): runtime_tick charges each non-halted instruction 100/speed
+  of its cycles. `GBARECOMP_CPU_SPEED=<percent>` or `rotk_cpu_speed(pct)` from the web page (100-800). Native
+  headless with the PC ROM + 68 extra monsters next to the hero: 6.4 fps at 100%, 14.6 at 200%, 24.8 at
+  300%, 30 at 400%; +102 monsters 22 fps at 400%. Test kit in recomp/stress/.
+- Extra sprite tiles (recomp/gbarecomp-obj-ext.patch + tools/engine/bigsprites.py): the engine gets 128 KB
+  of VRAM (0x06018000-0x0601FFFF = OBJ tiles 1024-2047); writing 0x4B58 to IO 0x040000E0 turns on
+  "OAM attr0 bit 12 = tile bit 10" (the game never uses OBJ mosaic) and the register then reads 0x584B.
+  The ROM patch rewrites the sprite-tile bookkeeping in C (alloc 0x08049AB8, mark 0x08049C80, free now
+  0x08049CCC, free later 0x08049D24, per-frame fold 0x08049984, resets 0x080499F8 / 0x08049A54 /
+  0x08049A8C): on that engine the use bitmap A at 0x030022D8 grows to 256 bytes over the old freed-this-frame
+  bitmap and that bitmap moves to VRAM 0x0601FF00 (tiles 2040-2047, kept marked used); elsewhere it keeps the
+  original 128-byte layout. EWRAM 0x0203E800 is NOT free: the level script/spawn blob (0x2C00 bytes from
+  0x08032BB8, pointer 0x0300324C) covers it. Seven places put a tile into an OAM entry or template with
+  `& 0x3FF` (0x08002D6A, 0x0800262C, 0x08039406 frame drawers; 0x08002C72 next piece of a template sprite;
+  0x08002BE6, 0x08003398, 0x08047B20 template stores); bigsprites_stubs.s keeps bit 10 in attr0 bit 12 there.
+  Test: +68 monsters at 400% used up to 2015 tiles with clean pictures, and OAM then sits at 128 every
+  frame (without the extra tiles it varied 64-128), so 128 OAM entries is the next limit.
+
+### Extra sprite tiles in the page-built ROM (2026-11-10)
+
+- The page-built ROM (buildGame, 16 MB) has no big free area; bigsprites code goes in the zero run 0x2833C5-0x2862A8, at 0x284000 (same as the PC ROM).
+- The code must stay below ROM 0x400000: the tile sites call it with Thumb `bl`, which reaches only 4 MB. At 0xFFD000 the `bl` wrapped and the game hung at Select Hero. bigsprites.py now refuses an out-of-range offset.
+- `tools/engine/bigsprites_buildgame.js` is the buildGame step (made by `tools/engine/bigsprites_js.py page.gba page-bs.gba` after `bigsprites.py page.gba page-bs.gba 284000`). It checks the original bytes first, then writes the patch. It goes just before the "All four Bonus Maps paths open" step.
+- Checked: node buildrom.js with the step gives the same bytes as bigsprites.py; in mGBA (no extra sprite memory) the game plays the same as without the patch (same pictures after boot and 1800 frames).
+- The page must ship this ROM step and an engine regenerated from that ROM (with gbarecomp-obj-ext.patch) together: the generated code has to match the ROM bytes.
+
+### More than 128 sprites (2026-11-10)
+
+- The game appends OAM entries through 0x08036540(index = count, entry) into a shadow buffer at [0x03004B40]. There are two buffers (0x03004340, 0x03004B80), each with two halves of 128 entries, and the halves differ only in entries hidden on alternate frames (0x08036590). The count byte 0x03004220 stops at 128.
+- 0x080366A4 ends a frame: it hides entries count..127 and sets [0x030040B0]+0x38. The VBlank IRQ (0x0802A10C) then DMAs one half (by [0x03001F18]) of the buffer that is not [0x03004330] to OAM, stores the count in 0x03004B70, resets it, and swaps buffers. 0x080366EC clears everything.
+- Engine (`recomp/gbarecomp-oam-ext.patch`, on top of obj-ext): with the extra sprite memory on, OAM becomes 8 KB. Entries 128-250 are drawn from 0x07000400, after entry 127. BG priority keys move from p*256+128+layer to p*256+251+layer so OBJ indexes up to 250 fit, which changes nothing for 128 entries. The native draw-jobs path is skipped in this mode.
+- Game (`bigsprites_init.c`, same ROM step): the four OAM functions are rewritten in C and allow 251 entries when the engine has the memory. Shadow copies of entries 128-250 live at 0x07000800 (buffer 0x03004340) and 0x07001000 (buffer 0x03004B80), with half B at +0x400. A stub at 0x0802A164 copies the shown half into 0x07000400 in the same VBlank as the game's DMA.
+- Test at Hornburg Valley with 68 extra monsters and 400% CPU: up to 246 sprite entries are visible, and monsters are drawn whole where they were missing pieces before. Game speed was 24.8 fps (23.6 without the extra memory). In mGBA the game plays the same as the original.

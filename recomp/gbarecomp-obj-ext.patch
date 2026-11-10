@@ -1,0 +1,200 @@
+--- a/src/gba/gba_ppu.cpp	2026-11-10 15:10:32.538567992 +0000
++++ b/src/gba/gba_ppu.cpp	2026-11-10 15:17:27.901381277 +0000
+@@ -17,6 +17,7 @@
+ 
+ #include "snapshot.h"
+ 
++extern "C" { int g_obj_ext_tiles = 0; }
+ namespace gba {
+ 
+ #if defined(GBARECOMP_ORDERED_DRAW_TEST_COVERAGE)
+@@ -607,11 +608,11 @@
+     uint32_t tile_off = obj_tile_base + this_tile * 32u;
+     if (color256) {
+         uint32_t off = tile_off + py_in_tile * 8 + px_in_tile;
+-        if (off + 1 > 96u * 1024u) return false;
++        if (off + 1 > kObjVramLimit) return false;
+         return vram[off] != 0;
+     }
+     uint32_t off = tile_off + py_in_tile * 4 + (px_in_tile / 2);
+-    if (off + 1 > 96u * 1024u) return false;
++    if (off + 1 > kObjVramLimit) return false;
+     uint8_t b = vram[off];
+     uint8_t pal_index = (px_in_tile & 1) ? (b >> 4) : (b & 0x0F);
+     return pal_index != 0;
+@@ -655,7 +656,7 @@
+         if (sx & 0x100) sx -= 0x200;
+ 
+         bool color256 = (attr0 & 0x2000u) != 0;
+-        uint32_t tile_num = attr2 & 0x3FFu;
++        uint32_t tile_num = (attr2 & 0x3FFu) | ((g_obj_ext_tiles && (attr0 & 0x1000u)) ? 0x400u : 0u);
+         // Bitmap BGs consume the lower half of OBJ VRAM. Hardware preserves
+         // the normal tile-number origin and ignores tiles 0..511 rather than
+         // rebasing tile 0 to 0x14000.
+@@ -1290,7 +1291,7 @@
+         if (sy >= 160) sy -= 256;
+         if (sx & 0x100) sx -= 0x200;
+         bool color256 = (attr0 & 0x2000u) != 0;
+-        uint32_t tile_num = attr2 & 0x3FFu;
++        uint32_t tile_num = (attr2 & 0x3FFu) | ((g_obj_ext_tiles && (attr0 & 0x1000u)) ? 0x400u : 0u);
+         if (bg_mode >= 3 && tile_num < 512u) return;
+         uint32_t palette_bank = (attr2 >> 12) & 0xFu;
+         int tiles_w = sw / 8;
+@@ -1325,12 +1326,12 @@
+             uint8_t pal_index;
+             if (color256) {
+                 uint32_t off = tile_off + py_in_tile * 8 + px_in_tile;
+-                if (off + 1 > 96u * 1024u) return;
++                if (off + 1 > kObjVramLimit) return;
+                 pal_index = vram[off];
+                 if (pal_index == 0) return;
+             } else {
+                 uint32_t off = tile_off + py_in_tile * 4 + (px_in_tile / 2);
+-                if (off + 1 > 96u * 1024u) return;
++                if (off + 1 > kObjVramLimit) return;
+                 uint8_t b = vram[off];
+                 pal_index = (px_in_tile & 1) ? (b >> 4) : (b & 0x0F);
+                 if (pal_index == 0) return;
+@@ -2355,7 +2356,7 @@
+             const bool obj_focus_active =
+                 valid_foreign_obj_focus(foreign_presentation_internal::obj_focus());
+             bool color256 = (attr0 & 0x2000u) != 0;
+-            uint32_t tile_num = attr2 & 0x3FFu;
++            uint32_t tile_num = (attr2 & 0x3FFu) | ((g_obj_ext_tiles && (attr0 & 0x1000u)) ? 0x400u : 0u);
+             if (bg_mode >= 3 && tile_num < 512u) continue;
+             uint32_t palette_bank = (attr2 >> 12) & 0xFu;
+             int tiles_w = sw / 8;
+@@ -2401,12 +2402,12 @@
+                 uint8_t pal_index;
+                 if (color256) {
+                     uint32_t off = tile_off + py_in_tile * 8 + px_in_tile;
+-                    if (off + 1 > 96u * 1024u) return;
++                    if (off + 1 > kObjVramLimit) return;
+                     pal_index = vram[off];
+                     if (pal_index == 0) return;
+                 } else {
+                     uint32_t off = tile_off + py_in_tile * 4 + (px_in_tile / 2);
+-                    if (off + 1 > 96u * 1024u) return;
++                    if (off + 1 > kObjVramLimit) return;
+                     uint8_t b = vram[off];
+                     pal_index = (px_in_tile & 1) ? (b >> 4) : (b & 0x0F);
+                     if (pal_index == 0) return;
+@@ -2711,7 +2712,7 @@
+         if (sx & 0x100) sx -= 0x200;
+ 
+         bool color256 = (attr0 & 0x2000u) != 0;
+-        uint32_t tile_num = attr2 & 0x3FFu;
++        uint32_t tile_num = (attr2 & 0x3FFu) | ((g_obj_ext_tiles && (attr0 & 0x1000u)) ? 0x400u : 0u);
+         uint32_t palette_bank = (attr2 >> 12) & 0xFu;
+ 
+         // For 1D mapping each row of tiles is contiguous in VRAM.
+@@ -2742,12 +2743,12 @@
+             uint8_t pal_index;
+             if (color256) {
+                 uint32_t off = tile_off + py_in_tile * 8 + px_in_tile;
+-                if (off + 1 > 96u * 1024u) return;
++                if (off + 1 > kObjVramLimit) return;
+                 pal_index = vram[off];
+                 if (pal_index == 0) return;  // transparent
+             } else {
+                 uint32_t off = tile_off + py_in_tile * 4 + (px_in_tile / 2);
+-                if (off + 1 > 96u * 1024u) return;
++                if (off + 1 > kObjVramLimit) return;
+                 uint8_t b = vram[off];
+                 pal_index = (px_in_tile & 1) ? (b >> 4) : (b & 0x0F);
+                 if (pal_index == 0) return;  // transparent
+@@ -2845,13 +2846,13 @@
+                         if (color256) {
+                             // 1 byte per pixel.
+                             uint32_t off = tile_off + src_py * 8 + src_px;
+-                            if (off + 1 > 96 * 1024) continue;
++                            if (off + 1 > kObjVramLimit) continue;
+                             pal_index = vram[off];
+                         } else {
+                             // 4bpp: 4 bytes per row, low nibble = even
+                             // pixel, high nibble = odd pixel.
+                             uint32_t off = tile_off + src_py * 4 + (src_px / 2);
+-                            if (off + 1 > 96 * 1024) continue;
++                            if (off + 1 > kObjVramLimit) continue;
+                             uint8_t b = vram[off];
+                             pal_index = (src_px & 1) ? (b >> 4) : (b & 0x0F);
+                             if (pal_index == 0) continue;  // transparent
+--- a/src/gba/gba_ppu.h	2026-11-10 15:10:32.538641726 +0000
++++ b/src/gba/gba_ppu.h	2026-11-10 15:17:27.898822260 +0000
+@@ -352,6 +352,12 @@
+ // All BG, OBJ, window and authored-margin coordinates share this origin.
+ // The native renderer ignores it; it is never serialized as guest state.
+ extern "C" int g_ws_native_view_left;
++// Extra OBJ tiles (Return of the King engine upgrade): when a game writes 0x4B58 to
++// IO 0x040000E0, OAM attr0 bit 12 (OBJ mosaic, unused by that game) becomes tile bit 10,
++// so sprites can use tiles 1024-2047 stored at VRAM 0x18000-0x1FFFF. Reading the
++// register back gives 0x584B while it is on.
++extern "C" int g_obj_ext_tiles;
++inline constexpr unsigned kObjVramLimit = 128u * 1024u;
+ extern "C" int g_ws_pillarbox;  // Step C policy: black margins on non-field screens
+ extern "C" int g_ws_pillarbox_left;
+ extern "C" int g_ws_pillarbox_right;
+--- a/src/gba/gba_bus.h	2026-11-10 15:10:32.495611686 +0000
++++ b/src/gba/gba_bus.h	2026-11-10 15:17:27.897718281 +0000
+@@ -363,7 +363,9 @@
+     std::array<uint8_t, 256 * 1024> ewram_{};
+     std::array<uint8_t,  32 * 1024> iwram_{};
+     std::array<uint8_t,        1024> pal_{};
+-    std::array<uint8_t,  96 * 1024> vram_{};
++    // 96 KB of real VRAM plus 32 KB of extra OBJ tiles (0x06018000-0x0601FFFF, tiles
++    // 1024-2047) that only games enabling g_obj_ext_tiles use; hardware mirrors there.
++    std::array<uint8_t, 128 * 1024> vram_{};
+     std::array<uint8_t,        1024> oam_{};
+ 
+     GbaIo       io_dispatch_;
+--- a/src/gba/gba_bus.cpp	2026-11-10 15:10:32.495611686 +0000
++++ b/src/gba/gba_bus.cpp	2026-11-10 15:17:27.898424293 +0000
+@@ -467,7 +467,7 @@
+             if (off < vram_.size()) {
+                 vram_[off] = v;
+ #if defined(GBARECOMP_NATIVE_DRAW_JOBS)
+-                if (draw_memory_ && !draw_vram_alias_exposed_) draw_memory_->mark(off, 1);
++                if (draw_memory_ && !draw_vram_alias_exposed_ && off < 96u * 1024u) draw_memory_->mark(off, 1);
+ #endif
+             }
+             return;
+@@ -533,7 +533,7 @@
+             if (off + 1 < vram_.size()) {
+                 store_u16(&vram_[off], v);
+ #if defined(GBARECOMP_NATIVE_DRAW_JOBS)
+-                if (draw_memory_ && !draw_vram_alias_exposed_) draw_memory_->mark(off, 2);
++                if (draw_memory_ && !draw_vram_alias_exposed_ && off < 96u * 1024u) draw_memory_->mark(off, 2);
+ #endif
+             }
+             return;
+@@ -618,7 +618,7 @@
+             if (off + 3 < vram_.size()) {
+                 store_u32(&vram_[off], v);
+ #if defined(GBARECOMP_NATIVE_DRAW_JOBS)
+-                if (draw_memory_ && !draw_vram_alias_exposed_) draw_memory_->mark(off, 4);
++                if (draw_memory_ && !draw_vram_alias_exposed_ && off < 96u * 1024u) draw_memory_->mark(off, 4);
+ #endif
+             }
+             return;
+--- a/src/gba/gba_io.cpp	2026-11-10 15:10:32.495611686 +0000
++++ b/src/gba/gba_io.cpp	2026-11-10 15:17:37.423136856 +0000
+@@ -683,6 +683,7 @@
+         if (ppu_->vcount() == target) flags |= 0x0004u;
+         return static_cast<uint16_t>((base & 0xFFF8u) | flags);
+     }
++    if (off == 0x0E0u && g_obj_ext_tiles) return 0x584Bu;
+     if (off >= 0x100u && off <= 0x10Cu && ((off - 0x100u) % 4u) == 0) {
+         int timer = static_cast<int>((off - 0x100u) / 4u);
+         return timer_counter_[timer];
+@@ -773,6 +774,11 @@
+     if (audio_ && off >= 0x060 && off <= 0x0AF) {
+         audio_->write_io16(off, v);
+     }
++    if (off == 0x0E0u) {  // extra OBJ tiles switch (see g_obj_ext_tiles in gba_ppu.h)
++        g_obj_ext_tiles = (v == 0x4B58u) ? 1 : 0;
++        store_u16(&io_[off], v);
++        return;
++    }
+     switch (off) {
+         case IoReg::VCOUNT:
+             // Read-only on hardware.
