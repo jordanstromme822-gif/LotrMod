@@ -305,3 +305,5 @@ Jordan said the water still looked bad (Frodo's Morgul levels). The lighting pas
 
 ### v152 (2026-11-10)
 Jordan: water motion flickered, white rim round enemies, cloud reflections looked like stone, walls picked up water, menus not upgraded. Water is now still (no wobble, bands, sparkles or foam), stricter water colour test, pale reflections count as water only when surrounded by water, stronger blur. Every non-play screen (title, loading, pause, backpack, stats) uses the full menu look.
+
+### v153: cloud reflections removed from water (Jordan). Pale teal pixels (green above red, so grey stone is left alone) with water all round are painted over with the average of the nearby non-pale water.

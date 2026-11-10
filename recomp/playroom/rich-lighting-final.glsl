@@ -6,6 +6,7 @@ precision highp float; in vec2 v; out vec4 o; uniform sampler2D Texture; uniform
 uniform vec3 ShadowTint, HiTint, GlowTint, FogCol, Gain, WaterCol; uniform float Sat, GlowK, Clarity, Vig, Fog, Lift, Amount, Sun, Relief, Water, Time; uniform vec2 Px, GPx;
 float luma(vec3 c){ return dot(c, vec3(0.299, 0.587, 0.114)); }
 // Water: clear blue or teal (green and blue well above red), not sky (sky's green is close to red) and not grass.
+float paleF(vec3 c){ return smoothstep(0.03, 0.08, c.g - c.r) * smoothstep(-0.01, 0.05, c.b - c.r) * smoothstep(0.42, 0.56, luma(c)); }   // pale teal: cloud reflections (grey stone has green = red)
 float wet(vec3 c){ return smoothstep(0.13, 0.2, c.g - c.r) * smoothstep(0.13, 0.2, c.b - c.r) * (1.0 - smoothstep(0.06, 0.14, c.g - c.b)); }
 void main(){
   vec3 c0 = texture(Texture, v).rgb; vec4 g = texture(Glow, v); vec3 c = c0;
@@ -16,16 +17,26 @@ void main(){
   float m = 0.0;
   if (Water > 0.0) {
     vec3 b0 = texture(Base, v).rgb; m = wet(b0);
-    float pale = smoothstep(0.06, 0.12, b0.b - b0.r) * smoothstep(0.45, 0.6, luma(b0));
+    float pale = paleF(b0);
+    float cloud = 0.0; vec3 wsum = vec3(0.0); float wn = 0.0;
     if (m > 0.01 || pale > 0.01) {
+      // Two rings of water samples: how much water is around, and its colour (used to paint over cloud reflections).
       float near = 0.0;
-      for (int i = 0; i < 8; i++) { float a = float(i) * 0.785398; near += wet(texture(Base, v + vec2(cos(a), sin(a)) * GPx * 4.0).rgb); }
+      for (int i = 0; i < 16; i++) {
+        float a = float(i) * 0.785398 + (i < 8 ? 0.0 : 0.39); float r = i < 8 ? 4.0 : 8.0;
+        vec3 sb = texture(Base, v + vec2(cos(a), sin(a)) * GPx * r).rgb; float pw = paleF(sb); float ww = max(wet(sb), pw * 0.8);
+        if (i < 8) near += ww; float cw = wet(sb) * (1.0 - pw); wsum += sb * cw; wn += cw;
+      }
       near *= 0.125;
-      m = max(m * smoothstep(0.2, 0.5, near + m * 0.3), pale * smoothstep(0.45, 0.8, near));
+      // Clouds removed from the water (Jordan, 2026-11-10): pale pixels with water around them become that water.
+      cloud = pale * smoothstep(0.45, 0.75, near) * smoothstep(0.5, 2.0, wn);
+      m = max(m * smoothstep(0.2, 0.5, near + m * 0.3), cloud);
     }
+    if (cloud > 0.01) { vec3 wc = wsum / max(wn, 0.001); c = mix(c, wc, cloud); }
     if (m > 0.01) {
-      vec3 soft = texture(Base, v).rgb * 0.2;
-      for (int i = 0; i < 8; i++) { float a = float(i) * 0.785398 + 0.39; float r = (i % 2 == 0) ? 1.4 : 2.6; soft += texture(Base, v + vec2(cos(a), sin(a)) * GPx * r).rgb * 0.1; }
+      vec3 sb0 = texture(Base, v).rgb; float w0 = 0.2 * max(wet(sb0), 0.05); vec3 soft = sb0 * w0; float sw = w0;
+      for (int i = 0; i < 8; i++) { float a = float(i) * 0.785398 + 0.39; float r = (i % 2 == 0) ? 1.4 : 2.6; vec3 sb = texture(Base, v + vec2(cos(a), sin(a)) * GPx * r).rgb; float ww = 0.1 * max(wet(sb), 0.05); soft += sb * ww; sw += ww; }
+      soft /= sw; if (cloud > 0.01) soft = mix(soft, wsum / max(wn, 0.001), cloud);
       vec3 w = mix(c, soft, 0.88); float wl = luma(w);
       vec3 body = mix(w, WaterCol * (0.55 + 0.9 * wl), 0.5);
       c = mix(c, body, m * Water);
