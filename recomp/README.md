@@ -295,6 +295,11 @@ Jordan: a regenerating quiver stopped at the count it dropped with. Now it refil
 moved: re-run genpatch.py / linkfuncs.py and rebuild both engines. `tools/orcslots/pagejs.py <page.html>` rewrites the
 page's Orc Head block (code hex, bl lines, link cases, state table entries) from orcslots.bin/.sym.
 
+Rolled sizes (Play Room v163, Jordan: "high ammo ones feel special and rare"): each regenerating quiver now rolls its
+own size when it drops (`q_size()`: 70% 10-40, 25% 41-70, 5% 71-99), drops full and refills only to that size. The pack
+form keeps it as 0x80 | size. Engines: graphics thread build web-arrows-sized (?v=163, solo + link). Tested headless:
+a size-45 quiver put on reads max 45, refills 40 -> 45 and stops there.
+
 ### Item menu in the item text panel (Play Room v158, 2026-11-10)
 
 Frodo and Legolas: their arrow slots squeeze the Backpack text into 3 scrolling lines, so the page panel also shows
