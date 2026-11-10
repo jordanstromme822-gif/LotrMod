@@ -297,3 +297,23 @@ Measured on the original ROM in mGBA (Hornburg Valley, level 47) with `tools/eng
   the CPU time. Big frames ask for up to 99 tiles.
 - OAM: entries go through 0x08036540 into the shadow buffers at [0x03004B40] (two 0x400 halves), count byte
   0x03004220 (stops at 128), 0x080366A4 hides the rest. Seen at most 83 entries with +68 monsters, so 128 is close.
+
+### Engine upgrade results (2026-11-10)
+
+- CPU speed (recomp/gbarecomp-cpu-speed.patch): runtime_tick charges each non-halted instruction 100/speed
+  of its cycles. `GBARECOMP_CPU_SPEED=<percent>` or `rotk_cpu_speed(pct)` from the web page (100-800). Native
+  headless with the PC ROM + 68 extra monsters next to the hero: 6.4 fps at 100%, 14.6 at 200%, 24.8 at
+  300%, 30 at 400%; +102 monsters 22 fps at 400%. Test kit in recomp/stress/.
+- Extra sprite tiles (recomp/gbarecomp-obj-ext.patch + tools/engine/bigsprites.py): the engine gets 128 KB
+  of VRAM (0x06018000-0x0601FFFF = OBJ tiles 1024-2047); writing 0x4B58 to IO 0x040000E0 turns on
+  "OAM attr0 bit 12 = tile bit 10" (the game never uses OBJ mosaic) and the register then reads 0x584B.
+  The ROM patch rewrites the sprite-tile bookkeeping in C (alloc 0x08049AB8, mark 0x08049C80, free now
+  0x08049CCC, free later 0x08049D24, per-frame fold 0x08049984, resets 0x080499F8 / 0x08049A54 /
+  0x08049A8C): on that engine the use bitmap A at 0x030022D8 grows to 256 bytes over the old freed-this-frame
+  bitmap and that bitmap moves to VRAM 0x0601FF00 (tiles 2040-2047, kept marked used); elsewhere it keeps the
+  original 128-byte layout. EWRAM 0x0203E800 is NOT free: the level script/spawn blob (0x2C00 bytes from
+  0x08032BB8, pointer 0x0300324C) covers it. Seven places put a tile into an OAM entry or template with
+  `& 0x3FF` (0x08002D6A, 0x0800262C, 0x08039406 frame drawers; 0x08002C72 next piece of a template sprite;
+  0x08002BE6, 0x08003398, 0x08047B20 template stores); bigsprites_stubs.s keeps bit 10 in attr0 bit 12 there.
+  Test: +68 monsters at 400% used up to 2015 tiles with clean pictures, and OAM then sits at 128 every
+  frame (without the extra tiles it varied 64-128), so 128 OAM entries is the next limit.
