@@ -177,7 +177,7 @@ function hd2dMake(gl, prog, tex, MVP, MVP_FLIP, blit){
   const uploadAtlas = (heap, stride, sx, sy, w, h) => {
     const M = window.__wideM;
     if (!HD2D.normImg || !HD2D.map || !M || !M._rotk_skin_slot || !M.__skinOn) return false;
-    try { if (localStorage.getItem("rotk-skin") !== "1") return false; } catch (e) { return false; }
+    try { if (localStorage.getItem("rotk-skin") !== "1" && !window.__crispHook) return false; } catch (e) { return false; }
     if (!api.atlTex) api.atlTex = rgba(HD2D.normImg);
     const ptr = M._rotk_skin_slot(WideHost.front);
     if (!ptr) return false;
@@ -295,7 +295,7 @@ function hd2dMake(gl, prog, tex, MVP, MVP_FLIP, blit){
       gl.bindSampler(unit, sampler || null);
     };
     bind(0, api.col, api.near); gl.uniform1i(u.Texture, 0);
-    bind(1, env.outs[0], api.lin); if (u.Raw) gl.uniform1i(u.Raw, 1);
+    bind(1, env.raw || env.outs[0], api.lin); if (u.Raw) gl.uniform1i(u.Raw, 1);
     const glow = env.lit && env.gT && env.gT[1];
     bind(2, glow || api.dummy, api.lin); if (u.Glow) gl.uniform1i(u.Glow, 2);
     bind(3, mode === 1 ? api.frameTex : mode === 2 ? api.atlTex : api.dummy, api.near); if (u.Normals) gl.uniform1i(u.Normals, 3);

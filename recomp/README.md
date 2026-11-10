@@ -339,6 +339,21 @@ python3 recomp/playroom/hd2d-lighting.py in.html out.html
 - **Shadows and fog.** A soft key-light shadow, sharper on a colour edge, and a contact blob under Gandalf. If Living light is also running (`ShadeK` on the current look), this shadow term is halved so the two do not stack. Fog is thicker toward the top of the playfield and in dark pixels, thinner on the hero and on emissive pixels. Menus keep a light grade so the UI stays readable.
 - Sources: `playroom/hd2d-lighting.glsl`, `playroom/hd2d-lighting.js`, `playroom/hd2d-lighting.py`.
 
+## Crisp skin (Graphics phase 2)
+
+Nearest pixel display for the Play Room, off unless the player turns it on. ScaleFX stays the picture while this is off, including the 3x linear skin pass when that patch is on the page. While it is on, ScaleFX does not run. The picture is an integer nearest scale of the game pixels, 4x by default, and a `skin/atlas.png` pack is drawn into that buffer with nearest filtering (one authored texel per output pixel, not a 4x atlas squeezed through ScaleFX). That buffer is what rich lighting and HD-2D then light. `skin/normals.png` is sampled by the HD-2D pass while this path has the skin hook on.
+
+Apply it after `hd2d-lighting.py` when that patch is on the page, and after `tools/skin/patch_skin.py` when that patch is on the page.
+
+```
+python3 recomp/playroom/crisp-skin.py in.html out.html
+```
+
+- Chip **Crisp skin** on the setup screen, or **K** while playing. `localStorage rotk-crisp` is off when missing. **G** and **H** are unchanged. `localStorage rotk-crisp-scale=3` uses a 3x nearest buffer instead of 4x.
+- Without a pack, the game's own pixels are scaled nearest, so the picture stays hard pixels under the lights. With `skin/atlas.png` and `skin/map.json` (same 36 px cell and FNV-1a key as the skin tools), matched tiles are the 4x art and the rest stay the game pixels. The old skin chip is not required.
+- The native PC window does not run this chain.
+- Sources: `playroom/crisp-skin.glsl`, `playroom/crisp-skin.js`, `playroom/crisp-skin.py`.
+
 ## v155 Skin (test) hook (graphics thread, 2026-11-10)
 - `recomp/gbarecomp-skin.patch` (gba_ppu.cpp + host_window_web.cpp): when `rotk_skin(1)` is on, the wide renderer writes one
   u32 tag per output pixel: bits 0-11 VRAM tile slot (addr/32), 12-15 palette bank, 16 8bpp, 17-19 texel x, 20-22 texel y,
