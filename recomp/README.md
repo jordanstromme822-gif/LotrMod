@@ -368,6 +368,21 @@ That writes `skin/standin/atlas.png`, `map.json`, `normals.png`, and `catalog.js
 
 - Sources: `tools/redraw/`.
 
+## Extra frames (Graphics phase 4)
+
+In-between frames on the same atlas. The wayfarer stand-in has an 8-frame walk and an 8-frame swing: four poses each, and a smear frame after every pose (a one-pixel outline streak, same palette, no blur). The page patch is off unless the player turns it on.
+
+The game's anim stepper (`0x080022E4`) leaves the shown frame in object +0x22 and counts +0x20 down. While Extra frames is on, the second half of that count swaps the tile's atlas cell for the smear cell named in `skin/anim.json`. The first half keeps the cell the tile key already selected. Stand-in keys still do not match the game, so nothing changes until those keys are the real FNV keys of each game frame.
+
+```
+python3 -m tools.redraw.standin skin/standin
+python3 recomp/playroom/anim-frames.py in.html out.html
+```
+
+Copy `anim.json` with the atlas into the page's `skin/` folder. Chip **Extra frames**, or **J** while playing. `localStorage rotk-anim` is off when missing. **G**, **H**, and **K** are unchanged.
+
+- Sources: `playroom/anim-frames.js`, `playroom/anim-frames.py`, `tools/redraw/cycles.py`.
+
 ## v155 Skin (test) hook (graphics thread, 2026-11-10)
 - `recomp/gbarecomp-skin.patch` (gba_ppu.cpp + host_window_web.cpp): when `rotk_skin(1)` is on, the wide renderer writes one
   u32 tag per output pixel: bits 0-11 VRAM tile slot (addr/32), 12-15 palette bank, 16 8bpp, 17-19 texel x, 20-22 texel y,

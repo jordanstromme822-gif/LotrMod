@@ -4,7 +4,8 @@ No character sheets are in the repo (tools/colorplan reads local captures only).
 This figure is a placeholder so the atlas path has something to pack. It is labelled
 standin in every key. usage: python3 -m tools.redraw.standin [outdir]
 """
-import os, sys
+import json, os, sys
+from .cycles import anim_map, walk_and_swing
 from .pack import grid_rgba, pack
 
 PAL = {
@@ -116,9 +117,21 @@ def build(outdir):
     tiles = []
     for name, rows in POSES:
         tiles.extend(tiles_of(name, rows))
+    frames = walk_and_swing(IDLE, STRIDE)
+    for name, rows, _smear in frames:
+        tiles.extend(tiles_of(name, rows))
     info = pack(tiles, outdir)
+    anim = {
+        "standin": True,
+        "timer": {"shown": "object+0x22", "count": "object+0x20"},
+        "note": "Second half of the game's frame timer shows the smear cell. Replace standin: keys with the real cut.py key of that game frame's tile.",
+        "byKey": anim_map(frames),
+    }
+    with open(os.path.join(outdir, "anim.json"), "w") as f:
+        json.dump(anim, f, indent=1)
     info["standin"] = True
-    info["poses"] = [n for n, _ in POSES]
+    info["frames"] = len(frames) + len(POSES)
+    info["smears"] = sum(1 for _n, _r, s in frames if s)
     return info
 
 if __name__ == "__main__":
