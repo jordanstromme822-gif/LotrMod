@@ -35,6 +35,7 @@ def u16(a): return struct.unpack('<H', d[a - 0x08000000:a - 0x08000000 + 2])[0]
 def put16(a, v): d[a - 0x08000000:a - 0x08000000 + 2] = struct.pack('<H', v)
 def bl(s, x):
     o = (x - (s + 4)) >> 1
+    assert -(1 << 21) <= o < (1 << 21), 'bl out of range (Thumb bl reaches 4 MB): put the code below 0x400000'
     return struct.pack('<HH', 0xF000 | ((o >> 11) & 0x7FF), 0xF800 | (o & 0x7FF))
 def patch_bl(at, target, expect, span):
     """replace `span` bytes at `at` (checked against `expect` hex) with bl target + nops"""

@@ -317,3 +317,11 @@ Measured on the original ROM in mGBA (Hornburg Valley, level 47) with `tools/eng
   0x08002BE6, 0x08003398, 0x08047B20 template stores); bigsprites_stubs.s keeps bit 10 in attr0 bit 12 there.
   Test: +68 monsters at 400% used up to 2015 tiles with clean pictures, and OAM then sits at 128 every
   frame (without the extra tiles it varied 64-128), so 128 OAM entries is the next limit.
+
+### Extra sprite tiles in the page-built ROM (2026-11-10)
+
+- The page-built ROM (buildGame, 16 MB) has no big free area; bigsprites code goes in the zero run 0x2833C5-0x2862A8, at 0x284000 (same as the PC ROM).
+- The code must stay below ROM 0x400000: the tile sites call it with Thumb `bl`, which reaches only 4 MB. At 0xFFD000 the `bl` wrapped and the game hung at Select Hero. bigsprites.py now refuses an out-of-range offset.
+- `tools/engine/bigsprites_buildgame.js` is the buildGame step (made by `tools/engine/bigsprites_js.py page.gba page-bs.gba` after `bigsprites.py page.gba page-bs.gba 284000`). It checks the original bytes first, then writes the patch. It goes just before the "All four Bonus Maps paths open" step.
+- Checked: node buildrom.js with the step gives the same bytes as bigsprites.py; in mGBA (no extra sprite memory) the game plays the same as without the patch (same pictures after boot and 1800 frames).
+- The page must ship this ROM step and an engine regenerated from that ROM (with gbarecomp-obj-ext.patch) together: the generated code has to match the ROM bytes.
