@@ -117,7 +117,9 @@ function crispMake(gl, prog, tex, MVP, blit){
       const li = ((t >>> 12) & 15) * 4096 + (t & 4095); if (stamp[li] === ep) continue; stamp[li] = ep;
       const c256 = (t >>> 16) & 1, obj = (t >>> 25) & 1, slot = t & 4095;
       const k = fnv(u8, vr + slot * 32, c256 ? 64 : 32) + fnv(u8, pl + (obj ? 0x200 : 0) + (c256 ? 0 : ((t >>> 12) & 15) * 32), c256 ? 512 : 32) + c256;
-      lut[li] = CRISP.map.get(k) || 0;
+      let cell = CRISP.map.get(k) || 0;
+      if (cell && window.__rotkAnimCell) { const alt = window.__rotkAnimCell(k, cell); if (alt) cell = alt; }
+      lut[li] = cell;
     }
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, api.lutT);

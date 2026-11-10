@@ -1,0 +1,222 @@
+{
+ "standin": true,
+ "tiles": [
+  {
+   "key": "standin:wayfarer/idle/0",
+   "name": "wayfarer/idle/0",
+   "frame": "idle",
+   "standin": true
+  },
+  {
+   "key": "standin:wayfarer/idle/1",
+   "name": "wayfarer/idle/1",
+   "frame": "idle",
+   "standin": true
+  },
+  {
+   "key": "standin:wayfarer/stride/0",
+   "name": "wayfarer/stride/0",
+   "frame": "stride",
+   "standin": true
+  },
+  {
+   "key": "standin:wayfarer/stride/1",
+   "name": "wayfarer/stride/1",
+   "frame": "stride",
+   "standin": true
+  },
+  {
+   "key": "standin:wayfarer/swing/0/0",
+   "name": "wayfarer/swing/0/0",
+   "frame": "swing/0",
+   "standin": true
+  },
+  {
+   "key": "standin:wayfarer/swing/0/1",
+   "name": "wayfarer/swing/0/1",
+   "frame": "swing/0",
+   "standin": true
+  },
+  {
+   "key": "standin:wayfarer/swing/1/0",
+   "name": "wayfarer/swing/1/0",
+   "frame": "swing/1",
+   "standin": true
+  },
+  {
+   "key": "standin:wayfarer/swing/1/1",
+   "name": "wayfarer/swing/1/1",
+   "frame": "swing/1",
+   "standin": true
+  },
+  {
+   "key": "standin:wayfarer/swing/2/0",
+   "name": "wayfarer/swing/2/0",
+   "frame": "swing/2",
+   "standin": true
+  },
+  {
+   "key": "standin:wayfarer/swing/2/1",
+   "name": "wayfarer/swing/2/1",
+   "frame": "swing/2",
+   "standin": true
+  },
+  {
+   "key": "standin:wayfarer/swing/3/0",
+   "name": "wayfarer/swing/3/0",
+   "frame": "swing/3",
+   "standin": true
+  },
+  {
+   "key": "standin:wayfarer/swing/3/1",
+   "name": "wayfarer/swing/3/1",
+   "frame": "swing/3",
+   "standin": true
+  },
+  {
+   "key": "standin:wayfarer/swing/4/0",
+   "name": "wayfarer/swing/4/0",
+   "frame": "swing/4",
+   "standin": true
+  },
+  {
+   "key": "standin:wayfarer/swing/4/1",
+   "name": "wayfarer/swing/4/1",
+   "frame": "swing/4",
+   "standin": true
+  },
+  {
+   "key": "standin:wayfarer/swing/5/0",
+   "name": "wayfarer/swing/5/0",
+   "frame": "swing/5",
+   "standin": true
+  },
+  {
+   "key": "standin:wayfarer/swing/5/1",
+   "name": "wayfarer/swing/5/1",
+   "frame": "swing/5",
+   "standin": true
+  },
+  {
+   "key": "standin:wayfarer/swing/6/0",
+   "name": "wayfarer/swing/6/0",
+   "frame": "swing/6",
+   "standin": true
+  },
+  {
+   "key": "standin:wayfarer/swing/6/1",
+   "name": "wayfarer/swing/6/1",
+   "frame": "swing/6",
+   "standin": true
+  },
+  {
+   "key": "standin:wayfarer/swing/7/0",
+   "name": "wayfarer/swing/7/0",
+   "frame": "swing/7",
+   "standin": true
+  },
+  {
+   "key": "standin:wayfarer/swing/7/1",
+   "name": "wayfarer/swing/7/1",
+   "frame": "swing/7",
+   "standin": true
+  },
+  {
+   "key": "standin:wayfarer/walk/0/0",
+   "name": "wayfarer/walk/0/0",
+   "frame": "walk/0",
+   "standin": true
+  },
+  {
+   "key": "standin:wayfarer/walk/0/1",
+   "name": "wayfarer/walk/0/1",
+   "frame": "walk/0",
+   "standin": true
+  },
+  {
+   "key": "standin:wayfarer/walk/1/0",
+   "name": "wayfarer/walk/1/0",
+   "frame": "walk/1",
+   "standin": true
+  },
+  {
+   "key": "standin:wayfarer/walk/1/1",
+   "name": "wayfarer/walk/1/1",
+   "frame": "walk/1",
+   "standin": true
+  },
+  {
+   "key": "standin:wayfarer/walk/2/0",
+   "name": "wayfarer/walk/2/0",
+   "frame": "walk/2",
+   "standin": true
+  },
+  {
+   "key": "standin:wayfarer/walk/2/1",
+   "name": "wayfarer/walk/2/1",
+   "frame": "walk/2",
+   "standin": true
+  },
+  {
+   "key": "standin:wayfarer/walk/3/0",
+   "name": "wayfarer/walk/3/0",
+   "frame": "walk/3",
+   "standin": true
+  },
+  {
+   "key": "standin:wayfarer/walk/3/1",
+   "name": "wayfarer/walk/3/1",
+   "frame": "walk/3",
+   "standin": true
+  },
+  {
+   "key": "standin:wayfarer/walk/4/0",
+   "name": "wayfarer/walk/4/0",
+   "frame": "walk/4",
+   "standin": true
+  },
+  {
+   "key": "standin:wayfarer/walk/4/1",
+   "name": "wayfarer/walk/4/1",
+   "frame": "walk/4",
+   "standin": true
+  },
+  {
+   "key": "standin:wayfarer/walk/5/0",
+   "name": "wayfarer/walk/5/0",
+   "frame": "walk/5",
+   "standin": true
+  },
+  {
+   "key": "standin:wayfarer/walk/5/1",
+   "name": "wayfarer/walk/5/1",
+   "frame": "walk/5",
+   "standin": true
+  },
+  {
+   "key": "standin:wayfarer/walk/6/0",
+   "name": "wayfarer/walk/6/0",
+   "frame": "walk/6",
+   "standin": true
+  },
+  {
+   "key": "standin:wayfarer/walk/6/1",
+   "name": "wayfarer/walk/6/1",
+   "frame": "walk/6",
+   "standin": true
+  },
+  {
+   "key": "standin:wayfarer/walk/7/0",
+   "name": "wayfarer/walk/7/0",
+   "frame": "walk/7",
+   "standin": true
+  },
+  {
+   "key": "standin:wayfarer/walk/7/1",
+   "name": "wayfarer/walk/7/1",
+   "frame": "walk/7",
+   "standin": true
+  }
+ ],
+ "dropIn": "Replace standin: keys with the cut.py FNV key (%08x%08x%d of tile bytes, palette bytes, 8bpp flag). Author tiles at 16x16. Copy atlas.png, map.json and normals.png to the Play Room skin/ folder. Crisp skin stays off until rotk-crisp is on."
+}

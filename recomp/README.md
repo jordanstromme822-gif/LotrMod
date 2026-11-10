@@ -354,6 +354,35 @@ python3 recomp/playroom/crisp-skin.py in.html out.html
 - The native PC window does not run this chain.
 - Sources: `playroom/crisp-skin.glsl`, `playroom/crisp-skin.js`, `playroom/crisp-skin.py`.
 
+## Crisp 2x redraws (Graphics phase 3)
+
+Hand-drawn 2x tiles for the crisp-skin atlas. Each game tile is authored at 16x16 (two pixels for one GBA pixel), snapped to at most 15 RGB555 colours, then nearest-doubled into the 32x32 cell (36 with the 2 px pad). Nothing is filtered or upscaled by a model. The pack is not loaded until Crisp skin is on and the files sit in the Play Room's `skin/` folder.
+
+There are no extracted character sheets on main. `tools/colorplan/` only reads local captures, and those files are left alone. The shipped figure is an original stand-in (a wayfarer), and every key starts with `standin:` so it cannot replace a real tile.
+
+```
+python3 -m tools.redraw.standin skin/standin
+```
+
+That writes `skin/standin/atlas.png`, `map.json`, `normals.png`, and `catalog.json`. To use a real sheet later: draw or export each tile at 16x16, set its key to the FNV-1a string `tools/skin/cut.py` writes (`%08x%08x%d` of tile bytes, palette-bank bytes, 8bpp flag), and pack with `tools/redraw/pack.py`. Copy `atlas.png`, `map.json`, and `normals.png` to the page's `skin/` directory. Crisp skin still has to be turned on.
+
+- Sources: `tools/redraw/`.
+
+## Extra frames (Graphics phase 4)
+
+In-between frames on the same atlas. The wayfarer stand-in has an 8-frame walk and an 8-frame swing: four poses each, and a smear frame after every pose (a one-pixel outline streak, same palette, no blur). The page patch is off unless the player turns it on.
+
+The game's anim stepper (`0x080022E4`) leaves the shown frame in object +0x22 and counts +0x20 down. While Extra frames is on, the second half of that count swaps the tile's atlas cell for the smear cell named in `skin/anim.json`. The first half keeps the cell the tile key already selected. Stand-in keys still do not match the game, so nothing changes until those keys are the real FNV keys of each game frame.
+
+```
+python3 -m tools.redraw.standin skin/standin
+python3 recomp/playroom/anim-frames.py in.html out.html
+```
+
+Copy `anim.json` with the atlas into the page's `skin/` folder. Chip **Extra frames**, or **J** while playing. `localStorage rotk-anim` is off when missing. **G**, **H**, and **K** are unchanged.
+
+- Sources: `playroom/anim-frames.js`, `playroom/anim-frames.py`, `tools/redraw/cycles.py`.
+
 ## v155 Skin (test) hook (graphics thread, 2026-11-10)
 - `recomp/gbarecomp-skin.patch` (gba_ppu.cpp + host_window_web.cpp): when `rotk_skin(1)` is on, the wide renderer writes one
   u32 tag per output pixel: bits 0-11 VRAM tile slot (addr/32), 12-15 palette bank, 16 8bpp, 17-19 texel x, 20-22 texel y,
