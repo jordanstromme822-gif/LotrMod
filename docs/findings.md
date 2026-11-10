@@ -275,3 +275,25 @@ or `0x08` (ROM as the CPU sees it).
 - Siege layout picker (v145, Jordan 2026-11-10): Siege tab on the story map with 8 spots (NW/NE corners, Black Gate, middle, SW/SE corners, Outer Gate approach, Helm's Deep fixed = level 46). Picks are saved to the account db doc data/users/<id>/siege-layout {slots:{nw,bg,ne,mid,sw,app,se,hd}} plus localStorage rotk-siege. Hero walking speed measured on Hornburg Valley: 1.5 pixels a frame (90 a second, camera moves the same), so hero positions are screen pixels. Walk time shown = long side of the screen picture / 90 (tools/storymap/walk.json). Exit records are mostly one per screen (entry points live elsewhere), so exit-to-exit distance wasn't usable.
 - Siege v146 (Jordan 2026-11-10): 5 x 5 grid, keys r{row}c{col} (rows A-E top to bottom), Helm's Deep fixed at r5c3, defaults r1c3 Black Gate 58, r4c3 approach 47; old v145 keys (nw, bg, ne, mid, sw, app, se) are mapped over. Screens grouped by look (LOOK in storymap.js, sorted by eye from contact sheets): Woods, Plains, River & water, Ships & docks, Camps & houses, Snow & ice, Lava, Wasteland, Mountains, Red rock, Fortress, City, Dwarf halls, Caves, Ruins.
 - Entrances and exits (v147, Jordan 2026-11-10): tools/storymap/ent.py warps to each level, puts the hero on every exit record (type 3, x/y at +0xC/+0xE, entry +0x12, destination +0x13) on the normal ROM and reads the level (0x03004174) and hero position (hero+0xAE x, +0xB2 y as whole pixels) after the move. 104 of 142 exits changed level; the rest are locked until a story step, lead to level 0 (bonus map end), or play a story scene into another level. Way-in points = arrival spots plus each level's warp start. Stored as thousandths of the picture in ee.json. Siege rotate/mirror is saved per spot as tf {r: 0/90/180/270, m: mirror, v: flip} in the siege-layout doc; plan only (the game's art is drawn from one angle, so in-game rotation isn't possible; left-right mirroring might be, later).
+
+## Engine limits for big scenes (2026-11-10)
+
+Measured on the original ROM in mGBA (Hornburg Valley, level 47) with `tools/engine/build_spawntest.py`
+(test-only ROM that clones the level's enemy groups next to the hero) and `tools/runprof.c` (cycle-weighted profile).
+- Objects: one pool of 256 objects of 0x148 bytes (0x0800064C: malloc 0x14800 at [0x030015B8], pool head 0x030015C0,
+  alloc 0x0800169C -> 0x08030518) plus a 40-object pool at 0x030015C4. Live list 0x03002420. Monsters, missiles, items
+  and effects all share it. 102 extra monsters (158 objects) still spawned and ran, so the pool is not the first limit.
+- Groups: 0x0800C0EC(group) spawns every record of a spawn group whose +0 pointer is 0 (constructor table 0x08050440
+  by record type +8); triggers call 0x0800C4AC(group, script). Hornburg Valley enemy records are types 25/26, trolls 22.
+- Counters: 0x030041A4 counts game frames (30 a second), 0x0300411C counts VBlanks (60).
+- Speed: game frames per second with extra monsters near the hero: +8: 30, +16: 30, +24: 25.5, +32: 21, +34 (all
+  groups once): 16, +68: 11, +102: 8. With nothing extra the CPU idles about half of each frame in the VBlank wait
+  (0x0802A3xx). The cost is spread over every object's update (AI, movement, animation, mixer), so a faster CPU is
+  the main fix: about 2x for ~40 monsters on screen, 3x for ~70.
+- Sprite tiles (OBJ VRAM, 1024 tiles): 0x08049AB8(gfx, bytes) finds a free run in the bitmap 0x030022D8 (1 bit per tile,
+  ARM search copied to 0x03007690, returns 0xFFFF when full), marks it (0x08049C80) and uploads; free 0x08049C28.
+  Frames are shared and refcounted per anim set (0x08003240..0x0800328E). With +68 monsters the search failed 403
+  times in 60 frames (callers 0x080032A4 and 0x0800332A), so sprite frames go missing, and the search is ~13% of
+  the CPU time. Big frames ask for up to 99 tiles.
+- OAM: entries go through 0x08036540 into the shadow buffers at [0x03004B40] (two 0x400 halves), count byte
+  0x03004220 (stops at 128), 0x080366A4 hides the rest. Seen at most 83 entries with +68 monsters, so 128 is close.
