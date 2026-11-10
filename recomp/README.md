@@ -367,3 +367,27 @@ python3 recomp/playroom/crisp-skin.py in.html out.html
 - Pack: `tools/skin/capture.js <level>` (headless, saves frames + tags + VRAM + palette), Real-ESRGAN anime 6B 4x
   (tools/skin_upscale.py), then `tools/skin/cut.py OUT capdirs...` keeps only fully visible, unblended tile instances.
   Helm's Deep (level 46) pack: 1036 tiles from 60 screens. Tested headless: tags rebuild the frame exactly (72960/72960 pixels).
+
+## Living light: fire, trees, shadows (2026-11-10)
+
+Jordan: "lighting natural and organic, fire to bounce and spark, trees alive with depth, shadows natural, jagged edges
+rounded where they should be round and sharp where it needs to be sharp". Page patch `playroom/alive.py <page> <out>`
+(on top of v162). All our own effects in the lighting pass, over the game's own picture.
+
+- New game-size pass `ALIVE_GLSL` (after the glow passes) writes one map: R canopy (green with a big light/dark range
+  close by: leaf clumps with near-black gaps; grass and moss have a much smaller range), G flame pixels (yellow-hot core,
+  orange nearby, brighter than the wide blur, no green around: leaf highlights are the same yellow as a brazier core),
+  B shadow-edge factor (average light ratio of same-colour neighbours where the wide light field steps), A soft cast
+  shadow from canopy up-left (sun from the top left).
+- Final pass: canopies sway in gusts (texture and outline, leaf clumps flutter together), heat shimmer above flames,
+  sunlit tree rims, cool shaded undersides, dappled sun over leaves and through their shadows, penumbra on shadow edges
+  (colour edges stay sharp), shadows lean cool blue-violet, each light pool flickers on its own and wavers, flames
+  flicker and change colour, flickering tongues rise above flames, sparks rise from flames (a particle stream that only
+  glows after passing through a flame, fades within ~22 px).
+- Look keys FireK / TreeK / ShadeK (1 while playing, 0 on menus); part of Rich lighting (G / chip turns it all off).
+  Tests: `window.__aliveDbg = 1` shows the map (red canopy, green flame + cast shadow, blue shadow edges), `__aliveOff = 1`.
+- Fetches inside branches use textureLod so phones really skip them; the noise and extra fetches only run near leaves or
+  flames (the Torch light map says if a flame is within ~30 px).
+- Test bench: `tools/lightbench/` (`mk.py page.html dir/index.html` pulls the lighting code out of a page;
+  `shot.js dir out picture.png <look|level|off> <night 0-1> x y w h scale t1,t2,...` renders game pictures through it in
+  headless Chromium). Pictures: project files `screenshots/alive-*`.
