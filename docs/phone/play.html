@@ -2130,6 +2130,7 @@
     <div id="dlStatus" class="status" role="status"></div>
     <button id="play" class="play" type="button" disabled>Play game</button>
     <div id="playStatus" class="status" role="status"></div>
+    <button id="mapSetup" class="chip" type="button" style="display:block;margin:10px auto 0" onclick="window.StoryMap&&StoryMap.open()">Story map</button>
     <!-- 2-player online: shown only after picking it from the game's own Multiplayer menu -->
     <div id="mpField" hidden>
       <div class="mp-row"><button id="mpHost" class="chip" type="button" disabled hidden>Host a game</button><button id="mpCancel" class="chip" type="button" hidden>Cancel</button></div>
@@ -5458,10 +5459,11 @@ void main()
         window.addEventListener("keydown", (e) => { if (e.key === "Escape" && StoryMap.isOpen()) { e.preventDefault(); StoryMap.picOpen() ? StoryMap.closePic() : StoryMap.close(); } }, true);
         // Shows on the title screen (state 5) and the main menu (state 8).
         setInterval(() => {
-          let vis = false;
-          try { const M = window.__wideM; if (M && M.HEAPU8) { const iw = M._rotk_link_iwram ? M._rotk_link_iwram((window.__mp && window.__mp.me) || 0) : M._rotk_iwram(); const st = iw ? M.HEAPU8[iw + 0x41B0] : -1; vis = st === 5 || st === 8; } } catch (e) {}
+          let vis = false, st = -1;
+          try { const M = window.__wideM; if (M && M.HEAPU8) { const iw = M._rotk_link_iwram ? M._rotk_link_iwram((window.__mp && window.__mp.me) || 0) : M._rotk_iwram(); st = iw ? M.HEAPU8[iw + 0x41B0] : -1; vis = st === 5 || st === 8; } } catch (e) {}
           if (b.hidden === vis) b.hidden = !vis;
-          if (!vis && StoryMap.isOpen()) StoryMap.close();
+          // Close it if the game leaves the title or menu; opened from the setup screen (no game yet) it stays open.
+          if (st >= 0 && !vis && StoryMap.isOpen()) StoryMap.close();
         }, 300);
       })();
 
