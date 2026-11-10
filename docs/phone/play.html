@@ -264,12 +264,14 @@
   #storyMap .sg-hint { font-size: 13px; color: #d8d5cb; }
   #storyMap .sg-hint b { color: #f3d98e; }
   #storyMap .sg-strip { display: flex; gap: 8px; overflow-x: auto; overflow-y: hidden; padding: 2px 2px 8px; max-width: calc(100vw - 32px); scroll-snap-type: x proximity; -webkit-overflow-scrolling: touch; }
-  #storyMap .sg-card { flex: none; width: 150px; scroll-snap-align: start; display: flex; flex-direction: column; align-items: stretch; gap: 2px; padding: 4px; border-radius: 8px; border: 1px solid #3a3d4a; background: #1e2028; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+  #storyMap .sg-card { flex: none; width: 367px; scroll-snap-align: start; display: flex; flex-direction: column; align-items: stretch; gap: 2px; padding: 4px; border-radius: 8px; border: 1px solid #3a3d4a; background: #1e2028; color: inherit; font: inherit; text-align: left; cursor: pointer; }
   #storyMap .sg-card.used { opacity: 0.45; }
-  #storyMap .sg-card b { font-size: 12px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #storyMap .sg-card b { font-size: 14px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   #storyMap .sg-card i { font-style: normal; font-size: 10px; color: #a9a79f; }
   #storyMap .sg-img { position: relative; display: block; height: 96px; background: #0b0c10; border-radius: 5px; overflow: hidden; }
   #storyMap .sg-img img { width: 100%; height: 100%; object-fit: contain; display: block; }
+  #storyMap .sg-card .sg-img { height: 235px; }
+  #storyMap .sg-card .sg-img em { font-size: 13px; padding: 3px 0; }
   #storyMap .sg-img em { position: absolute; left: 0; right: 0; bottom: 0; font-style: normal; font-size: 10.5px; font-weight: 600; text-align: center; padding: 2px 0; background: rgba(0,0,0,0.72); color: #f3d98e; }
   #storyMap .sg-grid { display: grid; grid-template-columns: repeat(5, 150px); grid-template-rows: repeat(5, auto); gap: 8px; }
   #storyMap .sg-chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0 8px; }
@@ -297,9 +299,10 @@
     #storyMap .sg-chips button { flex: none; }
     #storyMap .sg-hint { font-size: 11.5px; }
     #storyMap .sg-strip { padding-bottom: 4px; }
-    #storyMap .sg-card { width: 104px; padding: 3px; }
-    #storyMap .sg-card .sg-img { height: 50px; }
-    #storyMap .sg-card b { font-size: 10.5px; }
+    #storyMap .sg-card { width: 255px; padding: 3px; }
+    #storyMap .sg-card .sg-img { height: 122px; }
+    #storyMap .sg-card b { font-size: 11.5px; }
+    #storyMap .sg-card .sg-img em { font-size: 11px; padding: 2px 0; }
     #storyMap .sg-card i { display: none; }
     #storyMap .sg-chips button { font-size: 11px; padding: 4px 9px; }
   }
@@ -312,6 +315,34 @@
   #storyMap .sg-leg { font-size: 11.5px; color: #c9c6bc; display: inline-flex; align-items: center; gap: 5px; margin-left: 6px; }
   #storyMap .sg-leg i { display: inline-block; width: 11px; height: 11px; border-radius: 50%; }
   #storyMap .sg-leg i.en { background: #3cdc6e; } #storyMap .sg-leg i.ex { background: #ff5a4a; margin-left: 6px; }
+  #storyMap .sm-scroll.sg-sc { overflow: hidden; display: flex; }
+  #storyMap .sg { flex-direction: row; gap: 14px; flex: 1; min-height: 0; width: 100%; }
+  #storyMap .sg-left, #storyMap .sg-right { flex: 1 1 0; min-width: 0; overflow: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; display: flex; flex-direction: column; gap: 8px; padding-bottom: 12px; }
+  #storyMap .sg-right { border-left: 1px solid #2c2f3a; padding-left: 12px; }
+  #storyMap .sg-left > *, #storyMap .sg-right > * { flex: none; }
+  #storyMap .sg-img em { white-space: nowrap; overflow: hidden; text-overflow: clip; }
+  #storyMap .sg-chips { position: sticky; top: 0; z-index: 1; background: #121318; padding: 2px 0 6px; margin: 0; }
+  #storyMap .sg-strip { display: grid !important; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; overflow: visible !important; max-width: none !important; padding: 0 !important; }
+  #storyMap .sg-card { width: auto !important; }
+  #storyMap .sg-card .sg-img { height: auto !important; aspect-ratio: 3 / 2; }
+  #storyMap .sg-grid { grid-template-columns: repeat(5, minmax(0, 1fr)) !important; gap: 6px !important; }
+  #storyMap .sg-slot .sg-img { height: auto !important; aspect-ratio: 4 / 3; }
+  #storyMap .sg-slot { min-height: 0 !important; }
+  #storyMap .sg-x, #storyMap .sg-v { top: 20px; font-size: 10px; padding: 1px 5px; }
+  #storyMap .sg-x { right: 5px; } #storyMap .sg-v { right: 28px; } #storyMap .sg-slot.fixed .sg-v { right: 5px; }
+  #storyMap .sg-left .sm-foot { padding-top: 4px; }
+  @media (max-height: 500px) {
+    #storyMap .sg { gap: 8px; }
+    #storyMap .sg-right { padding-left: 8px; }
+    #storyMap .sg-strip { gap: 6px; }
+    #storyMap .sg-slot { padding: 3px; }
+    #storyMap .sg-slot b { font-size: 9.5px; }
+    #storyMap .sg-sn { font-size: 8.5px; }
+    #storyMap .sg-img em { font-size: 9px !important; }
+    #storyMap .sg-x, #storyMap .sg-v { top: 16px; font-size: 9px; padding: 0 4px; }
+    #storyMap .sg-v { right: 24px; }
+    #storyMap .sg-ctl button { font-size: 11px; padding: 4px 8px; }
+  }
   #storyMap .sm-foot { font-size: 12px; color: #a9a79f; padding: 12px 0 4px; max-width: 900px; }
   /* Pause menu (Jordan, 2026-11-08): P2 at the top left, Auto under it (Moria). */
   #p2Btn { left: calc(max(env(safe-area-inset-left, 0px), 0px) + 10px); min-width: 64px; }
@@ -5464,23 +5495,24 @@ void main()
         function siegeView(sc) {
           siegeLoad();
           const wrap = document.createElement("div"); wrap.className = "sg";
-          const top = document.createElement("div"); top.className = "sg-top"; wrap.appendChild(top);
-          const hint = document.createElement("div"); hint.className = "sg-hint"; top.appendChild(hint);
-          const chips = document.createElement("div"); chips.className = "sg-chips"; top.appendChild(chips);
+          // Grid on the left half, screens to choose from on the right half in 2 columns, top to bottom (Jordan, 2026-11-10).
+          const left = document.createElement("div"); left.className = "sg-left"; wrap.appendChild(left);
+          const right = document.createElement("div"); right.className = "sg-right"; wrap.appendChild(right);
+          const hint = document.createElement("div"); hint.className = "sg-hint"; left.appendChild(hint);
+          const chips = document.createElement("div"); chips.className = "sg-chips"; right.appendChild(chips);
           LOOK.concat([["All", null]]).forEach((g, i) => { const b = document.createElement("button"); b.type = "button"; b.dataset.look = i; b.textContent = g[0] + (g[1] ? " " + g[1].length : ""); chips.appendChild(b); });
-          const strip = document.createElement("div"); strip.className = "sg-strip"; top.appendChild(strip);
+          const strip = document.createElement("div"); strip.className = "sg-strip"; right.appendChild(strip);
           function fill() {
             chips.querySelectorAll("button").forEach((b) => b.classList.toggle("on", +b.dataset.look === look));
             const g = LOOK[look], ls = g ? g[1] : Object.keys(WALK).map(Number).sort((a, b) => (region(a) + NAMES[a]).localeCompare(region(b) + NAMES[b]));
-            strip.innerHTML = ""; strip.scrollLeft = 0;
+            strip.innerHTML = ""; right.scrollTop = 0;
             ls.forEach((l) => { const c = document.createElement("button"); c.type = "button"; c.className = "sg-card"; c.dataset.pick = l; c.innerHTML = thumb(l) + "<b>" + NAMES[l] + "</b><i>" + region(l) + "</i>"; strip.appendChild(c); });
           }
           fill();
-          strip.addEventListener("wheel", (e) => { if (!e.ctrlKey && Math.abs(e.deltaY) > Math.abs(e.deltaX)) { e.preventDefault(); strip.scrollLeft += e.deltaY; } }, { passive: false });
-          const grid = document.createElement("div"); grid.className = "sg-grid"; wrap.appendChild(grid);
-          const ctl = document.createElement("div"); ctl.className = "sg-ctl"; wrap.appendChild(ctl);
+          const grid = document.createElement("div"); grid.className = "sg-grid"; left.appendChild(grid);
+          const ctl = document.createElement("div"); ctl.className = "sg-ctl"; left.appendChild(ctl);
           ctl.innerHTML = '<span class="sg-cl"></span><button type="button" data-tf="l">⟲ Rotate left</button><button type="button" data-tf="r">⟳ Rotate right</button><button type="button" data-tf="m">⇋ Mirror</button><button type="button" data-tf="v">⇅ Flip</button><button type="button" data-tf="0">Reset</button><span class="sg-leg"><i class="en"></i>Way in <i class="ex"></i>Exit</span>';
-          const msg = document.createElement("div"); msg.className = "sg-msg"; wrap.appendChild(msg);
+          const msg = document.createElement("div"); msg.className = "sg-msg"; left.appendChild(msg);
           function draw() {
             grid.innerHTML = "";
             const used = {}; SLOTS.forEach((t) => { if (siege[t.k] != null) used[siege[t.k]] = t.n; });
@@ -5488,7 +5520,7 @@ void main()
             grid.style.setProperty("--n", 5);
             const cur = SLOTS.find((t) => t.k === sel);
             ctl.querySelector(".sg-cl").textContent = cur ? "Selected " + cur.n.split(" ")[0] + (siege[sel] != null ? ": " + NAMES[siege[sel]] : " (empty)") : "";
-            hint.innerHTML = cur && !cur.fixed ? "Picking for <b>" + cur.n + "</b>. Choose a group, then tap a screen to put it there." : "Tap a spot in the layout, then pick a screen for it.";
+            hint.innerHTML = cur && !cur.fixed ? "Picking for <b>" + cur.n + "</b>. Choose a group on the right, then tap a screen to put it there." : "Tap a spot in the layout, then pick a screen for it.";
             SLOTS.forEach((t) => {
               const d = document.createElement("div"); d.className = "sg-slot" + (t.k === sel ? " on" : "") + (t.fixed ? " fixed" : "") + (t.k === "r1c3" ? " boss" : t.k === "r5c3" ? " home" : SPECIAL[t.k] ? " spec" : "");
               d.style.gridRow = t.r; d.style.gridColumn = t.c; d.dataset.slot = t.k;
@@ -5512,10 +5544,10 @@ void main()
               siege[sel] = +pk.dataset.pick; const nx = SLOTS.find((q) => !q.fixed && siege[q.k] == null); if (nx) sel = nx.k; draw(); siegeSave(msg); return; }
             if (sl) { e.preventDefault(); e.stopPropagation(); const t = SLOTS.find((q) => q.k === sl.dataset.slot); sel = t.k; draw(); return; }
           });
-          sc.appendChild(wrap);
+          sc.appendChild(wrap); sc.classList.add("sg-sc");
           const foot = document.createElement("div"); foot.className = "sm-foot";
           foot.textContent = "Siege layout: Helm's Deep is the start. Walk times are the long side of each screen at the hero's walking speed, so a winding path takes longer. Green circles are where you come into a screen, red circles are its exits (read by walking the hero onto every exit in the game). Rotate and mirror change the plan only. Picks save to your account. Nothing in the game changes yet; this is the plan the Siege map will be built from.";
-          sc.appendChild(foot);
+          left.appendChild(foot);
         }
 
         function bonusGrid(sc, small) {

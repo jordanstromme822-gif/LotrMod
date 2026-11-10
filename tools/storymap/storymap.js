@@ -101,23 +101,24 @@
         function siegeView(sc) {
           siegeLoad();
           const wrap = document.createElement("div"); wrap.className = "sg";
-          const top = document.createElement("div"); top.className = "sg-top"; wrap.appendChild(top);
-          const hint = document.createElement("div"); hint.className = "sg-hint"; top.appendChild(hint);
-          const chips = document.createElement("div"); chips.className = "sg-chips"; top.appendChild(chips);
+          // Grid on the left half, screens to choose from on the right half in 2 columns, top to bottom (Jordan, 2026-11-10).
+          const left = document.createElement("div"); left.className = "sg-left"; wrap.appendChild(left);
+          const right = document.createElement("div"); right.className = "sg-right"; wrap.appendChild(right);
+          const hint = document.createElement("div"); hint.className = "sg-hint"; left.appendChild(hint);
+          const chips = document.createElement("div"); chips.className = "sg-chips"; right.appendChild(chips);
           LOOK.concat([["All", null]]).forEach((g, i) => { const b = document.createElement("button"); b.type = "button"; b.dataset.look = i; b.textContent = g[0] + (g[1] ? " " + g[1].length : ""); chips.appendChild(b); });
-          const strip = document.createElement("div"); strip.className = "sg-strip"; top.appendChild(strip);
+          const strip = document.createElement("div"); strip.className = "sg-strip"; right.appendChild(strip);
           function fill() {
             chips.querySelectorAll("button").forEach((b) => b.classList.toggle("on", +b.dataset.look === look));
             const g = LOOK[look], ls = g ? g[1] : Object.keys(WALK).map(Number).sort((a, b) => (region(a) + NAMES[a]).localeCompare(region(b) + NAMES[b]));
-            strip.innerHTML = ""; strip.scrollLeft = 0;
+            strip.innerHTML = ""; right.scrollTop = 0;
             ls.forEach((l) => { const c = document.createElement("button"); c.type = "button"; c.className = "sg-card"; c.dataset.pick = l; c.innerHTML = thumb(l) + "<b>" + NAMES[l] + "</b><i>" + region(l) + "</i>"; strip.appendChild(c); });
           }
           fill();
-          strip.addEventListener("wheel", (e) => { if (!e.ctrlKey && Math.abs(e.deltaY) > Math.abs(e.deltaX)) { e.preventDefault(); strip.scrollLeft += e.deltaY; } }, { passive: false });
-          const grid = document.createElement("div"); grid.className = "sg-grid"; wrap.appendChild(grid);
-          const ctl = document.createElement("div"); ctl.className = "sg-ctl"; wrap.appendChild(ctl);
+          const grid = document.createElement("div"); grid.className = "sg-grid"; left.appendChild(grid);
+          const ctl = document.createElement("div"); ctl.className = "sg-ctl"; left.appendChild(ctl);
           ctl.innerHTML = '<span class="sg-cl"></span><button type="button" data-tf="l">⟲ Rotate left</button><button type="button" data-tf="r">⟳ Rotate right</button><button type="button" data-tf="m">⇋ Mirror</button><button type="button" data-tf="v">⇅ Flip</button><button type="button" data-tf="0">Reset</button><span class="sg-leg"><i class="en"></i>Way in <i class="ex"></i>Exit</span>';
-          const msg = document.createElement("div"); msg.className = "sg-msg"; wrap.appendChild(msg);
+          const msg = document.createElement("div"); msg.className = "sg-msg"; left.appendChild(msg);
           function draw() {
             grid.innerHTML = "";
             const used = {}; SLOTS.forEach((t) => { if (siege[t.k] != null) used[siege[t.k]] = t.n; });
@@ -125,7 +126,7 @@
             grid.style.setProperty("--n", 5);
             const cur = SLOTS.find((t) => t.k === sel);
             ctl.querySelector(".sg-cl").textContent = cur ? "Selected " + cur.n.split(" ")[0] + (siege[sel] != null ? ": " + NAMES[siege[sel]] : " (empty)") : "";
-            hint.innerHTML = cur && !cur.fixed ? "Picking for <b>" + cur.n + "</b>. Choose a group, then tap a screen to put it there." : "Tap a spot in the layout, then pick a screen for it.";
+            hint.innerHTML = cur && !cur.fixed ? "Picking for <b>" + cur.n + "</b>. Choose a group on the right, then tap a screen to put it there." : "Tap a spot in the layout, then pick a screen for it.";
             SLOTS.forEach((t) => {
               const d = document.createElement("div"); d.className = "sg-slot" + (t.k === sel ? " on" : "") + (t.fixed ? " fixed" : "") + (t.k === "r1c3" ? " boss" : t.k === "r5c3" ? " home" : SPECIAL[t.k] ? " spec" : "");
               d.style.gridRow = t.r; d.style.gridColumn = t.c; d.dataset.slot = t.k;
@@ -149,10 +150,10 @@
               siege[sel] = +pk.dataset.pick; const nx = SLOTS.find((q) => !q.fixed && siege[q.k] == null); if (nx) sel = nx.k; draw(); siegeSave(msg); return; }
             if (sl) { e.preventDefault(); e.stopPropagation(); const t = SLOTS.find((q) => q.k === sl.dataset.slot); sel = t.k; draw(); return; }
           });
-          sc.appendChild(wrap);
+          sc.appendChild(wrap); sc.classList.add("sg-sc");
           const foot = document.createElement("div"); foot.className = "sm-foot";
           foot.textContent = "Siege layout: Helm's Deep is the start. Walk times are the long side of each screen at the hero's walking speed, so a winding path takes longer. Green circles are where you come into a screen, red circles are its exits (read by walking the hero onto every exit in the game). Rotate and mirror change the plan only. Picks save to your account. Nothing in the game changes yet; this is the plan the Siege map will be built from.";
-          sc.appendChild(foot);
+          left.appendChild(foot);
         }
 
         function bonusGrid(sc, small) {
