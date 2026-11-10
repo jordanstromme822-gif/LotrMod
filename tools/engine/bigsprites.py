@@ -53,6 +53,11 @@ for at, name in ((0x08049984, 'bs_fold'), (0x080499F8, 'bs_init'), (0x08049A54, 
                  (0x08049A8C, 'bs_reset_b'), (0x08049AB8, 'bs_alloc'), (0x08049C80, 'bs_mark'),
                  (0x08049CCC, 'bs_free_now'), (0x08049D24, 'bs_free_later')):
     jump(at, sym[name])
+# 6. OAM: entries 128-250 in the engine's second OAM block (see bigsprites_init.c)
+for at, name in ((0x08036540, 'bs_oam_put'), (0x08036590, 'bs_oam_hideb'), (0x080366A4, 'bs_oam_end'),
+                 (0x080366EC, 'bs_oam_init')):
+    jump(at, sym[name])
+patch_bl(0x0802A164, sym['bs_vbl'], '0b4a0c4908781070', 8)
 # 5. tile bit 10 -> attr0 bit 12
 patch_bl(0x08002D6A, sym['bs_e1'], '8905890d', 4)
 patch_bl(0x0800262C, sym['bs_e3'], '8905890d', 4)

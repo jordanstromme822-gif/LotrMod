@@ -132,3 +132,19 @@ bs_e6:
     pop  {r0}
     bx   r0
     .ltorg
+
+@ 0x0802A164 (VBlank IRQ, after the OAM DMA): the game's "last count = count" step, then
+@ bs_oam_vbl. Returns with r1 = 0x03004220 as the game expects (r0, r2, r3 are reloaded after).
+    .global bs_vbl
+    .thumb_func
+bs_vbl:
+    push {lr}
+    ldr  r2, =0x03004B70
+    ldr  r1, =0x03004220
+    ldrb r0, [r1]
+    strb r0, [r2]
+    bl   bs_oam_vbl
+    ldr  r1, =0x03004220
+    pop  {r0}
+    bx   r0
+    .ltorg

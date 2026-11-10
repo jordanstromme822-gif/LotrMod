@@ -85,3 +85,78 @@ void bs_mark(u32 t, u32 n) { setbits(A, t & 0xFFFF, n & 0xFFFF, 1); }
 void bs_free_now(u32 t, u32 n) { t &= 0xFFFF; if (t != 0xFFFF) setbits(A, t, n & 0xFFFF, 0); }
 /* 0x08049D24(tile, count): free at the next fold */
 void bs_free_later(u32 t, u32 n) { t &= 0xFFFF; if (t != 0xFFFF) setbits(bmB(), t, n & 0xFFFF, 0); }
+
+/* ---- More than 128 sprites (engine upgrade 2026-11-10) ----
+   The game appends OAM entries to a shadow buffer (2 buffers x 2 halves x 128 entries; the halves
+   differ only in entries hidden on alternate frames) and its VBlank IRQ DMAs one half to OAM.
+   With the extra sprite memory on, the engine maps 8 KB at 0x07000000: entries 128-250 are drawn
+   from 0x07000400, and 0x07000800-0x070017FF holds the game's shadow copies of those entries
+   (buffer 0x03004340 -> 0x07000800, buffer 0x03004B80 -> 0x07001000; half B at +0x400).
+   Otherwise every function below does exactly what the original did. */
+#define CNT    (*(volatile u8 *)0x03004220)
+#define CUR    (*(volatile u32 *)0x03004B40)   /* buffer being filled */
+#define LAST   (*(volatile u32 *)0x03004330)   /* buffer handed over last */
+#define HALF   (*(volatile u32 *)0x03001F18)
+#define DISP   (*(volatile u32 *)0x030040B0)
+#define OAM2   ((volatile u32 *)0x07000400)
+#define NMAX   251u
+static volatile u32 *xs(u32 buf) { return (volatile u32 *)(buf == 0x03004B80 ? 0x07001000 : 0x07000800); }
+
+/* 0x08036540(index, entry): append one entry; 0 or -1 when full */
+int bs_oam_put(u32 idx, const u32 *e) {
+    u32 n = CNT, x = ext();
+    idx &= 0xFF;
+    if (x ? n >= NMAX : (n & 0x80) != 0) return -1;
+    CNT = (u8)(n + 1);
+    volatile u32 *p;
+    if (idx < 128) p = (volatile u32 *)CUR + idx * 2;
+    else if (x && idx < NMAX) p = xs(CUR) + (idx - 128) * 2;
+    else return 0;
+    p[0] = e[0]; p[1] = e[1];
+    p[0x100] = e[0]; p[0x101] = e[1];
+    return 0;
+}
+/* 0x08036590(index): hide the entry in half B (shown on alternate frames) */
+void bs_oam_hideb(u32 idx) {
+    idx &= 0xFF;
+    volatile u32 *p;
+    if (idx < 128) p = (volatile u32 *)CUR + 0x100 + idx * 2;
+    else if (ext() && idx < NMAX) p = xs(CUR) + 0x100 + (idx - 128) * 2;
+    else return;
+    p[0] = (p[0] & ~0x300u) | 0x200u;
+}
+/* 0x080366A4(): frame done, hide the unused entries, tell the VBlank IRQ */
+void bs_oam_end(void) {
+    u32 i = CNT;
+    volatile u32 *b = (volatile u32 *)CUR;
+    for (; i < 128; i++) { b[i * 2] = 0x200; b[0x100 + i * 2] = 0x200; }
+    if (ext()) {
+        volatile u32 *q = xs(CUR);
+        for (i = CNT < 128 ? 128 : CNT; i < NMAX; i++) { q[(i - 128) * 2] = 0x200; q[0x100 + (i - 128) * 2] = 0x200; }
+    }
+    *(volatile u16 *)(DISP + 0x38) = 1;
+}
+/* 0x080366EC(): every entry = the blank template, DMA buffer to OAM, count 0 */
+void bs_oam_init(void) {
+    const u32 *t = (const u32 *)0x0806CEB4;
+    volatile u32 *b = (volatile u32 *)CUR;
+    for (u32 i = 0; i < 128; i++) { b[i * 2] = t[0]; b[i * 2 + 1] = t[1]; b[0x100 + i * 2] = t[0]; b[0x101 + i * 2] = t[1]; }
+    if (ext()) {
+        volatile u32 *q0 = xs(0x03004340), *q1 = xs(0x03004B80);
+        for (u32 i = 0; i < 0x200; i += 2) { q0[i] = t[0]; q0[i + 1] = t[1]; q1[i] = t[0]; q1[i + 1] = t[1]; }
+        for (u32 i = 0; i < 0x100; i += 2) { OAM2[i] = t[0]; OAM2[i + 1] = t[1]; }
+    }
+    *(volatile u32 *)0x040000D4 = CUR;
+    *(volatile u32 *)0x040000D8 = 0x07000000;
+    *(volatile u32 *)0x040000DC = 0x84000100;
+    (void)*(volatile u32 *)0x040000DC;
+    CNT = 0;
+}
+/* VBlank IRQ, right after the game DMAs a shadow half to OAM: copy the same half of the
+   extra entries to the engine's second OAM block */
+void bs_oam_vbl(void) {
+    if (!ext()) return;
+    u32 buf = LAST == 0x03004340 ? 0x03004B80 : 0x03004340;
+    volatile u32 *q = xs(buf) + (HALF & 1) * 0x100;
+    for (u32 i = 0; i < 0x100; i++) OAM2[i] = q[i];
+}
