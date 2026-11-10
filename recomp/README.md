@@ -299,3 +299,6 @@ look). The page reads state 0x030041B0 and level 0x030041F8 every 0.4 s and ease
 Off switch: "Rich lighting" button on the setup screen, or G while playing (localStorage `rotk-light=0`).
 Sources: `playroom/rich-lighting-*.js`; `rich-lighting-patch.py <page> <out>` applies them to the page.
 Before/after: project files `screenshots/rich-lighting-v150.png`.
+
+### Water (v151, 2026-11-10)
+Jordan said the water still looked bad (Frodo's Morgul levels). The lighting pass now finds water pixels (green and blue well above red; sky and grass excluded), blurs away the tiled zigzag, wobbles it (refraction), gives it a deeper body colour per look (`WaterCol`), moving light bands, round sparkles and shore foam. Shader source: `playroom/rich-lighting-final.glsl`. Picture: `screenshots/water-v151.png`.

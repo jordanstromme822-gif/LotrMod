@@ -19,7 +19,8 @@ rep("""        gl.bindFramebuffer(gl.FRAMEBUFFER, null);
       };
       // heap:""")
 rep("""        gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-        const cw = gl.drawingBufferWidth, ch = gl.drawingBufferHeight;""", """        let lit = false; try { lit = !plain && !!glowP && localStorage.getItem("rotk-light") !== "0"; } catch (e) { lit = !plain && !!glowP; }
+        const cw = gl.drawingBufferWidth, ch = gl.drawingBufferHeight;""", """        gl.bindSampler(2, null);
+        let lit = false; try { lit = !plain && !!glowP && localStorage.getItem("rotk-light") !== "0"; } catch (e) { lit = !plain && !!glowP; }
         if (lit) {
           ease();
           // Glow + wide shadow map: bright pixels blurred across and down at game size, luma blur kept in alpha.
@@ -41,8 +42,11 @@ rep("""        gl.useProgram(blit.p); gl.activeTexture(gl.TEXTURE0); gl.bindText
           gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, gT[1]); gl.uniform1i(fu.Glow, 1);
           gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, outs[5]); gl.uniform1i(fu.Texture, 0);
           gl.uniformMatrix4fv(fu.MVPMatrix, false, MVP_FLIP);
-          for (const k of ["ShadowTint", "HiTint", "GlowTint", "FogCol", "Gain"]) if (fu[k]) gl.uniform3fv(fu[k], cur[k]);
-          for (const k of ["Sat", "GlowK", "Clarity", "Vig", "Fog", "Lift", "Amount", "Sun", "Relief"]) if (fu[k]) gl.uniform1f(fu[k], cur[k]);
+          for (const k of ["ShadowTint", "HiTint", "GlowTint", "FogCol", "Gain", "WaterCol"]) if (fu[k]) gl.uniform3fv(fu[k], cur[k]);
+          for (const k of ["Sat", "GlowK", "Clarity", "Vig", "Fog", "Lift", "Amount", "Sun", "Relief", "Water"]) if (fu[k]) gl.uniform1f(fu[k], cur[k]);
+          if (fu.Time) gl.uniform1f(fu.Time, (performance.now() / 1000) % 600);
+          if (fu.GPx) gl.uniform2f(fu.GPx, 1 / w, 1 / h);
+          gl.activeTexture(gl.TEXTURE2); gl.bindTexture(gl.TEXTURE_2D, outs[0]); gl.bindSampler(2, linS); if (fu.Base) gl.uniform1i(fu.Base, 2);
           if (fu.Px) gl.uniform2f(fu.Px, 1.2 / w, 1.2 / h);
         } else {
         gl.useProgram(blit.p); gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, plain ? input : outs[5]);
