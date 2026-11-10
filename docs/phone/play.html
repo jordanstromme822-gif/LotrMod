@@ -303,6 +303,15 @@
     #storyMap .sg-card i { display: none; }
     #storyMap .sg-chips button { font-size: 11px; padding: 4px 9px; }
   }
+  #storyMap .sg-img svg { width: 100%; height: 100%; display: block; }
+  #storyMap .sg-img circle.en { fill: rgba(60, 220, 110, 0.55); stroke: #3cdc6e; }
+  #storyMap .sg-img circle.ex { fill: rgba(240, 70, 60, 0.55); stroke: #ff5a4a; }
+  #storyMap .sg-ctl { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+  #storyMap .sg-ctl button { font: inherit; font-size: 12.5px; color: #ecebe6; background: #2a2c35; border: 1px solid #44475a; border-radius: 8px; padding: 6px 11px; cursor: pointer; }
+  #storyMap .sg-cl { font-size: 12px; color: #f3d98e; font-weight: 700; margin-right: 4px; }
+  #storyMap .sg-leg { font-size: 11.5px; color: #c9c6bc; display: inline-flex; align-items: center; gap: 5px; margin-left: 6px; }
+  #storyMap .sg-leg i { display: inline-block; width: 11px; height: 11px; border-radius: 50%; }
+  #storyMap .sg-leg i.en { background: #3cdc6e; } #storyMap .sg-leg i.ex { background: #ff5a4a; margin-left: 6px; }
   #storyMap .sm-foot { font-size: 12px; color: #a9a79f; padding: 12px 0 4px; max-width: 900px; }
   /* Pause menu (Jordan, 2026-11-08): P2 at the top left, Auto under it (Moria). */
   #p2Btn { left: calc(max(env(safe-area-inset-left, 0px), 0px) + 10px); min-width: 64px; }
@@ -5429,18 +5438,29 @@ void main()
         let siege = fixSlots({}), sel = "r2c2";
         try { const v = JSON.parse(localStorage.getItem("rotk-siege") || "null"); if (v && typeof v === "object") siege = fixSlots(v); } catch (e) {}
         const siegeDb = (async () => { const use = window.claude && window.claude.use; if (!use) return null; const [db, user] = await Promise.all([use("db"), use("user")]); const id = db && user && await user.id(); return id ? db.doc("data/users/" + id + "/siege-layout") : null; })().catch(() => null);
+        try { const v = JSON.parse(localStorage.getItem("rotk-siege-tf") || "null"); if (v && typeof v === "object") tfs = v; } catch (e) {}
         let siegeLoaded = false, siegeRedraw = null;
         function siegeLoad() {
           if (siegeLoaded) return; siegeLoaded = true;
-          siegeDb.then((d) => d && d.get()).then((r) => { if (r && r.exists) { const v = r.data(); if (v && v.slots) { siege = fixSlots(v.slots); try { localStorage.setItem("rotk-siege", JSON.stringify(siege)); } catch (e) {} if (siegeRedraw) siegeRedraw(); } } }).catch(() => {});
+          siegeDb.then((d) => d && d.get()).then((r) => { if (r && r.exists) { const v = r.data(); if (v && v.slots) { siege = fixSlots(v.slots); tfs = v.tf && typeof v.tf === "object" ? v.tf : {}; try { localStorage.setItem("rotk-siege", JSON.stringify(siege)); } catch (e) {} if (siegeRedraw) siegeRedraw(); } } }).catch(() => {});
         }
         let saveT = 0;
         function siegeSave(msg) {
-          try { localStorage.setItem("rotk-siege", JSON.stringify(siege)); } catch (e) {}
+          try { localStorage.setItem("rotk-siege", JSON.stringify(siege)); localStorage.setItem("rotk-siege-tf", JSON.stringify(tfs)); } catch (e) {}
           clearTimeout(saveT); msg.textContent = "Saving…";
-          saveT = setTimeout(() => siegeDb.then((d) => { if (!d) { msg.textContent = "Saved on this device."; return; } return d.set({ slots: siege, at: Date.now() }).then(() => { msg.textContent = "Saved to your account."; }); }).catch(() => { msg.textContent = "Saved on this device (account save failed)."; }), 600);
+          saveT = setTimeout(() => siegeDb.then((d) => { if (!d) { msg.textContent = "Saved on this device."; return; } return d.set({ slots: siege, tf: tfs, at: Date.now() }).then(() => { msg.textContent = "Saved to your account."; }); }).catch(() => { msg.textContent = "Saved on this device (account save failed)."; }), 600);
         }
-        const thumb = (l) => '<span class="sg-img"><img loading="lazy" alt="" src="maps/t/L' + l + '.webp"><em>~' + (WALK[l] || "?") + " s to cross</em></span>";
+        // Picture size and where you come in (0, green) and the exits (1, red; 4th value = level it leads to), in thousandths
+        // of the picture. Read by walking the hero onto every exit (tools/storymap/ent.py) plus each level's start point.
+        const SZ = {"0":[1920,1704],"1":[480,456],"2":[1504,840],"3":[1792,680],"4":[800,776],"5":[1024,936],"6":[1408,616],"7":[960,648],"8":[640,840],"9":[960,872],"10":[1344,1224],"12":[640,1416],"13":[2400,456],"14":[576,552],"15":[576,552],"16":[1600,1160],"17":[1120,776],"18":[672,1288],"19":[480,456],"20":[800,1064],"21":[1216,1544],"22":[1344,776],"23":[704,1256],"24":[512,488],"25":[1056,616],"26":[480,456],"27":[1024,1224],"28":[672,1224],"29":[1824,840],"30":[800,691],"31":[480,456],"32":[1760,552],"34":[800,1096],"36":[480,456],"37":[1856,1576],"38":[1600,1576],"39":[1536,1608],"40":[480,616],"41":[2048,520],"42":[1920,1224],"43":[608,776],"46":[1536,776],"47":[800,776],"48":[1952,2024],"49":[960,1192],"50":[800,808],"51":[1152,1256],"52":[896,1800],"53":[1248,744],"54":[736,808],"55":[800,616],"56":[448,424],"57":[2240,456],"58":[800,1256],"59":[800,2056],"60":[1600,872],"61":[512,323],"63":[1024,488],"67":[704,776],"68":[240,136],"69":[800,1576],"71":[1504,808],"72":[960,936],"73":[1120,1128],"74":[1088,1224],"75":[480,456],"76":[1024,1032],"77":[1248,1576],"78":[1920,712],"79":[1024,776],"80":[1632,1000],"81":[1184,1768],"82":[2048,1384],"83":[800,1736],"84":[2048,1608],"85":[960,456],"86":[480,776],"87":[1440,1064],"88":[1024,1576],"89":[608,1320],"90":[800,936],"91":[800,936],"92":[800,1256],"93":[1152,776],"94":[960,680],"95":[1504,1032],"96":[832,328],"97":[1280,936],"98":[480,456],"99":[1440,1320],"100":[480,456],"101":[640,1320],"102":[800,1096],"103":[1024,680],"104":[1600,1576],"105":[2048,1512],"106":[1920,808],"107":[1120,1096],"108":[480,488],"109":[672,616],"110":[2048,584],"111":[1056,904],"112":[1248,776],"113":[960,712],"114":[2144,872],"115":[1440,1288],"116":[800,2024],"117":[1600,2024],"121":[480,712],"122":[1920,680],"123":[480,392],"124":[1152,1064],"125":[800,1032],"126":[2560,488],"127":[704,1128],"128":[1152,1256],"129":[800,776]};
+        const EE = {"0":[[0,875,1000],[1,108,12,1]],"1":[[0,967,886],[1,33,445,24]],"2":[[0,17,825],[1,988,35,3]],"3":[[0,973,985],[1,107,16,0]],"4":[[0,396,287],[1,401,291,7]],"5":[[0,154,1000],[1,809,67,4]],"6":[[0,717,508],[0,26,437],[1,717,508,6]],"7":[[0,903,136],[1,4,878,42]],"8":[[0,42,1000],[1,498,785,13],[1,978,271,10]],"9":[[0,22,822],[1,277,108,5]],"10":[[0,20,955],[1,768,404,117]],"12":[[0,297,1000],[1,988,52,8]],"13":[[0,675,838],[0,252,750],[0,35,958],[1,998,375,6],[1,674,706,8],[1,247,561,117]],"14":[[0,167,158],[1,970,1000,25]],"15":[[0,292,817],[1,135,114,14]],"16":[[0,402,994],[1,248,35,17],[1,747,27,17],[1,541,11,17]],"17":[[0,135,184]],"18":[[0,452,1000],[1,814,28,16]],"19":[[0,850,950],[1,15,88,22]],"20":[[0,969,969],[1,16,68,21]],"21":[[0,980,965],[1,10,93,19]],"22":[[0,977,122],[1,38,809,88]],"23":[[0,53,123],[1,18,955,20]],"24":[[0,963,834],[1,453,227,15]],"25":[[0,122,273],[1,994,727,107]],"26":[[0,92,226],[1,950,1000,18]],"27":[[0,38,895],[1,233,17,29]],"28":[[0,73,934],[1,981,424,26]],"29":[[0,329,1000],[1,997,568,28],[1,997,674,28]],"30":[[0,30,1000]],"31":[[0,67,169],[1,973,660,125]],"32":[[0,18,926],[1,997,178,34]],"34":[[0,69,201],[1,994,976,30]],"36":[[0,52,55],[1,952,989,0]],"37":[[0,10,969],[1,985,36,38]],"38":[[0,13,936],[1,996,179,39]],"39":[[0,117,51],[1,997,751,36]],"40":[[0,162,750],[1,969,390,27]],"41":[[0,19,767],[1,992,615,40]],"42":[[0,42,514],[1,989,523,43]],"43":[[0,104,39],[1,975,858,41]],"46":[[0,147,183]],"47":[[0,42,45],[1,42,52,0]],"48":[[0,99,28],[1,119,1000,124]],"49":[[0,926,948],[0,331,86],[1,332,81,49]],"50":[[0,51,954],[1,982,64,0]],"51":[[0,30,888],[1,493,4,55]],"52":[[0,964,905],[1,992,46,56]],"53":[[0,190,355],[1,802,255,50]],"54":[[0,935,335],[1,73,35,52]],"55":[[0,430,1000],[1,154,833,54]],"56":[[0,51,851],[1,654,134,57]],"57":[[0,179,671]],"58":[[0,56,949],[1,831,212,0]],"59":[[0,396,1000],[1,555,6,58]],"60":[[0,299,97],[0,16,417],[1,988,1000,59],[1,270,30,61]],"61":[[0,656,1000],[1,807,1000,60]],"63":[[0,23,555],[0,922,549],[1,5,609,0]],"67":[[0,297,376]],"68":[[1,21,1000,0]],"69":[[0,70,962],[1,982,395,73]],"71":[[0,58,870],[1,987,153,63]],"72":[[0,150,884],[1,844,99,71]],"73":[[0,41,880],[1,724,93,72]],"74":[[0,503,233],[0,75,145],[1,984,868,80]],"75":[[0,75,461],[1,973,557,12]],"76":[[0,56,181],[1,787,1000,78]],"77":[[0,895,972],[1,967,129,89],[1,962,450,74]],"78":[[0,11,132],[1,448,21,77]],"79":[[0,29,727],[1,987,660,76]],"80":[[0,12,55],[1,989,547,75]],"81":[[0,205,64],[1,940,870,49]],"82":[[0,946,212],[1,43,167,83]],"83":[[0,94,36],[1,959,897,84]],"84":[[0,21,35],[1,995,743,81]],"85":[[0,14,811],[1,775,384,86]],"86":[[0,81,76],[1,10,934,125]],"87":[[0,68,799],[1,959,43,85]],"88":[[0,85,84],[1,967,1000,87]],"89":[[0,158,89],[1,947,895,74]],"90":[[0,524,1000],[1,451,983,103],[1,326,892,95]],"91":[[0,479,965],[1,665,902,103]],"92":[[0,25,982],[1,468,231,60]],"93":[[0,102,643],[1,991,494,104]],"94":[[0,31,118],[1,942,991,98]],"95":[[0,31,71],[1,237,9,100]],"96":[[0,329,43],[1,736,73,106]],"97":[[0,34,891],[1,982,134,105]],"98":[[0,148,583],[0,62,590],[1,148,583,98]],"99":[[0,845,825],[1,982,1000,94]],"100":[[0,50,566],[1,990,638,101]],"101":[[0,466,993],[1,19,72,99]],"102":[[0,72,46],[1,984,1000,92]],"103":[[0,106,957],[1,551,307,90],[1,996,275,91]],"104":[[0,21,892],[1,678,8,106],[1,828,1000,96]],"105":[[0,13,979],[1,997,111,103]],"106":[[0,985,557],[1,6,812,100]],"107":[[0,29,34],[1,972,998,102]],"108":[[0,265,1000],[1,967,684,32]],"109":[[0,54,987],[1,987,156,110]],"110":[[0,25,813],[1,2,414,112]],"111":[[0,46,119],[1,525,1000,108]],"112":[[0,37,415],[1,994,661,108]],"113":[[0,29,423],[1,993,154,114]],"114":[[0,812,1000],[1,103,8,112]],"115":[[0,56,914],[1,996,92,116]],"116":[[0,98,962],[1,5,973,115]],"117":[[0,61,974],[1,12,880,115],[1,231,375,13]],"121":[[0,92,940],[1,73,968,0]],"122":[[0,10,210],[1,993,904,123]],"123":[[0,25,533],[1,994,686,2]],"124":[[0,38,243],[1,983,668,127]],"125":[[0,74,882],[1,965,141,129]],"126":[[0,7,410],[1,995,342,122]],"127":[[0,50,161],[1,994,904,123]],"128":[[0,42,902],[1,992,96,126]],"129":[[0,15,228],[1,490,782,48]]};
+        let tfs = {};
+        const thumb = (l, t) => {
+          const [w, h] = SZ[l] || [240, 160], r = (t && t.r) || 0, side = r % 180 !== 0, VW = side ? h : w, VH = side ? w : h, R = Math.max(w, h) * 0.06;
+          const g = "translate(" + VW / 2 + " " + VH / 2 + ") rotate(" + r + ") scale(" + (t && t.m ? -1 : 1) + " " + (t && t.v ? -1 : 1) + ") translate(" + -w / 2 + " " + -h / 2 + ")";
+          const mk = (EE[l] || []).map((m) => '<circle cx="' + m[1] * w / 1000 + '" cy="' + m[2] * h / 1000 + '" r="' + R + '" class="' + (m[0] ? "ex" : "en") + '" stroke-width="' + R * 0.35 + '"/>').join("");
+          return '<span class="sg-img"><svg viewBox="0 0 ' + VW + " " + VH + '" preserveAspectRatio="xMidYMid meet"><g transform="' + g + '"><image href="maps/t/L' + l + '.webp" width="' + w + '" height="' + h + '" preserveAspectRatio="none"/>' + mk + "</g></svg><em>~" + (WALK[l] || "?") + " s to cross</em></span>";
+        };
         function siegeView(sc) {
           siegeLoad();
           const wrap = document.createElement("div"); wrap.className = "sg";
@@ -5458,6 +5478,8 @@ void main()
           fill();
           strip.addEventListener("wheel", (e) => { if (!e.ctrlKey && Math.abs(e.deltaY) > Math.abs(e.deltaX)) { e.preventDefault(); strip.scrollLeft += e.deltaY; } }, { passive: false });
           const grid = document.createElement("div"); grid.className = "sg-grid"; wrap.appendChild(grid);
+          const ctl = document.createElement("div"); ctl.className = "sg-ctl"; wrap.appendChild(ctl);
+          ctl.innerHTML = '<span class="sg-cl"></span><button type="button" data-tf="l">⟲ Rotate left</button><button type="button" data-tf="r">⟳ Rotate right</button><button type="button" data-tf="m">⇋ Mirror</button><button type="button" data-tf="v">⇅ Flip</button><button type="button" data-tf="0">Reset</button><span class="sg-leg"><i class="en"></i>Way in <i class="ex"></i>Exit</span>';
           const msg = document.createElement("div"); msg.className = "sg-msg"; wrap.appendChild(msg);
           function draw() {
             grid.innerHTML = "";
@@ -5465,12 +5487,13 @@ void main()
             strip.querySelectorAll(".sg-card").forEach((c) => c.classList.toggle("used", !!used[c.dataset.pick]));
             grid.style.setProperty("--n", 5);
             const cur = SLOTS.find((t) => t.k === sel);
+            ctl.querySelector(".sg-cl").textContent = cur ? "Selected " + cur.n.split(" ")[0] + (siege[sel] != null ? ": " + NAMES[siege[sel]] : " (empty)") : "";
             hint.innerHTML = cur && !cur.fixed ? "Picking for <b>" + cur.n + "</b>. Choose a group, then tap a screen to put it there." : "Tap a spot in the layout, then pick a screen for it.";
             SLOTS.forEach((t) => {
               const d = document.createElement("div"); d.className = "sg-slot" + (t.k === sel ? " on" : "") + (t.fixed ? " fixed" : "") + (t.k === "r1c3" ? " boss" : t.k === "r5c3" ? " home" : SPECIAL[t.k] ? " spec" : "");
               d.style.gridRow = t.r; d.style.gridColumn = t.c; d.dataset.slot = t.k;
               const l = siege[t.k];
-              d.innerHTML = '<div class="sg-sn">' + t.n + (t.fixed ? " 🔒" : "") + "</div>" + (l != null ? thumb(l) + "<b>" + NAMES[l] + "</b>" + (t.fixed ? "" : '<button type="button" class="sg-x" data-clear="' + t.k + '" aria-label="Clear">×</button>') + '<button type="button" class="sg-v" data-view="' + l + '">View</button>' : '<div class="sg-empty">+</div>');
+              d.innerHTML = '<div class="sg-sn">' + t.n + (t.fixed ? " 🔒" : "") + "</div>" + (l != null ? thumb(l, tfs[t.k]) + "<b>" + NAMES[l] + "</b>" + (t.fixed ? "" : '<button type="button" class="sg-x" data-clear="' + t.k + '" aria-label="Clear">×</button>') + '<button type="button" class="sg-v" data-view="' + l + '">View</button>' : '<div class="sg-empty">+</div>');
               grid.appendChild(d);
             });
           }
@@ -5478,15 +5501,20 @@ void main()
           wrap.addEventListener("click", (e) => {
             const lk = e.target.closest("[data-look]"); if (lk) { e.preventDefault(); look = +lk.dataset.look; fill(); draw(); return; }
             const x = e.target.closest("[data-clear]"), v = e.target.closest("[data-view]"), pk = e.target.closest("[data-pick]"), sl = e.target.closest("[data-slot]");
-            if (x) { e.preventDefault(); e.stopPropagation(); delete siege[x.dataset.clear]; sel = x.dataset.clear; draw(); siegeSave(msg); return; }
+            const tb = e.target.closest("[data-tf]");
+            if (tb) { e.preventDefault(); e.stopPropagation(); if (siege[sel] == null) { msg.textContent = "Pick a block with a screen in it first."; return; }
+              const t = Object.assign({ r: 0, m: 0, v: 0 }, tfs[sel]), a = tb.dataset.tf;
+              if (a === "l") t.r = (t.r + 270) % 360; else if (a === "r") t.r = (t.r + 90) % 360; else if (a === "m") t.m = t.m ? 0 : 1; else if (a === "v") t.v = t.v ? 0 : 1; else { t.r = 0; t.m = 0; t.v = 0; }
+              if (!t.r && !t.m && !t.v) delete tfs[sel]; else tfs[sel] = t; draw(); siegeSave(msg); return; }
+            if (x) { e.preventDefault(); e.stopPropagation(); delete siege[x.dataset.clear]; delete tfs[x.dataset.clear]; sel = x.dataset.clear; draw(); siegeSave(msg); return; }
             if (v) { e.preventDefault(); e.stopPropagation(); pic(+v.dataset.view); return; }
             if (pk) { e.preventDefault(); e.stopPropagation(); const t = SLOTS.find((q) => q.k === sel); if (!t || t.fixed) { msg.textContent = "Tap a spot in the layout first."; return; }
               siege[sel] = +pk.dataset.pick; const nx = SLOTS.find((q) => !q.fixed && siege[q.k] == null); if (nx) sel = nx.k; draw(); siegeSave(msg); return; }
-            if (sl) { e.preventDefault(); e.stopPropagation(); const t = SLOTS.find((q) => q.k === sl.dataset.slot); if (t.fixed) { pic(t.fixed); return; } sel = t.k; draw(); return; }
+            if (sl) { e.preventDefault(); e.stopPropagation(); const t = SLOTS.find((q) => q.k === sl.dataset.slot); sel = t.k; draw(); return; }
           });
           sc.appendChild(wrap);
           const foot = document.createElement("div"); foot.className = "sm-foot";
-          foot.textContent = "Siege layout: Helm's Deep is the start. Walk times are the long side of each screen at the hero's walking speed, so a winding path takes longer. Picks save to your account. Nothing in the game changes yet; this is the plan the Siege map will be built from.";
+          foot.textContent = "Siege layout: Helm's Deep is the start. Walk times are the long side of each screen at the hero's walking speed, so a winding path takes longer. Green circles are where you come into a screen, red circles are its exits (read by walking the hero onto every exit in the game). Rotate and mirror change the plan only. Picks save to your account. Nothing in the game changes yet; this is the plan the Siege map will be built from.";
           sc.appendChild(foot);
         }
 
