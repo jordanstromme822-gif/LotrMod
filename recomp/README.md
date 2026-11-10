@@ -307,3 +307,17 @@ Jordan said the water still looked bad (Frodo's Morgul levels). The lighting pas
 Jordan: water motion flickered, white rim round enemies, cloud reflections looked like stone, walls picked up water, menus not upgraded. Water is now still (no wobble, bands, sparkles or foam), stricter water colour test, pale reflections count as water only when surrounded by water, stronger blur. Every non-play screen (title, loading, pause, backpack, stats) uses the full menu look.
 
 ### v153: cloud reflections removed from water (Jordan). Pale teal pixels (green above red, so grey stone is left alone) with water all round are painted over with the average of the nearby non-pale water.
+
+## v155 Skin (test) hook (graphics thread, 2026-11-10)
+- `recomp/gbarecomp-skin.patch` (gba_ppu.cpp + host_window_web.cpp): when `rotk_skin(1)` is on, the wide renderer writes one
+  u32 tag per output pixel: bits 0-11 VRAM tile slot (addr/32), 12-15 palette bank, 16 8bpp, 17-19 texel x, 20-22 texel y,
+  23 hflip, 24 vflip, 25 OBJ, 26 alpha-blended, 27 brightness fade, 31 valid. `rotk_skin_slot(i)` = tags of video slot i.
+  Affine BG/OBJ are not tagged. Off by default, no cost when off.
+- `recomp/web/shim-skin.cpp` = shim.cpp + `rotk_vram()` / `rotk_pal()` (read-only).
+- runtime.cpp also needs `extern "C" EMSCRIPTEN_KEEPALIVE void rotk_bg_tick() { if (g_web_iter) web_single_tick(); }`
+  next to web_single_run (it was missing from the gbarecomp tree).
+- Page: `tools/skin/patch_skin.py in.html out.html` adds the skin pass after ScaleFX (atlas skin/atlas.png + skin/map.json,
+  key = FNV-1a hex of tile bytes + palette bank bytes + 8bpp flag). Chip "Skin (test)" on the setup screen, localStorage rotk-skin.
+- Pack: `tools/skin/capture.js <level>` (headless, saves frames + tags + VRAM + palette), Real-ESRGAN anime 6B 4x
+  (tools/skin_upscale.py), then `tools/skin/cut.py OUT capdirs...` keeps only fully visible, unblended tile instances.
+  Helm's Deep (level 46) pack: 1036 tiles from 60 screens. Tested headless: tags rebuild the frame exactly (72960/72960 pixels).

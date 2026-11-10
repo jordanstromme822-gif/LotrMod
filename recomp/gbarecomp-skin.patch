@@ -1,0 +1,311 @@
+diff --git a/src/gba/gba_ppu.cpp b/src/gba/gba_ppu.cpp
+index d9d1604..a7549f9 100644
+--- a/src/gba/gba_ppu.cpp
++++ b/src/gba/gba_ppu.cpp
+@@ -17,6 +17,12 @@
+ 
+ #include "snapshot.h"
+ 
++// Skin (HD texture pack, 2026-11-10): when on, the wide renderer also writes one tag per output
++// pixel naming the 8x8 tile (VRAM slot, palette bank, texel, flips) that won the pixel, so the page
++// can draw replacement art for known tiles. Off by default; costs nothing when off.
++extern "C" int g_skin_on = 0;
++extern "C" uint32_t* g_skin_ids = nullptr;
++extern "C" uint32_t g_skin_w = 0, g_skin_h = 0;
+ namespace gba {
+ 
+ #if defined(GBARECOMP_ORDERED_DRAW_TEST_COVERAGE)
+@@ -66,6 +72,9 @@ extern "C" int (*g_ws_obj_attr_x_provider)(int, std::uint16_t,
+ // still run first, so a game can re-place known-safe HUD sprites and clip the
+ // rest.
+ extern "C" int g_ws_obj_native_clip = 0;
++extern "C" const uint8_t* g_ws_render_io = nullptr;
++extern "C" int g_ws_margin_scroll_override_on = 0;
++extern "C" int g_ws_margin_scroll_override[4][2] = {};
+ extern "C" int (*g_ws_obj_attr_y_provider)(int, std::uint16_t,
+                                             std::uint16_t, std::uint16_t,
+                                             int*) = nullptr;
+@@ -1523,6 +1532,11 @@ void render_scanline_internal(uint8_t* rgb, uint32_t y, uint16_t dispcnt,
+ // (left) and x>=240 sprites (right) both appear in the margins. Signed `y`
+ // addresses authored vertical rows, where raw OAM/affine/bitmap extrapolation
+ // is prohibited; only validated game providers may contribute content.
++static inline uint32_t skin_tag(uint32_t tile_addr, uint32_t bank, bool c256, uint32_t px,
++                                uint32_t py, bool hf, bool vf, bool obj) {
++    return 0x80000000u | ((tile_addr >> 5) & 0xFFFu) | ((bank & 15u) << 12) | (c256 ? 1u << 16 : 0u) |
++        ((px & 7u) << 17) | ((py & 7u) << 20) | (hf ? 1u << 23 : 0u) | (vf ? 1u << 24 : 0u) | (obj ? 1u << 25 : 0u);
++}
+ template<bool Ordered>
+ void render_scanline_wide_impl(uint8_t* rgb, int y, uint16_t dispcnt,
+                           const uint8_t* io, const uint8_t* vram,
+@@ -1553,6 +1567,7 @@ void render_scanline_wide_impl(uint8_t* rgb, int y, uint16_t dispcnt,
+         bool target1 = false;
+         bool target2 = false;
+         bool valid = false;
++        uint32_t sk = 0;
+     };
+ 
+     const bool win0_en   = (dispcnt & 0x2000u) != 0;
+@@ -1674,8 +1689,10 @@ void render_scanline_wide_impl(uint8_t* rgb, int y, uint16_t dispcnt,
+         top[x].target2 = (second_targets & (1u << 5)) != 0;
+         top[x].valid = true;
+     }
++    const bool skin = g_skin_on && g_skin_ids && out_w <= GbaPpu::kMaxRenderWidth;
++    if (skin) g_skin_w = out_w;
+     auto submit = [&](uint32_t x, uint16_t color, int key, uint8_t layer,
+-                      bool target1, bool target2) {
++                      bool target1, bool target2, uint32_t sk = 0) {
+         if (hd) hd->submit(x, color, key, layer, target1, target2);
+         PixelCandidate cand;
+         cand.color = color;
+@@ -1687,6 +1704,7 @@ void render_scanline_wide_impl(uint8_t* rgb, int y, uint16_t dispcnt,
+         cand.target1 = target1;
+         cand.target2 = target2;
+         cand.valid = true;
++        cand.sk = sk;
+         if (key < top[x].key) { second[x] = top[x]; top[x] = cand; }
+         else if (key < second[x].key) { second[x] = cand; }
+     };
+@@ -1859,7 +1877,11 @@ void render_scanline_wide_impl(uint8_t* rgb, int y, uint16_t dispcnt,
+                             if (!index) continue;
+                             index |= palette_bank;
+                             submit(output_x, load_u16_le(pal + index * 2u), candidate_key,
+-                                   static_cast<uint8_t>(layer), blend_enabled(output_x) && target1, target2);
++                                   static_cast<uint8_t>(layer), blend_enabled(output_x) && target1, target2,
++                                   skin ? skin_tag(char_base + (entry & 0x03FFu) * (color256 ? 64u : 32u),
++                                                   entry >> 12, color256, px,
++                                                   (entry & 0x0800u) ? 7u - (tex_y & 7u) : tex_y & 7u,
++                                                   entry & 0x0400u, entry & 0x0800u, false) : 0u);
+                         }
+                         x += count;
+                     }
+@@ -1910,7 +1932,10 @@ void render_scanline_wide_impl(uint8_t* rgb, int y, uint16_t dispcnt,
+                     if (!index) continue;
+                     if (!color256) index |= palette_bank;
+                     submit(sx, load_u16_le(pal + index * 2u), key, static_cast<uint8_t>(layer),
+-                           blend_enabled(sx) && target1, target2);
++                           blend_enabled(sx) && target1, target2,
++                           skin ? skin_tag(char_base + (entry & 0x03ffu) * (color256 ? 64u : 32u),
++                                           entry >> 12, color256, px, py,
++                                           entry & 0x0400u, entry & 0x0800u, false) : 0u);
+                 }
+                 x += count;
+             }
+@@ -2047,7 +2072,9 @@ void render_scanline_wide_impl(uint8_t* rgb, int y, uint16_t dispcnt,
+                    static_cast<int>(bg_priority * 256u + 128u + layer),
+                    static_cast<uint8_t>(layer),
+                    sample_blend && ((first_targets & (1u << layer)) != 0),
+-                   (second_targets & (1u << layer)) != 0);
++                   (second_targets & (1u << layer)) != 0,
++                   skin ? skin_tag(char_base + tile_num * (color256 ? 64u : 32u), palette_bank,
++                                   color256, px, py, hflip, vflip, false) : 0u);
+         }
+     };
+     auto render_affine_bg = [&](uint32_t layer, uint32_t cnt_off,
+@@ -2368,6 +2395,7 @@ void render_scanline_wide_impl(uint8_t* rgb, int y, uint16_t dispcnt,
+             // into the next priority's BG band.
+             int key = priority * 256 + idx;
+             bool obj_target2 = (second_targets & (1u << 4)) != 0;
++            bool obj_skin = false, obj_hf = false, obj_vf = false;
+             auto emit_obj = [&](int tex_x, int tex_y, int screen_x) {
+                 if (screen_x < 0 || screen_x >= static_cast<int>(out_w)) return;
+                 if (!useful(static_cast<uint32_t>(screen_x), key)) return;
+@@ -2412,7 +2440,9 @@ void render_scanline_wide_impl(uint8_t* rgb, int y, uint16_t dispcnt,
+                 const uint16_t color = load_u16_le(&obj_pal[pal_index * 2]);
+                 uint32_t ux = static_cast<uint32_t>(screen_x);
+                 bool t1 = (blend_enabled(ux) || authored_margin) && obj_mode == 1;
+-                submit(ux, color, key, 4, t1, obj_target2);
++                submit(ux, color, key, 4, t1, obj_target2,
++                       obj_skin ? skin_tag(tile_off, palette_bank, color256, px_in_tile, py_in_tile,
++                                           obj_hf, obj_vf, true) : 0u);
+             };
+             if (rot_scale) {
+                 int bw = disable_or_double ? sw * 2 : sw;
+@@ -2465,6 +2495,7 @@ void render_scanline_wide_impl(uint8_t* rgb, int y, uint16_t dispcnt,
+             if (!obj_focus_active) resolve_sx();
+             bool hflip = (attr1 & 0x1000u) != 0;
+             bool vflip = (attr1 & 0x2000u) != 0;
++            obj_skin = skin; obj_hf = hflip; obj_vf = vflip;
+             const int source_y = nearest_source_pixel(line, sh, draw_h);
+             int ty = source_y >> 3;
+             int py = source_y & 7;
+@@ -2506,6 +2537,9 @@ void render_scanline_wide_impl(uint8_t* rgb, int y, uint16_t dispcnt,
+         }
+     }
+     GBA_RENDER_PHASE_MARK(profile, WideOutput);
++    uint32_t* skin_row = nullptr;
++    if (skin && y + static_cast<int>(oy) >= 0 && static_cast<uint32_t>(y + static_cast<int>(oy)) < g_skin_h)
++        skin_row = g_skin_ids + static_cast<std::size_t>(y + static_cast<int>(oy)) * out_w;
+     for (uint32_t x = 0; x < out_w; ++x) {
+         uint16_t ui_color = 0;
+         if (g_ws_ui_pixel_provider &&
+@@ -2531,6 +2565,7 @@ void render_scanline_wide_impl(uint8_t* rgb, int y, uint16_t dispcnt,
+               (g_ws_pillarbox_right && right_margin)))) {
+             dst[0] = dst[1] = dst[2] = 0;
+             if (hd) hd->black_column(x);
++            if (skin_row) skin_row[x] = 0;
+             continue;
+         }
+         // Alpha blend top (1st target) with the layer below (2nd target). Per
+@@ -2539,6 +2574,13 @@ void render_scanline_wide_impl(uint8_t* rgb, int y, uint16_t dispcnt,
+         // EVA=0/EVB=16 is a valid blend (1st target fully fades into the 2nd) â€”
+         // the Oak-intro character fade endpoint that previously snapped back to
+         // opaque, leaving body/feet (BG2 + semi-transparent OBJ) out of sync.
++        if (skin_row) {
++            // Bit 26: alpha-blended with the layer below; bit 27: brightness fade.
++            const bool ab = (effect == 1 || top[x].layer == 4) && top[x].target1 && second[x].valid &&
++                second[x].target2 && !(top[x].layer == 4 && second[x].layer == 4);
++            const bool fade = !ab && (effect == 2u || effect == 3u) && bldy != 0u && top[x].target1;
++            skin_row[x] = top[x].sk ? (top[x].sk | (ab ? 1u << 26 : 0u) | (fade ? 1u << 27 : 0u)) : 0u;
++        }
+         if ((effect == 1 || top[x].layer == 4) &&
+             top[x].target1 && second[x].valid && second[x].target2 &&
+             !(top[x].layer == 4 && second[x].layer == 4)) {
+@@ -2596,6 +2638,13 @@ void GbaPpu::render(uint8_t* rgb,
+                     const uint8_t* vram,
+                     const uint8_t* oam,
+                     const uint8_t* pal) const {
++    // Whole-frame re-renders (screenshots, 60 fps in-between pictures) tell
++    // margin providers which register page they are drawing with.
++    struct RenderIoScope {
++        const uint8_t* prev;
++        explicit RenderIoScope(const uint8_t* io) : prev(g_ws_render_io) { g_ws_render_io = io; }
++        ~RenderIoScope() { g_ws_render_io = prev; }
++    } render_io_scope(io);
+     if (!view_expanded()) {
+         // Faithful path â€” literally unchanged from before view expansion existed.
+         for (uint32_t y = 0; y < kScreenHeight; ++y) {
+diff --git a/src/runtime/host_window_web.cpp b/src/runtime/host_window_web.cpp
+index 82ed5f8..6056f63 100644
+--- a/src/runtime/host_window_web.cpp
++++ b/src/runtime/host_window_web.cpp
+@@ -1,3 +1,7 @@
++#if defined(__EMSCRIPTEN__) && !defined(__EMSCRIPTEN_PTHREADS__)
++#include <emscripten.h>
++#define GBR_WEB_SINGLE 1
++#endif
+ #include "host_window.h"
+ #include "host_web_shared.h"
+ #include "host_overlay.h"
+@@ -17,6 +21,25 @@
+ #include <thread>
+ #include <vector>
+ 
++#if defined(GBR_WEB_SINGLE)
++#define GBR_SLEEP(ms) ((void)0)  /* never blocks: the page answers synchronously */
++#else
++#define GBR_SLEEP(ms) std::this_thread::sleep_for(std::chrono::milliseconds(ms))
++#endif
++extern "C" int g_skin_on;
++extern "C" uint32_t* g_skin_ids;
++extern "C" uint32_t g_skin_w, g_skin_h;
++static std::vector<uint32_t> g_skin_slot[3];
++static std::vector<uint32_t> g_skin_buf;
++// Page side: rotk_skin(1) turns tags on; rotk_skin_slot(i) is video slot i's tags (width*height u32).
++extern "C" EMSCRIPTEN_KEEPALIVE void rotk_skin(int on) {
++    if(on&&g_skin_buf.empty()){ g_skin_buf.assign(std::size_t(gba::GbaPpu::kMaxRenderWidth)*gba::GbaPpu::kMaxRenderHeight,0);
++        g_skin_ids=g_skin_buf.data(); g_skin_h=gba::GbaPpu::kMaxRenderHeight; }
++    g_skin_on=on?1:0;
++}
++extern "C" EMSCRIPTEN_KEEPALIVE const uint32_t* rotk_skin_slot(int i) {
++    return (i>=0&&i<3&&!g_skin_slot[i].empty())?g_skin_slot[i].data():nullptr;
++}
+ namespace gbarecomp {
+ namespace {
+ using namespace web;
+@@ -199,7 +222,7 @@ void draw_engine_long_press(const Backend& b,const Geometry& g,HostOverlay& ov)
+ }
+ 
+ void request_page_settings() {
+-    MAIN_THREAD_ASYNC_EM_ASM({ globalThis.GbrHost?.requestSettings?.(); });
++    MAIN_THREAD_ASYNC_EM_ASM({ var h=globalThis.GbrHost; if(h&&h.requestSettings) h.requestSettings(); });
+ }
+ 
+ // Page pointer events -> TouchHub (drawable pixels; view space from the layout
+@@ -281,7 +304,7 @@ bool HostWindow::open(int scale,int w,int h,const char*,const char* screen,bool
+     // Setup only: the page remains free to finish the worklet handshake.
+     const auto deadline=std::chrono::steady_clock::now()+std::chrono::seconds(15);
+     while(!backend(impl_)->shared.control.audioReady.load() && std::chrono::steady_clock::now()<deadline)
+-        std::this_thread::sleep_for(std::chrono::milliseconds(2));
++        GBR_SLEEP(2);
+     uint32_t pending=0;
+     if(backend(impl_)->shared.control.audioReady.compare_exchange_strong(pending,2)) {
+         // A missing audio device never takes video down. A late READY from the
+@@ -306,7 +329,7 @@ void HostWindow::close() {
+             impl_=nullptr; open_=false;
+             return;
+         }
+-        std::this_thread::sleep_for(std::chrono::milliseconds(2));
++        GBR_SLEEP(2);
+     }
+     if(c.detached.load(std::memory_order_acquire)==DetachSafeToFree) {
+         delete b;
+@@ -327,6 +350,13 @@ bool HostWindow::readback_native(const std::shared_ptr<const gba::GbaNativeDrawF
+ void HostWindow::present(const uint8_t* rgb) {
+     if(!impl_||!rgb)return;
+     auto& b=*backend(impl_);auto& s=b.shared;auto& v=s.video[b.back];
++    if(g_skin_on&&g_skin_ids){
++        // Skin tags for this picture go in the slot that matches its video slot (see gba_ppu.cpp).
++        const std::size_t n=std::size_t(b.width)*b.height;
++        if(g_skin_slot[b.back].size()!=n) g_skin_slot[b.back].assign(n,0);
++        if(g_skin_w==unsigned(b.width)) std::copy_n(g_skin_ids,n,g_skin_slot[b.back].data());
++        else std::fill(g_skin_slot[b.back].begin(),g_skin_slot[b.back].end(),0u);
++    }
+     v.width=b.width;v.height=b.height;v.stride=b.width*3;v.seq=++b.seq;
+     b.lut->map_rgb888(rgb,v.pixels,b.width,b.height);
+     const Geometry g=geometry(b);
+@@ -346,6 +376,10 @@ void HostWindow::present(const uint8_t* rgb,unsigned sampled_w,unsigned sampled_
+     if(!sampled_w)sampled_w=b.width;
+     if(!sampled_h)sampled_h=b.height;
+     if(sampled_w==unsigned(b.width)&&sampled_h==unsigned(b.height)) { present(rgb);return; }
++#if defined(GBR_WEB_SINGLE)
++    // The page reads each slot's own size: show the wide view at full size.
++    if(dimensions(int(sampled_w),int(sampled_h))) { b.width=int(sampled_w); b.height=int(sampled_h); present(rgb); return; }
++#endif
+     // The browser shared-memory protocol has fixed logical-size slots. Keep
+     // its portable native-density fallback until an enhanced-slot ABI exists.
+     // Read the supplied sampled stride; never reinterpret it as native RGB.
+@@ -448,7 +482,7 @@ void HostWindow::configure_touch(bool policy,std::uint32_t claims,int pad_defaul
+     hub.set_timing(350,game_long_press?450:650);
+     // The page owns the virtual pad (capability, default, saved choice) and
+     // publishes touchControls/padVisible back through the control block.
+-    MAIN_THREAD_ASYNC_EM_ASM({ globalThis.GbrHost?.configureTouch?.($0!==0,$1,$2!==0); },
++    MAIN_THREAD_ASYNC_EM_ASM({ var h=globalThis.GbrHost; if(h&&h.configureTouch) h.configureTouch($0!==0,$1,$2!==0); },
+                              policy?1:0,pad_default,emulate?1:0);
+     std::fprintf(stderr,"host_web: touch policy=%s claims=0x%x pad_default=%d emulation=%s\n",
+                  policy?"game":"none",unsigned(claims),pad_default,emulate?"on":"off");
+@@ -461,7 +495,7 @@ void HostWindow::set_touch_pad_visible(bool visible) {
+     if(!impl_)return;
+     auto& c=backend(impl_)->shared.control;
+     c.padVisible=visible && c.touchControls.load();
+-    MAIN_THREAD_ASYNC_EM_ASM({ globalThis.GbrHost?.setPadVisible?.($0!==0); },visible?1:0);
++    MAIN_THREAD_ASYNC_EM_ASM({ var h=globalThis.GbrHost; if(h&&h.setPadVisible) h.setPadVisible($0!==0); },visible?1:0);
+ }
+ void HostWindow::set_view_margins(std::uint32_t l,std::uint32_t r,std::uint32_t t,std::uint32_t bo) {
+     if(!impl_)return;
+@@ -477,7 +511,7 @@ bool HostWindow::wait_for_foreground() {
+     TouchHub::instance().cancel_all(touch_clock_ms());
+     report_paused(true); reset_audio();
+     while(c.hidden.load() && !c.quit.load())
+-        std::this_thread::sleep_for(std::chrono::milliseconds(5));
++        GBR_SLEEP(5);
+     b.backgrounded=false;
+     const bool resumed=!c.quit.load();
+     // A new playback epoch: nothing queued before the page was hidden replays.
+@@ -489,7 +523,7 @@ void HostWindow::haptic_pulse(int duration_ms,float strength) {
+     if(!impl_ || duration_ms<=0 || !(strength>0.0f)) return;
+     // navigator.vibrate lives on the page (Window), has no amplitude control
+     // and is absent on some browsers (then this is a no-op, reported once).
+-    MAIN_THREAD_ASYNC_EM_ASM({ globalThis.GbrHost?.haptic?.($0); },std::clamp(duration_ms,1,5000));
++    MAIN_THREAD_ASYNC_EM_ASM({ var h=globalThis.GbrHost; if(h&&h.haptic) h.haptic($0); },std::clamp(duration_ms,1,5000));
+ }
+ void host_haptic_pulse(int duration_ms,float strength) {
+     if(g_haptic_window) g_haptic_window->haptic_pulse(duration_ms,strength);
+@@ -498,6 +532,7 @@ void host_request_settings_menu() { g_settings_menu_requested.store(true); }
+ 
+ void web_notify_storage_write(WebStorageWrite kind,bool ok) {
+     // Async proxy: only integers cross, so nothing can be freed before it runs.
+-    MAIN_THREAD_ASYNC_EM_ASM({ globalThis.GbrSaves?.onWrite($0,$1); },static_cast<int>(kind),ok?1:0);
++    MAIN_THREAD_ASYNC_EM_ASM({ var h=globalThis.GbrSaves; if(h&&h.onWrite) h.onWrite($0,$1); },static_cast<int>(kind),ok?1:0);
+ }
+ }
++namespace gbarecomp { bool HostWindow::saved_audio_enhanced(bool&) const { return false; } }
