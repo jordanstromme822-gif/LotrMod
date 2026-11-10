@@ -50,7 +50,7 @@ rep("""        gl.uniform1i(blit.u.Texture, 0); gl.uniformMatrix4fv(blit.u.MVPMa
         }
         if (useHd) { const mu = (lit && finP ? finP.u : blit.u).MVPMatrix; if (mu) gl.uniformMatrix4fv(mu, false, MVP); }
         gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
-        if (useHd) { try { hd.present({ cw: cw, ch: ch, dest: dest, w: w, h: h, hudY: hudY, lit: lit, cur: cur, heap: heap, off: off, stride: stride, sx: sx, sy: sy, outs: outs, gT: gT }); } catch (e) { if (!hd.said) { hd.said = 1; (window.__wideLog || (window.__wideLog = [])).push("hd2d: " + (e && e.message || e)); } hd.bad = 1; try { hd.blit(cw, ch, dest); } catch (e2) {} } }""")
+        if (useHd) { try { hd.present({ cw: cw, ch: ch, dest: dest, w: w, h: h, hudY: hudY, lit: lit, cur: cur, heap: heap, off: off, stride: stride, sx: sx, sy: sy, outs: outs, gT: gT, raw: (typeof crispPic !== "undefined" ? crispPic : null) }); } catch (e) { if (!hd.said) { hd.said = 1; (window.__wideLog || (window.__wideLog = [])).push("hd2d: " + (e && e.message || e)); } hd.bad = 1; try { hd.blit(cw, ch, dest); } catch (e2) {} } }""")
 CHIP = '<button id="hd2dSetup" class="chip" type="button" style="display:block;margin:8px auto 0" onclick="window.__toggleHd2d&&__toggleHd2d()">HD-2D lighting: Off</button>\n'
 if s.count('<button id="lightSetup"') == 1:
     rep('<button id="lightSetup"', CHIP + '<button id="lightSetup"')
