@@ -322,6 +322,23 @@ Jordan: water motion flickered, white rim round enemies, cloud reflections looke
 
 ### v153: cloud reflections removed from water (Jordan). Pale teal pixels (green above red, so grey stone is left alone) with water all round are painted over with the average of the nearby non-pale water.
 
+## HD-2D lighting (Graphics phase 1)
+
+A second lighting pass on the Play Room page, off unless the player turns it on. It keeps the crisp pixels and adds form light, coloured lamps, soft shadow, fog, a few motes, bloom and a cool-shadow / warm-light grade. The native PC window does not run this chain (that is a later phase). The camera is unchanged.
+
+Apply it to a page that already has the v162 patches (rich lighting, moods, day/night, aura), and after `alive.py` if that patch is on the page. It does not edit those scripts.
+
+```
+python3 recomp/playroom/hd2d-lighting.py in.html out.html
+```
+
+- Chip **HD-2D lighting** on the setup screen, or **H** while playing. `localStorage rotk-hd2d` is off when missing. **G** stays Rich lighting. While this is off the pass is not compiled and the picture path is the one the page already had, including the plain-pixel fallback when the frame rate stays under 40/s.
+- The pass reads the picture the page just drew (Sharp HD, then rich lighting when that is on) and the ungraded 1x buffer for height. Fetches inside branches use `textureLod` / `texelFetch`.
+- **Normals.** `NMode` 0 derives a normal from a wide luma neighbourhood and flattens it where the picture is flat, including under the HUD row (`HudY`, the bottom 34 rows). `NMode` 1 samples `window.__hd2dNormalImage` (image or canvas, same framing as the picture, RGB packed 0.5 = 0, alpha = coverage, author +Y up). `NMode` 2 samples `skin/normals.png` with `skin/map.json`, same 36 px cell, 2 px pad and FNV-1a key as the skin atlas. Tags are read only when the skin hook is already on (`rotk-skin` and `rotk_skin`); blended and faded pixels fall back to luma. `window.__hd2dDbg = 1` shows the normal.
+- **Lights.** Up to 12. Detected from bright saturated pixels that differ from their neighbours (torches, spells, lava), plus Gandalf at the same object position as the aura (hero id 3, x/y at +0xAE/+0xB2). `window.__hd2dLights` adds more `{x, y, r, k, col}` in cropped-picture pixels, origin top-left. `window.__hd2dParts` replaces the built-in motes (embers inside lamps, dust in the upper air) with the same shape, up to 8.
+- **Shadows and fog.** A soft key-light shadow, sharper on a colour edge, and a contact blob under Gandalf. If Living light is also running (`ShadeK` on the current look), this shadow term is halved so the two do not stack. Fog is thicker toward the top of the playfield and in dark pixels, thinner on the hero and on emissive pixels. Menus keep a light grade so the UI stays readable.
+- Sources: `playroom/hd2d-lighting.glsl`, `playroom/hd2d-lighting.js`, `playroom/hd2d-lighting.py`.
+
 ## v155 Skin (test) hook (graphics thread, 2026-11-10)
 - `recomp/gbarecomp-skin.patch` (gba_ppu.cpp + host_window_web.cpp): when `rotk_skin(1)` is on, the wide renderer writes one
   u32 tag per output pixel: bits 0-11 VRAM tile slot (addr/32), 12-15 palette bank, 16 8bpp, 17-19 texel x, 20-22 texel y,
