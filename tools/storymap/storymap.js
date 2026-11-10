@@ -61,19 +61,24 @@
         // fixed start at the bottom. Walk time = the long side of the screen at the hero's walking speed (1.5 pixels a frame,
         // 90 a second, measured on Hornburg Valley), so real paths with turns take longer.
         const WALK = {"0":21,"1":5,"2":17,"3":20,"4":9,"5":11,"6":16,"7":11,"8":9,"9":11,"10":15,"12":16,"13":27,"14":6,"15":6,"16":18,"17":12,"18":14,"19":5,"20":12,"21":17,"22":15,"23":14,"24":6,"25":12,"26":5,"27":14,"28":14,"29":20,"30":9,"31":5,"32":20,"34":12,"36":5,"37":21,"38":18,"39":18,"40":7,"41":23,"42":21,"43":9,"46":17,"47":9,"48":22,"49":13,"50":9,"51":14,"52":20,"53":14,"54":9,"55":9,"56":5,"57":25,"58":14,"59":23,"60":18,"61":6,"63":11,"67":9,"68":3,"69":18,"71":17,"72":11,"73":13,"74":14,"75":5,"76":11,"77":18,"78":21,"79":11,"80":18,"81":20,"82":23,"83":19,"84":23,"85":11,"86":9,"87":16,"88":18,"89":15,"90":10,"91":10,"92":14,"93":13,"94":11,"95":17,"96":9,"97":14,"98":5,"99":16,"100":5,"101":15,"102":12,"103":11,"104":18,"105":23,"106":21,"107":12,"108":5,"109":7,"110":23,"111":12,"112":14,"113":11,"114":24,"115":16,"116":22,"117":22,"121":8,"122":21,"123":5,"124":13,"125":11,"126":28,"127":13,"128":14,"129":9};
-        const SLOTS = [
-          { k: "nw", n: "North-west corner", r: 1, c: 1 }, { k: "bg", n: "Black Gate", r: 1, c: 2 }, { k: "ne", n: "North-east corner", r: 1, c: 3 },
-          { k: "mid", n: "Middle section", r: 2, c: 2 },
-          { k: "sw", n: "South-west corner", r: 3, c: 1 }, { k: "app", n: "Outer Gate approach", r: 3, c: 2 }, { k: "se", n: "South-east corner", r: 3, c: 3 },
-          { k: "hd", n: "Helm's Deep (start)", r: 4, c: 2, fixed: 46 },
-        ];
-        let siege = { bg: 58, app: 47, hd: 46 }, sel = "nw";
-        try { const v = JSON.parse(localStorage.getItem("rotk-siege") || "null"); if (v && typeof v === "object") siege = Object.assign(siege, v, { hd: 46 }); } catch (e) {}
+        // 5 x 5 Siege grid (Jordan, 2026-11-10): rows A (top) to E (bottom), columns 1-5. Helm's Deep is fixed at E3.
+        const SLOTS = [];
+        for (let r = 1; r <= 5; r++) for (let c = 1; c <= 5; c++) SLOTS.push({ k: "r" + r + "c" + c, n: "ABCDE"[r - 1] + c, r, c });
+        const SPECIAL = { r1c3: "Black Gate", r4c3: "Outer Gate approach", r5c3: "Helm's Deep (start)" };
+        SLOTS.forEach((t) => { if (SPECIAL[t.k]) t.n = t.n + " · " + SPECIAL[t.k]; if (t.k === "r5c3") t.fixed = 46; });
+        const OLD = { nw: "r2c2", bg: "r1c3", ne: "r2c4", mid: "r3c3", sw: "r4c2", app: "r4c3", se: "r4c4" };
+        const DEF = { r1c3: 58, r4c3: 47, r5c3: 46 };
+        const fixSlots = (v) => { const o = Object.assign({}, DEF); Object.keys(v || {}).forEach((k) => { const nk = OLD[k] || k; if (/^r[1-5]c[1-5]$/.test(nk) && typeof v[k] === "number") o[nk] = v[k]; }); o.r5c3 = 46; return o; };
+        // Screens grouped by how they look (sorted by eye from the overhead pictures).
+        const LOOK = [["Woods", [19, 20, 21, 22, 23, 36, 37, 38, 59, 60]], ["Plains", [92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 109, 110, 112, 114]], ["River & water", [0, 2, 3, 39]], ["Ships & docks", [14, 15, 24, 25]], ["Camps & houses", [1, 61, 108, 111, 113]], ["Snow & ice", [48, 122, 123, 124, 125, 126, 127, 128, 129]], ["Lava", [16, 17, 18, 28, 29, 42]], ["Wasteland", [26, 27, 40, 41, 43, 50, 51]], ["Mountains", [6, 7, 8, 10, 12, 13, 74, 75, 76, 77, 78, 79, 80]], ["Red rock", [30, 31, 32, 34]], ["Fortress", [4, 5, 9, 46, 47, 53, 55, 56, 57, 58]], ["City", [63, 67, 68, 69, 71, 72, 73, 90, 91]], ["Dwarf halls", [49, 81, 82, 83, 84]], ["Caves", [52, 54, 85, 86, 87, 88, 89, 115, 116, 117]], ["Ruins", [121]]];
+        let look = 0;
+        let siege = fixSlots({}), sel = "r2c2";
+        try { const v = JSON.parse(localStorage.getItem("rotk-siege") || "null"); if (v && typeof v === "object") siege = fixSlots(v); } catch (e) {}
         const siegeDb = (async () => { const use = window.claude && window.claude.use; if (!use) return null; const [db, user] = await Promise.all([use("db"), use("user")]); const id = db && user && await user.id(); return id ? db.doc("data/users/" + id + "/siege-layout") : null; })().catch(() => null);
         let siegeLoaded = false, siegeRedraw = null;
         function siegeLoad() {
           if (siegeLoaded) return; siegeLoaded = true;
-          siegeDb.then((d) => d && d.get()).then((r) => { if (r && r.exists) { const v = r.data(); if (v && v.slots) { siege = Object.assign({ bg: 58, app: 47, hd: 46 }, v.slots, { hd: 46 }); try { localStorage.setItem("rotk-siege", JSON.stringify(siege)); } catch (e) {} if (siegeRedraw) siegeRedraw(); } } }).catch(() => {});
+          siegeDb.then((d) => d && d.get()).then((r) => { if (r && r.exists) { const v = r.data(); if (v && v.slots) { siege = fixSlots(v.slots); try { localStorage.setItem("rotk-siege", JSON.stringify(siege)); } catch (e) {} if (siegeRedraw) siegeRedraw(); } } }).catch(() => {});
         }
         let saveT = 0;
         function siegeSave(msg) {
@@ -87,30 +92,37 @@
           const wrap = document.createElement("div"); wrap.className = "sg";
           const top = document.createElement("div"); top.className = "sg-top"; wrap.appendChild(top);
           const hint = document.createElement("div"); hint.className = "sg-hint"; top.appendChild(hint);
+          const chips = document.createElement("div"); chips.className = "sg-chips"; top.appendChild(chips);
+          LOOK.concat([["All", null]]).forEach((g, i) => { const b = document.createElement("button"); b.type = "button"; b.dataset.look = i; b.textContent = g[0] + (g[1] ? " " + g[1].length : ""); chips.appendChild(b); });
           const strip = document.createElement("div"); strip.className = "sg-strip"; top.appendChild(strip);
-          const order = Object.keys(WALK).map(Number).sort((a, b) => (region(a) + NAMES[a]).localeCompare(region(b) + NAMES[b]));
-          order.forEach((l) => {
-            const c = document.createElement("button"); c.type = "button"; c.className = "sg-card"; c.dataset.pick = l;
-            c.innerHTML = thumb(l) + "<b>" + NAMES[l] + "</b><i>" + region(l) + "</i>"; strip.appendChild(c);
-          });
+          function fill() {
+            chips.querySelectorAll("button").forEach((b) => b.classList.toggle("on", +b.dataset.look === look));
+            const g = LOOK[look], ls = g ? g[1] : Object.keys(WALK).map(Number).sort((a, b) => (region(a) + NAMES[a]).localeCompare(region(b) + NAMES[b]));
+            strip.innerHTML = ""; strip.scrollLeft = 0;
+            ls.forEach((l) => { const c = document.createElement("button"); c.type = "button"; c.className = "sg-card"; c.dataset.pick = l; c.innerHTML = thumb(l) + "<b>" + NAMES[l] + "</b><i>" + region(l) + "</i>"; strip.appendChild(c); });
+          }
+          fill();
+          strip.addEventListener("wheel", (e) => { if (!e.ctrlKey && Math.abs(e.deltaY) > Math.abs(e.deltaX)) { e.preventDefault(); strip.scrollLeft += e.deltaY; } }, { passive: false });
           const grid = document.createElement("div"); grid.className = "sg-grid"; wrap.appendChild(grid);
           const msg = document.createElement("div"); msg.className = "sg-msg"; wrap.appendChild(msg);
           function draw() {
             grid.innerHTML = "";
             const used = {}; SLOTS.forEach((t) => { if (siege[t.k] != null) used[siege[t.k]] = t.n; });
             strip.querySelectorAll(".sg-card").forEach((c) => c.classList.toggle("used", !!used[c.dataset.pick]));
+            grid.style.setProperty("--n", 5);
             const cur = SLOTS.find((t) => t.k === sel);
-            hint.innerHTML = cur && !cur.fixed ? "Picking for <b>" + cur.n + "</b>. Scroll the screens below sideways and tap one to put it there." : "Tap a spot in the layout, then pick a screen for it.";
+            hint.innerHTML = cur && !cur.fixed ? "Picking for <b>" + cur.n + "</b>. Choose a group, then tap a screen to put it there." : "Tap a spot in the layout, then pick a screen for it.";
             SLOTS.forEach((t) => {
-              const d = document.createElement("div"); d.className = "sg-slot" + (t.k === sel ? " on" : "") + (t.fixed ? " fixed" : "") + (t.k === "bg" ? " boss" : t.k === "hd" ? " home" : "");
+              const d = document.createElement("div"); d.className = "sg-slot" + (t.k === sel ? " on" : "") + (t.fixed ? " fixed" : "") + (t.k === "r1c3" ? " boss" : t.k === "r5c3" ? " home" : SPECIAL[t.k] ? " spec" : "");
               d.style.gridRow = t.r; d.style.gridColumn = t.c; d.dataset.slot = t.k;
               const l = siege[t.k];
-              d.innerHTML = '<div class="sg-sn">' + t.n + (t.fixed ? " 🔒" : "") + "</div>" + (l != null ? thumb(l) + "<b>" + NAMES[l] + "</b>" + (t.fixed ? "" : '<button type="button" class="sg-x" data-clear="' + t.k + '" aria-label="Clear">×</button>') + '<button type="button" class="sg-v" data-view="' + l + '">View</button>' : '<div class="sg-empty">Tap to choose</div>');
+              d.innerHTML = '<div class="sg-sn">' + t.n + (t.fixed ? " 🔒" : "") + "</div>" + (l != null ? thumb(l) + "<b>" + NAMES[l] + "</b>" + (t.fixed ? "" : '<button type="button" class="sg-x" data-clear="' + t.k + '" aria-label="Clear">×</button>') + '<button type="button" class="sg-v" data-view="' + l + '">View</button>' : '<div class="sg-empty">+</div>');
               grid.appendChild(d);
             });
           }
           siegeRedraw = draw; draw();
           wrap.addEventListener("click", (e) => {
+            const lk = e.target.closest("[data-look]"); if (lk) { e.preventDefault(); look = +lk.dataset.look; fill(); draw(); return; }
             const x = e.target.closest("[data-clear]"), v = e.target.closest("[data-view]"), pk = e.target.closest("[data-pick]"), sl = e.target.closest("[data-slot]");
             if (x) { e.preventDefault(); e.stopPropagation(); delete siege[x.dataset.clear]; sel = x.dataset.clear; draw(); siegeSave(msg); return; }
             if (v) { e.preventDefault(); e.stopPropagation(); pic(+v.dataset.view); return; }
