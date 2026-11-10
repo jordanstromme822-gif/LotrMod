@@ -1,0 +1,29 @@
+  /* Story map (Jordan, 2026-11-09) */
+  #mapBtn { position: absolute; z-index: 28; right: calc(max(env(safe-area-inset-right, 0px), 0px) + 10px); top: calc(env(safe-area-inset-top, 0px) + 10px);
+    min-width: 96px; height: 36px; padding: 0 14px; border-radius: 18px; border: 2px solid #d8b25a; background: rgba(14,11,8,0.82); color: #f3ead6;
+    font: 700 14px/1 var(--display); letter-spacing: 0.06em; box-shadow: 0 0 0 2px rgba(0,0,0,0.6), 0 0 12px rgba(240,170,80,0.3);
+    touch-action: none; -webkit-user-select: none; user-select: none; cursor: pointer; }
+  #mapBtn[hidden] { display: none; }
+  #storyMap { position: fixed; inset: 0; z-index: 60; background: #121318; color: #ecebe6; display: flex; flex-direction: column; font: 13px/1.2 var(--ui, system-ui, sans-serif);
+    padding: calc(env(safe-area-inset-top, 0px) + 10px) calc(env(safe-area-inset-right, 0px) + 12px) 10px calc(env(safe-area-inset-left, 0px) + 12px); }
+  #storyMap .sm-top { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; padding-bottom: 10px; }
+  #storyMap .sm-title { font: 700 20px var(--display, serif); color: #f3d98e; letter-spacing: 0.04em; }
+  #storyMap .sm-leg { display: flex; gap: 14px; flex-wrap: wrap; flex: 1; font-size: 12px; color: #c9c7bf; }
+  #storyMap .sm-leg b { display: inline-block; width: 14px; height: 14px; border-radius: 3px; vertical-align: -3px; margin-right: 5px; }
+  #storyMap .sm-close { height: 36px; padding: 0 16px; border-radius: 18px; border: 2px solid #d8b25a; background: rgba(14,11,8,0.82); color: #f3ead6; font: 700 14px var(--display, serif); cursor: pointer; }
+  #storyMap .sm-scroll { flex: 1; overflow: auto; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; }
+  #storyMap .sm-grid { display: grid; gap: 6px; grid-auto-rows: 58px; width: max-content; }
+  #storyMap .sm-hero { position: sticky; left: 0; z-index: 2; background: #121318; display: flex; flex-direction: column; justify-content: center; font: 700 16px var(--display, serif); color: #f3d98e; padding-left: 2px; }
+  #storyMap .sm-hero span { font: 400 11px var(--ui, sans-serif); color: #a9a79f; margin-top: 2px; }
+  #storyMap .sm-gaphead { position: sticky; left: 0; z-index: 2; background: #121318; }
+  #storyMap .sm-arrow { display: flex; align-items: center; justify-content: center; color: #5d86d6; font-size: 15px; }
+  #storyMap .sm-b { border-radius: 6px; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 2px 3px; box-sizing: border-box; overflow: hidden; }
+  #storyMap .sm-b b { font-weight: 600; font-size: 11.5px; line-height: 1.1; }
+  #storyMap .sm-b i { font-style: normal; font-size: 9px; opacity: 0.8; margin-top: 1px; line-height: 1.1; }
+  #storyMap .sm-b i.sm-m { opacity: 1; font-weight: 700; color: #f3d98e; letter-spacing: 0.04em; margin: 0 0 1px; text-transform: uppercase; font-size: 8.5px; }
+  #storyMap .sm-b u { text-decoration: none; font-size: 8.5px; color: #f6d55c; margin-top: 1px; }
+  #storyMap .n { background: #393d48; } #storyMap .boss { background: #b3262e; } #storyMap .side { background: #23803b; } #storyMap .team { background: #2457b8; }
+  #storyMap .teamedge { border-top: 5px solid #4f86ec; }
+  #storyMap .orc { box-shadow: inset 0 0 0 3px #f2c230; }
+  #storyMap .sm-leg b.orc { box-shadow: inset 0 0 0 3px #f2c230; }
+  #storyMap .sm-foot { font-size: 12px; color: #a9a79f; padding: 12px 0 4px; max-width: 900px; }
