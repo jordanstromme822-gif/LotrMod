@@ -22,3 +22,9 @@ extern "C" EMSCRIPTEN_KEEPALIVE const unsigned char* rotk_oam() {
 }
 extern "C" int g_web_tick_stats[5];
 extern "C" EMSCRIPTEN_KEEPALIVE const int* rotk_tick_stats() { return g_web_tick_stats; }
+// CPU speed (engine upgrade, 2026-11-10; needs gbarecomp-cpu-speed.patch): percent of the
+// real GBA clock, 100-800. 300 keeps about 70 monsters on screen at full speed.
+extern "C" void runtime_set_cpu_speed(unsigned pct);
+extern "C" unsigned runtime_get_cpu_speed(void);
+extern "C" EMSCRIPTEN_KEEPALIVE void rotk_cpu_speed(int pct) { runtime_set_cpu_speed(static_cast<unsigned>(pct)); }
+extern "C" EMSCRIPTEN_KEEPALIVE int rotk_get_cpu_speed() { return static_cast<int>(runtime_get_cpu_speed()); }

@@ -1,0 +1,56 @@
+--- a/src/runtime/runtime_bus_bridge.cpp	2026-11-10 15:10:32.538762890 +0000
++++ b/src/runtime/runtime_bus_bridge.cpp	2026-11-10 15:10:32.442840638 +0000
+@@ -79,6 +79,9 @@
+ // the exact frame boundary, before scanline 0 of the next frame is composed.
+ // Null preserves the established renderer path for every existing game.
+ std::function<void()> g_frame_start_hook;
++// Test hook (null in normal builds): called at every VBlank start, e.g. by a
++// headless stress-test main to poke RAM and read counters.
++extern "C" { void (*g_rotk_test_vblank)(void) = nullptr; }
+ // Optional host input policy (touch -> synthesized keys). Runs at VBlank start,
+ // before the VBlank IRQ is requested, so the guest's per-frame input read sees
+ // the policy's answer for this frame. Null preserves the established path.
+@@ -667,6 +670,7 @@
+             GBA_DEVICE_PHASE(5,ppu->mark_framebuffer_latched());
+             if (!g_session_execution && g_vblank_latch_hook) g_vblank_latch_hook();
+             ++g_runtime_vblank_starts;
++            if (g_rotk_test_vblank) g_rotk_test_vblank();
+             GBA_DEVICE_PHASE(5,bus->io().run_timed_dma(1));   // VBlank-timed DMA
+             if (!g_session_execution && g_vblank_input_hook) g_vblank_input_hook();
+         }
+@@ -808,6 +812,23 @@
+     }
+ }
+ 
++// CPU speed (Return of the King engine upgrade, 2026-11-10): percent of the real
++// GBA clock the guest CPU gets. 200 = each instruction costs half its cycles, so
++// the game gets twice the work done per frame while the PPU, timers and sound
++// keep real time. Halted time (VBlankIntrWait) is never scaled. Set with
++// GBARECOMP_CPU_SPEED=<percent> or runtime_set_cpu_speed(percent); 100 = off.
++static uint32_t g_cpu_speed_pct = [] {
++    const char* e = std::getenv("GBARECOMP_CPU_SPEED");
++    long v = e ? std::strtol(e, nullptr, 10) : 100;
++    return static_cast<uint32_t>(v < 100 ? 100 : (v > 800 ? 800 : v));
++}();
++static uint32_t g_cpu_speed_frac = 0;
++extern "C" void runtime_set_cpu_speed(uint32_t pct) {
++    g_cpu_speed_pct = pct < 100 ? 100u : (pct > 800 ? 800u : pct);
++    g_cpu_speed_frac = 0;
++}
++extern "C" uint32_t runtime_get_cpu_speed(void) { return g_cpu_speed_pct; }
++
+ extern "C" void runtime_tick(uint32_t cycles) {
+     if (g_session_execution) { g_runtime_cycles += cycles; return; }
+     // P6 shadow-tick: a healed shard's validation re-run only accumulates its
+@@ -818,6 +839,11 @@
+     auto* bus = gbarecomp::g_active_bus;
+     auto* ppu = gbarecomp::g_active_ppu;
+     if (!bus || !ppu || cycles == 0) return;
++    if (g_cpu_speed_pct != 100u && !bus->io().halted()) {
++        const uint32_t t = cycles * 100u + g_cpu_speed_frac;
++        cycles = t / g_cpu_speed_pct;
++        g_cpu_speed_frac = t % g_cpu_speed_pct;
++    }
+ 
+     // Some software renderers execute millions of guest instructions before
+     // reaching a GBA frame boundary. Downsample the wall-clock check so native
