@@ -182,7 +182,8 @@ static void convert_old(int p)
 /* ---------------- regenerating quivers (Jordan, 2026-11-08) ----------------
    Arrows keep their count in item byte 2 (the game rolls 10-40 and deletes a quiver at 0).
    3% of dropped quivers regenerate: 1 arrow a second, starting 1 second after the last shot,
-   up to the count they dropped with; they stay at 0 instead of being deleted.
+   up to their own size, rolled when they drop (q_size: mostly 10-40, rarely up to QFULL 99);
+   they stay at 0 instead of being deleted.
    Every other bit of an arrow word is used by the game (bits 4-7 are the rune), so a regenerating
    quiver off the hero is written with byte 2 = 0x80 | max (it is full: it regenerates in the pack
    too). The equipped one holds its live count in byte 2 like any quiver, and its max is QMAX[p].
@@ -196,6 +197,7 @@ static void convert_old(int p)
 #define DEBTT   ((volatile u32 *)0x0203FEB4)  /* [player]: QCLK when it was taken off */
 #define QCLK    (*(volatile u32 *)0x0203FEBC) /* gameplay ticks */
 #define TICKS   30                     /* the game logic runs 30 ticks a second */
+#define QFULL   99                     /* the biggest regenerating quiver */
 #define USE_ARROW(p)   ((fn4)0x0802C411)(p, 0, 0, 0)
 #define SAME_ITEM(a,b) ((fn4)0x0802EB09)(a, b, 0, 0)
 #define HFLAGS(p)      (*(volatile u16 *)(HERO + (p) * HERO_SZ + 0x18C))
@@ -251,7 +253,7 @@ static void q_sync(int p)
         QMAX[p] = 0;
     }
     if (!QMAX[p] && is_regen(w)) {                     /* just put on */
-        int mx = (w >> 16) & 0x3F, cur = mx;
+        int mx = (w >> 16) & 0x7F, cur = mx;
         if (w == DEBTW[p] && DEBTN[p]) {               /* the same quiver again: what it has refilled since */
             int miss = DEBTN[p]; volatile int t = (int)(QCLK - DEBTT[p]);
             while (t >= TICKS && miss) { t -= TICKS; miss--; }
@@ -357,7 +359,7 @@ int apick_wrap(u32 *item, int p)
 static int q_info(u32 w, int *cur)
 {
     if (!is_arrow(w)) return 0;
-    if (is_regen(w)) { *cur = (w >> 16) & 0x3F; return *cur; }
+    if (is_regen(w)) { *cur = (w >> 16) & 0x7F; return *cur; }   /* off the hero it is full */
     for (int p = 0; p < 2; p++)
         if (QMAX[p] && w == inv(p)[2]) { *cur = (w >> 16) & 0xFF; return QMAX[p]; }
     return 0;
@@ -627,6 +629,14 @@ void drop_c(u8 *e)
 }
 
 /* the game's own item rolls never make an Orc Head any more (they come only from drop_c) */
+/* a regenerating quiver's size (Jordan 2026-11-10: "high ammo ones feel special and rare"):
+   70% 10-40, 25% 41-70, 5% 71-99 */
+static int q_size(void)
+{
+    int r = RAND(1, 100);
+    return r <= 70 ? RAND(10, 40) : r <= 95 ? RAND(41, 70) : RAND(71, QFULL);
+}
+
 int genitem_wrap(u32 *item, int p, int find, int type)
 {
     int r = 0;
@@ -635,7 +645,7 @@ int genitem_wrap(u32 *item, int p, int find, int type)
         if (!is_orc(*item)) break;
     }
     if (is_arrow(*item) && RAND(1, 100) <= 3)          /* 3%: a regenerating quiver */
-        *item = with_count(*item, 0x80 | (((*item >> 16) & 0xFF) > 63 ? 63 : ((*item >> 16) & 0x3F)));
+        *item = with_count(*item, 0x80 | q_size());    /* the pack form: full, at its own size */
     return r;
 }
 

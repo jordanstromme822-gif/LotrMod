@@ -288,6 +288,20 @@ slots (3 lines, scrolling a line a second when longer). The hook code moved, so 
 A crossbow now only plays the bow shot (sound 0x40) when it fires; its hit, break and set-down sounds are gone
 (`tools/orcslots/crossbow.c`). The hook code changed size, so the engines are rebuilt: `?v=128`.
 
+### Regenerating arrows refill to 99 (2026-11-10)
+
+Jordan: a regenerating quiver stopped at the count it dropped with. Now it refills to 99 (QFULL in
+`tools/orcslots/orcslots.c`; the pack form is 0x80 | 99). The hook code is 40 bytes shorter, so every hook after it
+moved: re-run genpatch.py / linkfuncs.py and rebuild both engines. `tools/orcslots/pagejs.py <page.html>` rewrites the
+page's Orc Head block (code hex, bl lines, link cases, state table entries) from orcslots.bin/.sym.
+
+### Item menu in the item text panel (Play Room v158, 2026-11-10)
+
+Frodo and Legolas: their arrow slots squeeze the Backpack text into 3 scrolling lines, so the page panel also shows
+the item menu (substate 1: Equip/Unequip, Discard, Carve Rune if [0x030041B8], Move Item for backpack cursors 8-15,
+Trade if [0x03004144] & 0x20; option under the cursor [0x030041BC]) and "Are you sure?" (substate 3, Yes/No
+[0x030041C4]). Page-only change.
+
 ## Rich lighting (Play Room v150, 2026-11-10)
 
 Graphics upgrade step 1 (Jordan asked for a big upgrade to textures, detail and colouring). After the Sharp HD
