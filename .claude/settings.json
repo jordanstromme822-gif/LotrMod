@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cmake:*)",
+      "Bash(ninja:*)",
+      "Bash(emcc:*)",
+      "Bash(em++:*)",
+      "Bash(emar:*)",
+      "Bash(python3 /tmp/rc/gbarecomp/tools/cli.py:*)",
+      "Bash(/tmp/rc/gbarecomp/build/gba_recompile:*)"
+    ]
+  }
+}

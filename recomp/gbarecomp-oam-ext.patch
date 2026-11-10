@@ -1,0 +1,265 @@
+--- a/src/gba/gba_bus.h
++++ b/src/gba/gba_bus.h
+@@ -366,7 +366,9 @@
+     // 96 KB of real VRAM plus 32 KB of extra OBJ tiles (0x06018000-0x0601FFFF, tiles
+     // 1024-2047) that only games enabling g_obj_ext_tiles use; hardware mirrors there.
+     std::array<uint8_t, 128 * 1024> vram_{};
+-    std::array<uint8_t,        1024> oam_{};
++    // 1 KB of real OAM plus 7 KB that only games enabling g_obj_ext_tiles see: OBJ entries
++    // 128-250 at 0x07000400 (drawn after entry 127) and scratch for the game's own buffers.
++    std::array<uint8_t,    8 * 1024> oam_{};
+ 
+     GbaIo       io_dispatch_;
+     GbaAudio    audio_;
+--- a/src/gba/gba_memory.cpp
++++ b/src/gba/gba_memory.cpp
+@@ -8,6 +8,8 @@
+ 
+ #include "gba_memory.h"
+ 
++extern "C" int g_obj_ext_tiles;
++
+ namespace gba {
+ 
+ const char* region_name(Region r) noexcept {
+@@ -76,7 +78,7 @@
+             return static_cast<std::size_t>(addr & 0x1FFFFu);
+         }
+         case Region::Oam:
+-            return static_cast<std::size_t>(addr & (kOamSize - 1));
++            return static_cast<std::size_t>(addr & (g_obj_ext_tiles ? 0x1FFFu : (kOamSize - 1)));
+         case Region::Rom:
+             // ROM mirrors the same physical contents three times
+             // (waitstate 0/1/2). Caller knows which waitstate slot was
+--- a/src/gba/gba_ppu.cpp
++++ b/src/gba/gba_ppu.cpp
+@@ -18,6 +18,9 @@
+ #include "snapshot.h"
+ 
+ extern "C" { int g_obj_ext_tiles = 0; }
++// OBJ entries drawn: 128 normally; with the extra sprite memory on, entries 128-250 follow at OAM+0x400.
++// BG keys sit at p*256+251+layer so every OBJ index (0-250) stays in front of a same-priority BG.
++static inline int obj_entry_count() { return g_obj_ext_tiles ? 251 : 128; }
+ namespace gba {
+ 
+ #if defined(GBARECOMP_ORDERED_DRAW_TEST_COVERAGE)
+@@ -506,7 +509,7 @@
+             // broad native priority class with a heart or button glyph.
+             const bool is_hud = oam_index < 64u
+                 ? (focus->hud_oam_mask_lo & (UINT64_C(1) << oam_index)) != 0
+-                : (focus->hud_oam_mask_hi & (UINT64_C(1) << (oam_index - 64u))) != 0;
++                : oam_index < 128u && (focus->hud_oam_mask_hi & (UINT64_C(1) << (oam_index - 64u))) != 0;
+             if (is_hud) return {};
+             return {ForeignObjFocusAction::kSuppress};
+         }
+@@ -632,7 +635,7 @@
+     constexpr uint32_t obj_tile_base = 0x10000u;
+     bool obj_1d_mapping = (dispcnt & 0x0040u) != 0;
+ 
+-    for (int idx = 127; idx >= 0; --idx) {
++    for (int idx = obj_entry_count() - 1; idx >= 0; --idx) {
+         const uint8_t* entry = oam + idx * 8;
+         uint16_t attr0 = load_u16_le(&entry[0]);
+         uint16_t attr1 = load_u16_le(&entry[2]);
+@@ -939,7 +942,7 @@
+         const uint32_t tile_y = tex_y >> 3;
+         const uint32_t map_row = screen_base + (tile_y >> 5) * block_cols * 0x800u +
+                                  (tile_y & 31u) * 64u;
+-        const int key = static_cast<int>(bg_priority * 256u + 128u + layer);
++        const int key = static_cast<int>(bg_priority * 256u + 251u + layer);
+         const bool target1 = (first_targets & (1u << layer)) != 0;
+         const bool target2 = (second_targets & (1u << layer)) != 0;
+         for (uint32_t x = 0; x < kScreenWidth;) {
+@@ -1024,7 +1027,7 @@
+ #if !defined(GBARECOMP_SCANLINE_HLE)
+                 to_rgb888(color, hud.rgb);
+ #endif
+-                hud.key = static_cast<int>(bg_priority * 256u + 128u + layer);
++                hud.key = static_cast<int>(bg_priority * 256u + 251u + layer);
+                 hud.layer = static_cast<uint8_t>(layer);
+                 hud.target1 = blend_enabled(x) &&
+                     ((first_targets & (1u << layer)) != 0);
+@@ -1032,7 +1035,7 @@
+                 hud.valid = true;
+             }
+             submit(x, color,
+-                   static_cast<int>(bg_priority * 256u + 128u + layer),
++                   static_cast<int>(bg_priority * 256u + 251u + layer),
+                    static_cast<uint8_t>(layer),
+                    blend_enabled(x) && ((first_targets & (1u << layer)) != 0),
+                    (second_targets & (1u << layer)) != 0);
+@@ -1086,7 +1089,7 @@
+             if (pal_idx == 0) continue;
+             const uint16_t color = load_u16_le(&pal[pal_idx * 2]);
+             submit(x, color,
+-                   static_cast<int>(bg_priority * 256 + 128 + layer),
++                   static_cast<int>(bg_priority * 256 + 251 + layer),
+                    static_cast<uint8_t>(layer),
+                    blend_enabled(x) && ((first_targets & (1u << layer)) != 0),
+                    (second_targets & (1u << layer)) != 0);
+@@ -1152,7 +1155,7 @@
+                 color = load_u16_le(&pal[pal_idx * 2]);
+             }
+             submit(x, color,
+-                   static_cast<int>(bg_priority * 256 + 128 + layer),
++                   static_cast<int>(bg_priority * 256 + 251 + layer),
+                    static_cast<uint8_t>(layer),
+                    blend_enabled(x) && ((first_targets & (1u << layer)) != 0),
+                    (second_targets & (1u << layer)) != 0);
+@@ -1400,11 +1403,11 @@
+     };
+     if constexpr (!Ordered) {
+         if (dispcnt & 0x1000u)
+-            for (int idx = 127; idx >= 0; --idx) render_obj(idx);
++            for (int idx = obj_entry_count() - 1; idx >= 0; --idx) render_obj(idx);
+     } else {
+         GBA_RENDER_PHASE_MARK(profile, NativeJobs);
+         struct DrawJob { int key; int object; unsigned layer; };
+-        DrawJob jobs[132];
++        DrawJob jobs[4 + 251];
+         unsigned count = 0;
+         for (unsigned layer = 0; layer < 4; ++layer) {
+             const bool active = bg_mode == 0 ||
+@@ -1413,10 +1416,10 @@
+                 (bg_mode >= 3 && bg_mode <= 5 && layer == 2);
+             if (active && (dispcnt & (0x100u << layer))) {
+                 const auto bgcnt = load_u16_le(io + 8 + layer * 2);
+-                jobs[count++] = {int((bgcnt & 3u) * 256u + 128u + layer), -1, layer};
++                jobs[count++] = {int((bgcnt & 3u) * 256u + 251u + layer), -1, layer};
+             }
+         }
+-        if (dispcnt & 0x1000u) for (unsigned index = 0; index < 128; ++index) {
++        if (dispcnt & 0x1000u) for (unsigned index = 0; index < unsigned(obj_entry_count()); ++index) {
+             const uint8_t* entry = oam + index * 8;
+             const auto a0 = load_u16_le(entry);
+             const auto a1 = load_u16_le(entry + 2);
+@@ -1727,7 +1730,7 @@
+         uint32_t width_px = width_tiles * 8u;
+         uint32_t height_px = height_tiles * 8u;
+         uint32_t block_cols = width_tiles / 32u;
+-        const int candidate_key = static_cast<int>(bg_priority * 256u + 128u + layer);
++        const int candidate_key = static_cast<int>(bg_priority * 256u + 251u + layer);
+         WsBgXSpan x_spans[8];
+         int x_span_count = 0, x_span_index = 0;
+         if constexpr (Ordered) {
+@@ -1885,7 +1888,7 @@
+             const uint32_t tile_y = tex_y >> 3;
+             const uint32_t map_row = screen_base + (tile_y >> 5) * block_cols * 0x800u +
+                 (tile_y & 31u) * 64u;
+-            const int key = static_cast<int>(bg_priority * 256u + 128u + layer);
++            const int key = static_cast<int>(bg_priority * 256u + 251u + layer);
+             const bool target1 = (first_targets & (1u << layer)) != 0;
+             const bool target2 = (second_targets & (1u << layer)) != 0;
+             for (uint32_t x = span_begin; x < span_end;) {
+@@ -2048,7 +2051,7 @@
+                 ? (window_control_at_xy(sample_hx, sample_y) & 0x20) != 0
+                 : blend_enabled(x);
+             submit(x, color,
+-                   static_cast<int>(bg_priority * 256u + 128u + layer),
++                   static_cast<int>(bg_priority * 256u + 251u + layer),
+                    static_cast<uint8_t>(layer),
+                    sample_blend && ((first_targets & (1u << layer)) != 0),
+                    (second_targets & (1u << layer)) != 0);
+@@ -2110,7 +2113,7 @@
+             const int32_t sample_y = yt;
+             xt += pa;
+             yt += pc;
+-            if (!useful(x, static_cast<int>(bg_priority * 256 + 128 + layer)) ||
++            if (!useful(x, static_cast<int>(bg_priority * 256 + 251 + layer)) ||
+                 !layer_enabled(x, layer)) continue;
+             const int32_t tex_x = sample_x >> 8;
+             const int32_t tex_y = sample_y >> 8;
+@@ -2150,7 +2153,7 @@
+                 }
+             }
+             submit(x, color,
+-                   static_cast<int>(bg_priority * 256 + 128 + layer),
++                   static_cast<int>(bg_priority * 256 + 251 + layer),
+                    static_cast<uint8_t>(layer),
+                    blend_enabled(x) && ((first_targets & (1u << layer)) != 0),
+                    (second_targets & (1u << layer)) != 0);
+@@ -2191,7 +2194,7 @@
+             int32_t tex_y = yt >> 8;
+             xt += pa;
+             yt += pc;
+-            if (!useful(x, static_cast<int>(bg_priority * 256 + 128 + layer)) ||
++            if (!useful(x, static_cast<int>(bg_priority * 256 + 251 + layer)) ||
+                 !layer_enabled(x, layer)) continue;
+             if (tex_x < 0 || tex_x >= bmp_w || tex_y < 0 || tex_y >= bmp_h)
+                 continue;
+@@ -2208,7 +2211,7 @@
+                 color = load_u16_le(&pal[pal_idx * 2]);
+             }
+             submit(x, color,
+-                   static_cast<int>(bg_priority * 256 + 128 + layer),
++                   static_cast<int>(bg_priority * 256 + 251 + layer),
+                    static_cast<uint8_t>(layer),
+                    blend_enabled(x) && ((first_targets & (1u << layer)) != 0),
+                    (second_targets & (1u << layer)) != 0);
+@@ -2220,7 +2223,7 @@
+         BgJob jobs[4]; unsigned count = 0;
+         auto add = [&](unsigned layer, unsigned kind) {
+             if (!(dispcnt & (0x100u << layer))) return;
+-            jobs[count++] = {layer, kind, static_cast<int>((load_u16_le(io + 8 + layer * 2) & 3u) * 256u + 128u + layer)};
++            jobs[count++] = {layer, kind, static_cast<int>((load_u16_le(io + 8 + layer * 2) & 3u) * 256u + 251u + layer)};
+         };
+         if (bg_mode == 0) for (unsigned layer = 0; layer < 4; ++layer) add(layer,0);
+         else if (bg_mode == 1) { add(0,0); add(1,0); add(2,1); }
+@@ -2311,7 +2314,7 @@
+         constexpr uint32_t obj_tile_base = 0x10000u;
+         bool obj_1d_mapping = (dispcnt & 0x0040u) != 0;
+         const uint8_t* obj_pal = pal + 0x200;
+-        for (int idx = 127; idx >= 0; --idx) {
++        for (int idx = obj_entry_count() - 1; idx >= 0; --idx) {
+             const uint8_t* entry = oam + idx * 8;
+             uint16_t attr0 = load_u16_le(&entry[0]);
+             uint16_t attr1 = load_u16_le(&entry[2]);
+@@ -2668,7 +2671,7 @@
+     // Walk 128 OAM entries in priority-table order. For Phase 2.4 we
+     // ignore priority bits and just back-to-front-draw so higher
+     // OAM indices appear on top â€” close enough for the BIOS intro.
+-    for (int idx = 127; idx >= 0; --idx) {
++    for (int idx = obj_entry_count() - 1; idx >= 0; --idx) {
+         const uint8_t* entry = oam + idx * 8;
+         uint16_t attr0 = load_u16_le(&entry[0]);
+         uint16_t attr1 = load_u16_le(&entry[2]);
+@@ -2931,7 +2934,7 @@
+         !view_expanded() && !high_resolution_ &&
+         !foreign_presentation_internal::background() &&
+         !foreign_presentation_internal::obj_focus() &&
+-        !foreign_presentation_internal::screen_overlay();
++        !foreign_presentation_internal::screen_overlay() && !g_obj_ext_tiles;
+     if (owned && (y == 0 || native_builder_.lines().size() == y) &&
+         native_builder_.capture(y, dispcnt, affine_io, {oam,1024}, {pal,1024},
+                                 {vram,GbaDrawMemory::kVramBytes}, *draw_memory)) {
+--- a/src/gba/gba_high_resolution.cpp
++++ b/src/gba/gba_high_resolution.cpp
+@@ -334,7 +334,7 @@
+                     uint16_t color;
+                     ++samples_;
+                     if (!sample(a, r.u + r.du[sx], r.v + r.dv[sx], color, filter_)) continue;
+-                    insert(top, second, {color, int((a.cnt & 3) * 256 + 128 + layer), uint8_t(layer),
++                    insert(top, second, {color, int((a.cnt & 3) * 256 + 251 + layer), uint8_t(layer),
+                         bool((windows_[x] & 0x20) && (bldcnt_ & (1u << layer))),
+                         bool(bldcnt_ & (0x100u << layer)), true});
+                 }
+@@ -366,7 +366,7 @@
+                 if (!a.active || !(windows_[x]&(1u<<layer))) continue;
+                 uint16_t color;
+                 if (!sample(a,u[i],v[i],color,false)) continue;
+-                insert(top,second,{color,int((a.cnt&3)*256+128+layer),uint8_t(layer),
++                insert(top,second,{color,int((a.cnt&3)*256+251+layer),uint8_t(layer),
+                     bool((windows_[x]&0x20)&&(bldcnt_&(1u<<layer))),
+                     bool(bldcnt_&(0x100u<<layer)),true});
+             }
+--- a/src/runtime/native_gpu_shader.h
++++ b/src/runtime/native_gpu_shader.h
+@@ -78,7 +78,7 @@
+ }
+ bool background(int layer,int x,int y,int dispcnt,out uint color,out int key) {
+     int mode=dispcnt&7,cnt=half_at(8+layer*2);
+-    key=(cnt&3)*256+128+layer;
++    key=(cnt&3)*256+251+layer;
+     if((dispcnt&(256<<layer))==0)return false;
+     int character=((cnt>>2)&3)*16384,screen=((cnt>>8)&31)*2048;
+     if(mode==0 || (mode==1 && layer<2)) {

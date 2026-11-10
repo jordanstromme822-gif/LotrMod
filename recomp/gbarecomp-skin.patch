@@ -1,0 +1,187 @@
+--- a/src/gba/gba_ppu.cpp
++++ b/src/gba/gba_ppu.cpp
+@@ -17,6 +17,12 @@
+ 
+ #include "snapshot.h"
+ 
++// Skin (HD texture pack, 2026-11-10): when on, the wide renderer also writes one tag per output
++// pixel naming the 8x8 tile (VRAM slot, palette bank, texel, flips) that won the pixel, so the page
++// can draw replacement art for known tiles. Off by default; costs nothing when off.
++extern "C" int g_skin_on = 0;
++extern "C" uint32_t* g_skin_ids = nullptr;
++extern "C" uint32_t g_skin_w = 0, g_skin_h = 0;
+ namespace gba {
+ 
+ #if defined(GBARECOMP_ORDERED_DRAW_TEST_COVERAGE)
+@@ -1526,6 +1532,11 @@
+ // (left) and x>=240 sprites (right) both appear in the margins. Signed `y`
+ // addresses authored vertical rows, where raw OAM/affine/bitmap extrapolation
+ // is prohibited; only validated game providers may contribute content.
++static inline uint32_t skin_tag(uint32_t tile_addr, uint32_t bank, bool c256, uint32_t px,
++                                uint32_t py, bool hf, bool vf, bool obj) {
++    return 0x80000000u | ((tile_addr >> 5) & 0xFFFu) | ((bank & 15u) << 12) | (c256 ? 1u << 16 : 0u) |
++        ((px & 7u) << 17) | ((py & 7u) << 20) | (hf ? 1u << 23 : 0u) | (vf ? 1u << 24 : 0u) | (obj ? 1u << 25 : 0u);
++}
+ template<bool Ordered>
+ void render_scanline_wide_impl(uint8_t* rgb, int y, uint16_t dispcnt,
+                           const uint8_t* io, const uint8_t* vram,
+@@ -1556,6 +1567,7 @@
+         bool target1 = false;
+         bool target2 = false;
+         bool valid = false;
++        uint32_t sk = 0;
+     };
+ 
+     const bool win0_en   = (dispcnt & 0x2000u) != 0;
+@@ -1677,8 +1689,10 @@
+         top[x].target2 = (second_targets & (1u << 5)) != 0;
+         top[x].valid = true;
+     }
++    const bool skin = g_skin_on && g_skin_ids && out_w <= GbaPpu::kMaxRenderWidth;
++    if (skin) g_skin_w = out_w;
+     auto submit = [&](uint32_t x, uint16_t color, int key, uint8_t layer,
+-                      bool target1, bool target2) {
++                      bool target1, bool target2, uint32_t sk = 0) {
+         if (hd) hd->submit(x, color, key, layer, target1, target2);
+         PixelCandidate cand;
+         cand.color = color;
+@@ -1690,6 +1704,7 @@
+         cand.target1 = target1;
+         cand.target2 = target2;
+         cand.valid = true;
++        cand.sk = sk;
+         if (key < top[x].key) { second[x] = top[x]; top[x] = cand; }
+         else if (key < second[x].key) { second[x] = cand; }
+     };
+@@ -1862,7 +1877,11 @@
+                             if (!index) continue;
+                             index |= palette_bank;
+                             submit(output_x, load_u16_le(pal + index * 2u), candidate_key,
+-                                   static_cast<uint8_t>(layer), blend_enabled(output_x) && target1, target2);
++                                   static_cast<uint8_t>(layer), blend_enabled(output_x) && target1, target2,
++                                   skin ? skin_tag(char_base + (entry & 0x03FFu) * (color256 ? 64u : 32u),
++                                                   entry >> 12, color256, px,
++                                                   (entry & 0x0800u) ? 7u - (tex_y & 7u) : tex_y & 7u,
++                                                   entry & 0x0400u, entry & 0x0800u, false) : 0u);
+                         }
+                         x += count;
+                     }
+@@ -1913,7 +1932,10 @@
+                     if (!index) continue;
+                     if (!color256) index |= palette_bank;
+                     submit(sx, load_u16_le(pal + index * 2u), key, static_cast<uint8_t>(layer),
+-                           blend_enabled(sx) && target1, target2);
++                           blend_enabled(sx) && target1, target2,
++                           skin ? skin_tag(char_base + (entry & 0x03ffu) * (color256 ? 64u : 32u),
++                                           entry >> 12, color256, px, py,
++                                           entry & 0x0400u, entry & 0x0800u, false) : 0u);
+                 }
+                 x += count;
+             }
+@@ -2050,7 +2072,9 @@
+                    static_cast<int>(bg_priority * 256u + 128u + layer),
+                    static_cast<uint8_t>(layer),
+                    sample_blend && ((first_targets & (1u << layer)) != 0),
+-                   (second_targets & (1u << layer)) != 0);
++                   (second_targets & (1u << layer)) != 0,
++                   skin ? skin_tag(char_base + tile_num * (color256 ? 64u : 32u), palette_bank,
++                                   color256, px, py, hflip, vflip, false) : 0u);
+         }
+     };
+     auto render_affine_bg = [&](uint32_t layer, uint32_t cnt_off,
+@@ -2371,6 +2395,7 @@
+             // into the next priority's BG band.
+             int key = priority * 256 + idx;
+             bool obj_target2 = (second_targets & (1u << 4)) != 0;
++            bool obj_skin = false, obj_hf = false, obj_vf = false;
+             auto emit_obj = [&](int tex_x, int tex_y, int screen_x) {
+                 if (screen_x < 0 || screen_x >= static_cast<int>(out_w)) return;
+                 if (!useful(static_cast<uint32_t>(screen_x), key)) return;
+@@ -2415,7 +2440,9 @@
+                 const uint16_t color = load_u16_le(&obj_pal[pal_index * 2]);
+                 uint32_t ux = static_cast<uint32_t>(screen_x);
+                 bool t1 = (blend_enabled(ux) || authored_margin) && obj_mode == 1;
+-                submit(ux, color, key, 4, t1, obj_target2);
++                submit(ux, color, key, 4, t1, obj_target2,
++                       obj_skin ? skin_tag(tile_off, palette_bank, color256, px_in_tile, py_in_tile,
++                                           obj_hf, obj_vf, true) : 0u);
+             };
+             if (rot_scale) {
+                 int bw = disable_or_double ? sw * 2 : sw;
+@@ -2468,6 +2495,7 @@
+             if (!obj_focus_active) resolve_sx();
+             bool hflip = (attr1 & 0x1000u) != 0;
+             bool vflip = (attr1 & 0x2000u) != 0;
++            obj_skin = skin; obj_hf = hflip; obj_vf = vflip;
+             const int source_y = nearest_source_pixel(line, sh, draw_h);
+             int ty = source_y >> 3;
+             int py = source_y & 7;
+@@ -2509,6 +2537,9 @@
+         }
+     }
+     GBA_RENDER_PHASE_MARK(profile, WideOutput);
++    uint32_t* skin_row = nullptr;
++    if (skin && y + static_cast<int>(oy) >= 0 && static_cast<uint32_t>(y + static_cast<int>(oy)) < g_skin_h)
++        skin_row = g_skin_ids + static_cast<std::size_t>(y + static_cast<int>(oy)) * out_w;
+     for (uint32_t x = 0; x < out_w; ++x) {
+         uint16_t ui_color = 0;
+         if (g_ws_ui_pixel_provider &&
+@@ -2534,6 +2565,7 @@
+               (g_ws_pillarbox_right && right_margin)))) {
+             dst[0] = dst[1] = dst[2] = 0;
+             if (hd) hd->black_column(x);
++            if (skin_row) skin_row[x] = 0;
+             continue;
+         }
+         // Alpha blend top (1st target) with the layer below (2nd target). Per
+@@ -2542,6 +2574,13 @@
+         // EVA=0/EVB=16 is a valid blend (1st target fully fades into the 2nd) â€”
+         // the Oak-intro character fade endpoint that previously snapped back to
+         // opaque, leaving body/feet (BG2 + semi-transparent OBJ) out of sync.
++        if (skin_row) {
++            // Bit 26: alpha-blended with the layer below; bit 27: brightness fade.
++            const bool ab = (effect == 1 || top[x].layer == 4) && top[x].target1 && second[x].valid &&
++                second[x].target2 && !(top[x].layer == 4 && second[x].layer == 4);
++            const bool fade = !ab && (effect == 2u || effect == 3u) && bldy != 0u && top[x].target1;
++            skin_row[x] = top[x].sk ? (top[x].sk | (ab ? 1u << 26 : 0u) | (fade ? 1u << 27 : 0u)) : 0u;
++        }
+         if ((effect == 1 || top[x].layer == 4) &&
+             top[x].target1 && second[x].valid && second[x].target2 &&
+             !(top[x].layer == 4 && second[x].layer == 4)) {
+--- a/src/runtime/host_window_web.cpp
++++ b/src/runtime/host_window_web.cpp
+@@ -26,6 +26,20 @@
+ #else
+ #define GBR_SLEEP(ms) std::this_thread::sleep_for(std::chrono::milliseconds(ms))
+ #endif
++extern "C" int g_skin_on;
++extern "C" uint32_t* g_skin_ids;
++extern "C" uint32_t g_skin_w, g_skin_h;
++static std::vector<uint32_t> g_skin_slot[3];
++static std::vector<uint32_t> g_skin_buf;
++// Page side: rotk_skin(1) turns tags on; rotk_skin_slot(i) is video slot i's tags (width*height u32).
++extern "C" EMSCRIPTEN_KEEPALIVE void rotk_skin(int on) {
++    if(on&&g_skin_buf.empty()){ g_skin_buf.assign(std::size_t(gba::GbaPpu::kMaxRenderWidth)*gba::GbaPpu::kMaxRenderHeight,0);
++        g_skin_ids=g_skin_buf.data(); g_skin_h=gba::GbaPpu::kMaxRenderHeight; }
++    g_skin_on=on?1:0;
++}
++extern "C" EMSCRIPTEN_KEEPALIVE const uint32_t* rotk_skin_slot(int i) {
++    return (i>=0&&i<3&&!g_skin_slot[i].empty())?g_skin_slot[i].data():nullptr;
++}
+ namespace gbarecomp {
+ namespace {
+ using namespace web;
+@@ -336,6 +350,13 @@
+ void HostWindow::present(const uint8_t* rgb) {
+     if(!impl_||!rgb)return;
+     auto& b=*backend(impl_);auto& s=b.shared;auto& v=s.video[b.back];
++    if(g_skin_on&&g_skin_ids){
++        // Skin tags for this picture go in the slot that matches its video slot (see gba_ppu.cpp).
++        const std::size_t n=std::size_t(b.width)*b.height;
++        if(g_skin_slot[b.back].size()!=n) g_skin_slot[b.back].assign(n,0);
++        if(g_skin_w==unsigned(b.width)) std::copy_n(g_skin_ids,n,g_skin_slot[b.back].data());
++        else std::fill(g_skin_slot[b.back].begin(),g_skin_slot[b.back].end(),0u);
++    }
+     v.width=b.width;v.height=b.height;v.stride=b.width*3;v.seq=++b.seq;
+     b.lut->map_rgb888(rgb,v.pixels,b.width,b.height);
+     const Geometry g=geometry(b);
