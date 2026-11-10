@@ -46,3 +46,22 @@ python3 tools/colorplan/board.py capdir hero.png tile.png board.png
 ```
 
 First samples (Helm's Deep, Aragorn) are in the project files under `color-plan/`.
+
+## Heroes (first pass)
+
+`tools/colorplan/heroes.py` tags each of the six select-screen heroes' OBJ palette by material
+and recolours it (capture: hero select ring, Right presses at frame 2300 of
+`recomp/first-level.input`, then warp to Helm's Deep 46). Every hero shares the warm light and
+one violet cast shadow / darkest colour.
+
+| Hero | Dominant | Second | Accent |
+| --- | --- | --- | --- |
+| Aragorn | steel | ranger blue | leather |
+| Gandalf | white robe (violet shadows) | silver hair | skin |
+| Eowyn | wine dress | linen | blonde + Rohan green |
+| Gimli | rust beard/tunic | steel | gold |
+| Frodo | rust waistcoat | leather | Elven cloak |
+| Legolas | elf green | Elven cloak | blonde + silver |
+
+Sam and Smeagol are not on the select screen (`tools/unlockheroes.py`), still to do.
+OBJ palette 2 (weapons and effects) is shared by many objects; the sample recolours it too.

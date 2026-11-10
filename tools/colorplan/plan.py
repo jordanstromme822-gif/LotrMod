@@ -56,6 +56,15 @@ RAMPS = {
     'elf-green':  Ramp('elf-green', 140, 0.100, HERO, cool=0.4, warm=0.55, role='hero'),
     'dwarf-red':  Ramp('dwarf-red', 30, 0.130, HERO, cool=0.3, warm=0.4, role='hero'),
     'gold':       Ramp('gold', 85, 0.120, HERO, cool=0.3, warm=0.5, role='hero'),
+    'silver':     Ramp('silver', 270, 0.022, (0.20, 0.97), cool=0.3, warm=0.6, role='hero'),
+    'white-robe': Ramp('white-robe', 90, 0.026, (0.30, 0.97), cool=1.0, warm=0.3, role='hero'),
+    'blonde':     Ramp('blonde', 88, 0.110, (0.30, 0.95), cool=0.35, warm=0.4, role='hero'),
+    'linen':      Ramp('linen', 75, 0.035, HERO, cool=0.6, warm=0.4, role='hero'),
+    'wine':       Ramp('wine', 12, 0.140, HERO, cool=0.3, warm=0.3, role='hero'),
+    'rohan-green':Ramp('rohan-green', 150, 0.090, HERO, cool=0.35, warm=0.4, role='hero'),
+    'rust':       Ramp('rust', 45, 0.150, HERO, cool=0.25, warm=0.4, role='hero'),
+    'elf-cloak':  Ramp('elf-cloak', 165, 0.045, HERO, cool=0.5, warm=0.5, role='hero'),
+    'shadow':     Ramp('shadow', 285, 0.030, (0.12, 0.20), cool=0.0, warm=0.0, role='hero'),
 }
 
 def recolor(rgb, ramp, lmap=None):
