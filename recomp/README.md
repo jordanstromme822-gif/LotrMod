@@ -287,3 +287,15 @@ slots (3 lines, scrolling a line a second when longer). The hook code moved, so 
 
 A crossbow now only plays the bow shot (sound 0x40) when it fires; its hit, break and set-down sounds are gone
 (`tools/orcslots/crossbow.c`). The hook code changed size, so the engines are rebuilt: `?v=128`.
+
+## Rich lighting (Play Room v150, 2026-11-10)
+
+Graphics upgrade step 1 (Jordan asked for a big upgrade to textures, detail and colouring). After the Sharp HD
+passes, `makeSharpHD` now runs two small game-size passes (bright warm pixels blurred into a glow map; the alpha
+keeps a wide luma blur) and replaces the final blit with a lighting pass at screen size: relief light from the top
+left, deeper shadows from wide local contrast, split-tone grade, saturation, soft sun gradient, fog, glow (screen
+blend) and vignette. Values come from a look per level group (same groups as the Siege picker; menus use a soft
+look). The page reads state 0x030041B0 and level 0x030041F8 every 0.4 s and eases toward the new look.
+Off switch: "Rich lighting" button on the setup screen, or G while playing (localStorage `rotk-light=0`).
+Sources: `playroom/rich-lighting-*.js`; `rich-lighting-patch.py <page> <out>` applies them to the page.
+Before/after: project files `screenshots/rich-lighting-v150.png`.
