@@ -6,39 +6,28 @@ precision highp float; in vec2 v; out vec4 o; uniform sampler2D Texture; uniform
 uniform vec3 ShadowTint, HiTint, GlowTint, FogCol, Gain, WaterCol; uniform float Sat, GlowK, Clarity, Vig, Fog, Lift, Amount, Sun, Relief, Water, Time; uniform vec2 Px, GPx;
 float luma(vec3 c){ return dot(c, vec3(0.299, 0.587, 0.114)); }
 // Water: clear blue or teal (green and blue well above red), not sky (sky's green is close to red) and not grass.
-float wet(vec3 c){ return smoothstep(0.09, 0.17, c.g - c.r) * smoothstep(0.09, 0.17, c.b - c.r) * (1.0 - smoothstep(0.06, 0.14, c.g - c.b)); }
-float hash(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+float wet(vec3 c){ return smoothstep(0.13, 0.2, c.g - c.r) * smoothstep(0.13, 0.2, c.b - c.r) * (1.0 - smoothstep(0.06, 0.14, c.g - c.b)); }
 void main(){
   vec3 c0 = texture(Texture, v).rgb; vec4 g = texture(Glow, v); vec3 c = c0;
-  // ---- Water (Jordan, 2026-11-10: "the water still looks bad") ----
+  // ---- Water (Jordan, 2026-11-10: "the water still looks bad"; v152: no motion, it flickered) ----
+  // Calm and steady: the tiled zigzag is blurred away and the water gets a deeper colour. Nothing moves on its own,
+  // nothing is added at the edges (v151's shore foam made a white rim round enemies), and the pale cloud reflections
+  // count as water when water surrounds them, so they stay soft instead of looking like stone.
   float m = 0.0;
   if (Water > 0.0) {
-    m = wet(texture(Base, v).rgb);
+    vec3 b0 = texture(Base, v).rgb; m = wet(b0);
+    float pale = smoothstep(0.06, 0.12, b0.b - b0.r) * smoothstep(0.45, 0.6, luma(b0));
+    if (m > 0.01 || pale > 0.01) {
+      float near = 0.0;
+      for (int i = 0; i < 8; i++) { float a = float(i) * 0.785398; near += wet(texture(Base, v + vec2(cos(a), sin(a)) * GPx * 4.0).rgb); }
+      near *= 0.125;
+      m = max(m * smoothstep(0.2, 0.5, near + m * 0.3), pale * smoothstep(0.45, 0.8, near));
+    }
     if (m > 0.01) {
-      float t = Time; vec2 gp = v / GPx;                       // game pixels
-      // Shore: any dry pixel within ~3 game pixels.
-      float s = 1.0;
-      for (int i = 0; i < 8; i++) { float a = float(i) * 0.785398; s = min(s, wet(texture(Base, v + vec2(cos(a), sin(a)) * GPx * 2.0).rgb)); }
-      float shore = 1.0 - s;
-      // Refraction shimmer: the water's own texture, gently wobbling and blurred so the tiled ripple pattern melts away.
-      vec2 off = vec2(sin(gp.y * 0.21 + t * 1.7) + sin((gp.x + gp.y) * 0.13 - t * 1.1), cos(gp.x * 0.17 + t * 1.3) + sin((gp.x - gp.y) * 0.11 + t * 0.9)) * GPx * 0.9;
-      vec3 sharp = texture(Texture, v + off).rgb;
-      vec2 vo = v + off * 1.5; vec2 e = GPx * 1.3;
-      vec3 soft = (texture(Base, vo + vec2(e.x, e.y)).rgb + texture(Base, vo + vec2(-e.x, e.y)).rgb + texture(Base, vo + vec2(e.x, -e.y)).rgb + texture(Base, vo + vec2(-e.x, -e.y)).rgb) * 0.25;
-      vec3 w = mix(sharp, soft, 0.8);
-      float wl = luma(w);
-      // Deeper, richer body colour; darker away from the shore.
-      vec3 body = mix(w, WaterCol * (0.55 + 0.9 * wl), 0.55) * mix(0.8, 1.05, shore);
-      // Moving light bands and sparkles on the crests.
-      float band = pow(0.5 + 0.5 * sin(dot(gp, vec2(0.08, 0.12)) + t * 1.4 + sin(gp.x * 0.05 - t * 0.5) * 2.0), 6.0);
-      float band2 = pow(0.5 + 0.5 * sin(dot(gp, vec2(-0.11, 0.07)) - t * 1.1), 8.0);
-      body += vec3(0.75, 0.9, 1.0) * (band * 0.10 + band2 * 0.07);
-      vec2 cell = floor(gp / 4.0); float h = hash(cell); vec2 fc = fract(gp / 4.0) - 0.5;
-      float tw = max(0.0, sin(t * (2.0 + h * 3.0) + h * 40.0)); tw = pow(tw, 24.0) * step(0.85, h) * smoothstep(0.22, 0.0, length(fc));
-      body += vec3(1.0) * tw * 0.6;
-      // White foam along the shore, breathing in and out.
-      float foamN = 0.5 + 0.5 * sin(gp.x * 0.7 + gp.y * 0.9 + t * 2.2) * sin(gp.y * 0.5 - t * 1.6);
-      body = mix(body, vec3(0.92, 0.96, 1.0), shore * shore * (0.12 + 0.22 * foamN));
+      vec3 soft = texture(Base, v).rgb * 0.2;
+      for (int i = 0; i < 8; i++) { float a = float(i) * 0.785398 + 0.39; float r = (i % 2 == 0) ? 1.4 : 2.6; soft += texture(Base, v + vec2(cos(a), sin(a)) * GPx * r).rgb * 0.1; }
+      vec3 w = mix(c, soft, 0.88); float wl = luma(w);
+      vec3 body = mix(w, WaterCol * (0.55 + 0.9 * wl), 0.5);
       c = mix(c, body, m * Water);
     }
   }

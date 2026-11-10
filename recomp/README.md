@@ -302,3 +302,6 @@ Before/after: project files `screenshots/rich-lighting-v150.png`.
 
 ### Water (v151, 2026-11-10)
 Jordan said the water still looked bad (Frodo's Morgul levels). The lighting pass now finds water pixels (green and blue well above red; sky and grass excluded), blurs away the tiled zigzag, wobbles it (refraction), gives it a deeper body colour per look (`WaterCol`), moving light bands, round sparkles and shore foam. Shader source: `playroom/rich-lighting-final.glsl`. Picture: `screenshots/water-v151.png`.
+
+### v152 (2026-11-10)
+Jordan: water motion flickered, white rim round enemies, cloud reflections looked like stone, walls picked up water, menus not upgraded. Water is now still (no wobble, bands, sparkles or foam), stricter water colour test, pale reflections count as water only when surrounded by water, stronger blur. Every non-play screen (title, loading, pause, backpack, stats) uses the full menu look.

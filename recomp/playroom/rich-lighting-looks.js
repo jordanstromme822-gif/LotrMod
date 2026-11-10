@@ -4,7 +4,7 @@
       Sat: 1.15, GlowK: 1.0, Clarity: 0.7, Relief: 0.9, Vig: 0.22, Fog: 0.0, Lift: 0.0, Amount: 1.0, Sun: 0.10, Thr: 0.55, Water: 1.0, WaterCol: [0.16, 0.42, 0.62] };
     const L = (o) => Object.assign({}, base, o);
     const looks = {
-      menu: L({ Water: 0.0, Relief: 0.0, Clarity: 0.25, Vig: 0.0, Sun: 0.0, GlowK: 0.5, Sat: 1.06, Amount: 0.8 }),
+      menu: L({ Water: 0.0, Relief: 0.5, Clarity: 0.5, Vig: 0.14, Sun: 0.06, GlowK: 0.8, Sat: 1.15, Gain: [1.05, 1.04, 1.02], HiTint: [0.04, 0.03, 0.0], ShadowTint: [0.0, 0.0, 0.03] }),
       Woods: L({ ShadowTint: [-0.01, 0.02, 0.035], HiTint: [0.03, 0.035, 0.0], Gain: [1.03, 1.06, 0.98], Sat: 1.18, Sun: 0.16, Vig: 0.26 }),
       Plains: L({ ShadowTint: [0.0, 0.0, 0.03], HiTint: [0.06, 0.04, 0.0], Gain: [1.06, 1.04, 0.97], Sat: 1.14, Sun: 0.18 }),
       "River & water": L({ WaterCol: [0.12, 0.45, 0.55], ShadowTint: [-0.02, 0.015, 0.05], HiTint: [0.03, 0.03, 0.02], Gain: [1.0, 1.04, 1.06], Sat: 1.16, GlowTint: [0.8, 0.95, 1.0] }),
@@ -26,13 +26,13 @@
     const byLevel = {}; for (const [g, ls] of GROUPS) for (const n of ls) byLevel[n] = g;
     return { looks, forLevel: (n) => looks[byLevel[n]] || looks.level, names: byLevel };
   })();
-  // Which look to use: the level's group while playing (state 1) and in its pause menu (16), the soft menu look elsewhere.
+  // Which look to use: the level's group while playing (state 1), the menu look on every other screen.
   setInterval(() => {
     try {
       const M = window.__wideM; if (!M || !M._rotk_iwram) return;
       const b = M._rotk_iwram(), st = M.HEAPU8[b + 0x41B0], lv = M.HEAPU8[b + 0x41F8];
       if (st === 1) window.__rotkLook = LIGHT_LOOKS.forLevel(lv);
-      else if (st !== 16) window.__rotkLook = LIGHT_LOOKS.looks.menu;
+      else window.__rotkLook = LIGHT_LOOKS.looks.menu;   // menus (title, loading, pause, backpack, stats...) all use the menu look
     } catch (e) {}
   }, 400);
   // Rich lighting on/off: setup screen button, or G on a keyboard while playing.
