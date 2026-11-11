@@ -449,8 +449,8 @@ page that already has Living light; `alive.py` has the same new detector):
   flame-lit pools get the strong fire flicker and waver; other pools (bright autumn trees, spells) keep the gentle
   v163 flicker. The "flame nearby" test uses the same alpha. Tongues are a bit taller to make up for fewer flame pixels.
 
-**Day/night on play time (v170, 2026-11-11, Jordan: "Day and night cycles in the game count as 4 minutes of play
+**Day/night on play time (v171, 2026-11-11, Jordan: "Day and night cycles in the game count as 4 minutes of play
 time").** The v161 cycle (4 min day + 4 min night) ran on the wall clock, so it kept turning in menus, on pause and with
-the page closed. `playroom/daynight_v170.py <page> <out>`: it now only advances while a level is being played (game
+the page closed. `playroom/daynight_v171.py <page> <out>`: it now only advances while a level is being played (game
 state 1) with the page in view, a new player starts in full day, and the count is kept in localStorage (`rotk-playT`)
 so a reload carries on. Two online players each count their own play time, so their skies can drift slightly apart.
