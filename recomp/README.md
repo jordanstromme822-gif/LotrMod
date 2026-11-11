@@ -437,3 +437,14 @@ rounded where they should be round and sharp where it needs to be sharp". Page p
 - Test bench: `tools/lightbench/` (`mk.py page.html dir/index.html` pulls the lighting code out of a page;
   `shot.js dir out picture.png <look|level|off> <night 0-1> x y w h scale t1,t2,...` renders game pictures through it in
   headless Chromium). Pictures: project files `screenshots/alive-*`.
+
+**v166 fix (2026-11-11, Jordan: "Everything is on fire now").** The v164 flame test also caught thatched roofs, autumn
+trees, Gimli's hair, skin and lava fields, so they grew tongues and sparks. `playroom/fire_v166.py <page> <out>` (for a
+page that already has Living light; `alive.py` has the same new detector):
+- A flame pixel is now a hot yellow core (r > 0.9, g > 0.75) brighter than around it, with at least two deep orange
+  pixels close by that have almost no blue (b < 0.15 r). Straw, leaves, skin, hair and gold all have more blue than
+  that. Weak hits are dropped and real ones count full. Tested on 13 level pictures plus every hero's poses: only
+  braziers (and a few volcano specks) remain.
+- The ALIVE map now runs before the light map, and the light map carries "how much of this pool is flame" in alpha. Only
+  flame-lit pools get the strong fire flicker and waver; other pools (bright autumn trees, spells) keep the gentle
+  v163 flicker. The "flame nearby" test uses the same alpha. Tongues are a bit taller to make up for fewer flame pixels.

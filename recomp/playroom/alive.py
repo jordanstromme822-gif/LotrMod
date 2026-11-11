@@ -55,16 +55,19 @@ float canopy(vec2 uv){
 }
 float flame(vec2 uv, float wide){
   vec3 c = texture(Texture, uv).rgb; float mx = max(c.r, max(c.g, c.b)), mn = min(c.r, min(c.g, c.b));
-  float core = smoothstep(0.62, 0.82, c.r) * smoothstep(0.45, 0.62, c.g) * smoothstep(0.3, 0.5, c.r - c.b)   // yellow-hot (red lava cracks stay calm)
-    * smoothstep(0.35, 0.6, (mx - mn) / max(mx, 0.001)) * smoothstep(0.12, 0.26, luma(c) - wide);
+  // v166 (Jordan: "everything is on fire now"): only a hot yellow core counts, brighter than around it
+  // (thatch, autumn leaves, skin and hair are duller), and it needs deep orange flame next to it: very little blue
+  // (b < 0.15 r). Straw, skin, gold and leaves all have more blue than that. Lava fields stay calm (core needs g > 0.7).
+  float core = smoothstep(0.8, 0.92, c.r) * smoothstep(0.66, 0.8, c.g) * smoothstep(0.35, 0.5, c.r - c.b)
+    * smoothstep(0.45, 0.6, (mx - mn) / max(mx, 0.001)) * smoothstep(0.1, 0.22, luma(c) - wide);
   if (core < 0.01) return 0.0;
-  // Real flames have orange in them; yellow-green leaf highlights (same yellow as a flame core) have green around them.
-  float org = smoothstep(0.1, 0.22, c.r - c.g), gr = 0.0;
-  for (int i = 0; i < 6; i++) {
-    float a = float(i) * 1.0472; vec3 n = texture(Texture, uv + vec2(cos(a), sin(a)) * (i % 2 == 0 ? 1.5 : 2.5) * GPx).rgb;
-    org = max(org, smoothstep(0.1, 0.22, n.r - n.g) * step(0.45, n.r)); gr += smoothstep(0.02, 0.08, n.g - n.r);
+  float dn = 0.0, gr = 0.0;
+  for (int i = 0; i < 12; i++) {
+    float a = float(i) * 0.5236 + (i < 6 ? 0.0 : 0.2618); vec3 n = texture(Texture, uv + vec2(cos(a), sin(a)) * (i % 2 == 0 ? 1.5 : 3.0) * GPx).rgb;
+    dn += smoothstep(0.72, 0.85, n.r) * (1.0 - smoothstep(0.1, 0.19, n.b / max(n.r, 0.001))) * smoothstep(0.18, 0.3, n.r - n.g);
+    gr += smoothstep(0.02, 0.08, n.g - n.r);
   }
-  return core * org * (1.0 - smoothstep(1.0, 2.5, gr));
+  return smoothstep(0.1, 0.5, core * smoothstep(0.8, 2.0, dn) * (1.0 - smoothstep(1.0, 3.0, gr)));   // weak hits off, real flames full
 }
 void main(){
   if (v.y > HudY) { o = vec4(0.0, 0.0, 0.5, 0.0); return; }
