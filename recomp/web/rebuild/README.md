@@ -12,3 +12,12 @@ patches; emsdk; webrt / weblinkrt runtime builds; runprof mGBA profiler for the 
 
 The engines are built from the game ROM, so they are not committed; they go to the private project files
 (engine-build/web-*) and the Play Room.
+
+## v169 solo engine (Backpack page 2, 2026-11-11)
+`solo-v169.sh` = the build used for the web-backpack2 engine. Runtime tree (gbarecomp base 351572f) patched in this order:
+pc-and-web, smooth-v87 (`git apply -p4`), link/gbarecomp-link.patch, link/engine-speed-v116.patch, cpu-speed (`patch -F3`, it
+overlaps the link patch), obj-ext, oam-ext, then `tools/skin/apply_skin_ppu.py src/gba/gba_ppu.cpp` plus only the
+host_window_web.cpp part of gbarecomp-skin.patch, and the `rotk_bg_tick` line in runtime.cpp (see recomp/README.md).
+Runtime libs: `emcmake cmake -G Ninja -DCMAKE_BUILD_TYPE=Release -DGBARECOMP_WEB_HOST=ON -DCMAKE_CXX_FLAGS="-mtail-call -include compat.h"`
+(emsdk 3.1.6, compat.h = recomp/web/compat.h). main.o = recomp/main-modded.cpp, shim-skin.o = recomp/web/shim-skin.cpp (-O2).
+The 2-player engine was NOT rebuilt: the page gives it a ROM with the old slot code (recomp/playroom/backpack-page2-v169.py).
