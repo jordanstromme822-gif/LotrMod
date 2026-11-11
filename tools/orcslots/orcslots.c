@@ -750,7 +750,9 @@ int itemdesc_wrap(char *buf, int p, u32 item, u16 *x, u16 *y, u16 *tile)
    The Backpack is the game's own again (grid and full item text). Down from the grid's bottom row turns to page 2, which
    shows the 4 Orc Head slots in the grid's top row and the arrow slots (Legolas 2, Frodo 1) in its second row, with
    the game's whole item text under them. Up from the Orc Head row turns back. Page 2 is shown while the cursor is on a
-   slot (cursors 20-25); the page's Backpack button asks for a turn through PGREQ. */
+   slot (cursors 20-25); the page's Backpack button asks for a turn through PGREQ and presses Down, so the turn is made in
+   the game's cursor move (nav_c). Turning from frame_hook left the cursor showing the item picture of the grid cell it
+   had been on. */
 #define PGREQ   (*(volatile u8 *)0x0203F600)          /* page's button: 1 = turn the Backpack page */
 #define BGDIRTY (*(volatile u8 *)0x0203F601)          /* page 2 is drawn over the game's boxes (BGSAVE has them) */
 #define BGSAVE  ((volatile u16 *)0x0203F610)          /* BG0 tile rows 4-12, columns 15-29, as the game drew them */
@@ -796,7 +798,11 @@ static void desc(int cur)
     DRAWTEXT(tile, x, 0x68, 0x76, buf, 0);
 }
 
-static int shape_of(int n) { return n >= AFIRST ? 13 + n - AFIRST : 12 + n - FIRST; }
+/* our slots use the grid's plain cursor picture. CURSHAPE(12..15) would pick the "item under the cursor" picture whenever
+   that grid cell holds an item, which then showed over the slots. */
+#define SETANIM(o, a)         ((fn4)0x08001AC5)((int)(o), (int)(a), 0, 0)
+#define CUR_GRID              0x08062C84
+static void cur_plain(u8 *ui) { if (*(volatile u32 *)(ui + 0x24) != CUR_GRID) SETANIM(ui, CUR_GRID); }
 static int ax0(int p) { return nas(p) == 1 ? 165 : 150; }   /* arrow slots: under Orc Head slots 2 and 3 (Frodo's one
                                                                 between them) */
 static void place_cursor(u8 *ui, int n)
@@ -805,7 +811,7 @@ static void place_cursor(u8 *ui, int n)
     if (n >= FIRST) {
         y = OROW_Y; x = 120 + 30 * (n - FIRST);
         if (n >= AFIRST) { y = AROW_Y; x = ax0(LOCAL_P) + 30 * (n - AFIRST); }
-        CURSHAPE(shape_of(n));
+        cur_plain(ui);
     } else {                                         /* one of the game's own cursors */
         const short *t = (const short *)(0x08062AA4 + 8 * n);
         x = t[0]; y = t[2];
@@ -828,6 +834,16 @@ int nav_c(int proposed)
 {
     u8 *ui = UI;
     int old = ui[0x62], k = KEYS(LOCAL_P), n = proposed, ar = nas(LOCAL_P);
+    if (PGREQ) {                         /* the page's Backpack button (it sends a Down press with it): turn the page */
+        PGREQ = 0;
+        if (on_p2(old)) n = old >= AFIRST ? 12 : 12 + old - FIRST;
+        else n = FIRST + (old >= 8 && old < 16 ? old & 3 : 0);
+        if (n < FIRST) return n;         /* back to page 1: the game's own move */
+        place_cursor(ui, n);
+        desc(n);
+        SOUND(2);
+        return n;
+    }
     if (old >= AFIRST) {                 /* arrow slots: up to the Orc Head slots above them */
         int c = old - AFIRST;
         if (k & 0x40) n = ar == 1 ? FIRST + 1 : FIRST + 1 + c;
@@ -983,7 +999,7 @@ void discard_wrap(int cur, int p)
 /* ---- menu closed: description of the cursor ---- */
 void desc_wrap(int cur)
 {
-    if (cur >= FIRST) { CURSHAPE(shape_of(cur)); desc(cur); }
+    if (cur >= FIRST) { cur_plain(UI); desc(cur); }
     else GAMEDESC(cur);
 }
 
@@ -1056,15 +1072,7 @@ void frame_hook(void)
     int sub = SUBSTATE, cur = ui ? ui[0x62] : 0, p = LOCAL_P;
     q_sync(p);
     BG1CNT = (BG1CNT & ~0x1F00) | (0x1E << 8);       /* the game's own text layer, on both pages */
-    if (ui && PGREQ) {                                /* the page's Backpack button: turn the page */
-        PGREQ = 0;
-        if (sub == 0) {
-            place_cursor(ui, on_p2(cur) ? 8 : FIRST);
-            if (on_p2(cur)) GAMEDESC(8); else desc(FIRST);
-            SOUND(2);
-            cur = ui[0x62];
-        }
-    }
+    if (sub != 0) PGREQ = 0;                         /* a turn is only for the Backpack with no menu open */
     int p2 = on_p2(cur) && sub != 4 && sub != 5 && sub != 6;   /* never during Carve Rune or Move Item */
     if (!p2) {                                       /* page 1: exactly the game's screen */
         if (BGDIRTY)
@@ -1117,6 +1125,7 @@ void frame_hook(void)
 void exit_hook(void)
 {
     BGDIRTY = 0;                                     /* the next Backpack starts from the game's own screen */
+    PGREQ = 0;
     BG1CNT = (BG1CNT & ~0x1F00) | (0x1E << 8);
     STATE_EXIT();
 }
