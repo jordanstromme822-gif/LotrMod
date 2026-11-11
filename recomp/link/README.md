@@ -89,3 +89,40 @@ anything and keeps its own literals; it only stores the heads, and `gp_hook` put
 To regenerate after a hook change: build `tools/orcslots`, run `linkfuncs.py`, write `orcslots.bin` at 0x7F000 into
 the ROM you generate from (the toml's sha1 must match that ROM), generate, re-apply the three noquickskill edits
 (shards 002, 003, 007) and run `orcslots/genpatch.py`; compile `dispatch_table.cpp` and `symbol_map.cpp` too.
+
+## 2-player speed-up (2026-11-11)
+
+Jordan: 2-player games lag on the iPhone in big fights. Measured natively with a headless big fight (both games
+booted into Hornburg Valley, level 47, with an extra set of the level's enemies from the test-only spawn ROM,
+`tools/engine/build_spawntest.py` with its request block moved to EWRAM 0x0203FD80 because 0x0203FF00 holds the Orc
+Head slots), profiled with callgrind:
+
+- P2's picture was already not drawn (`set_rasterization_enabled(false)` on the hidden game).
+- P1's wide picture: about 40% of the time. Handover check before every guest instruction (`runtime_should_yield` +
+  `multiplayer_slice_safe`): about 23%. Byte checks on the game's code in IWRAM (`runtime_native_ram_instruction_matches`):
+  about 13%. Nothing ran in the interpreter.
+
+Changes (`link-speed.patch` on top of the runtime patches listed in `build-web.sh`, plus `link_main.cpp`):
+
+1. **Repeat frames are not drawn again** (`GbaPpu::render_scanline`, `g_ppu_repeat_skip`). The game draws a new
+   picture at most every other VBlank, and far less often in big fights. A frame whose registers (per line), palette,
+   OAM, BG VRAM and the OBJ tiles that enabled OAM entries use all match the frame that was last drawn keeps that
+   frame's pixels. The game streams the next animation frames into free OBJ tile slots while a picture is showing, so
+   only tiles in use count. VRAM, OAM and palette are checked again after the last line; if they changed during a
+   skipped frame, the frame is drawn from the end-of-frame memory. The wide margins come from the level's block map,
+   so `rotk_view::frame` passes a signature of the view and block maps (`g_ppu_view_sig`). `ROTK_REPEAT_SKIP=0` turns it
+   off. Over 2,300 test frames, 5 differed from a full redraw by a few HUD pixels for one frame (a HUD update in the
+   middle of a frame shown one frame early).
+2. **Inline IWRAM code checks**: the runtime and the game code are built with `GBARECOMP_NATIVE_RAM_CODE_VIEWS`
+   (an upstream option), so each check is a load and compare instead of two calls through a function pointer.
+3. **Cheaper handover check**: `multiplayer_slice_safe` keeps a 16-byte verdict per opcode instead of a heap `Instr`,
+   decoding out of line; `runtime_should_yield` and `runtime_tick` have an inline fast path for an instruction inside
+   a running slice and keep the rest out of line.
+
+Every change leaves the games' memory exactly as before (pictures with the skip off are identical frame for frame),
+so online games still hash the same; both players still need the same engine build.
+
+Headless test (native `link_main`, not the web build): `ROTK_LINK_AUTO=p1slot,p2slot` boots both games like the page,
+then a fight bot keeps both heroes at full HP, attacks and walks a square, and prints `[speed]` lines (ms per frame,
+object count, frames skipped/drawn/redrawn) every 300 frames. `ROTK_LINK_POKES="after:addr:value;..."` writes RAM in
+both games after the level starts. Under valgrind the frames from `ROTK_PROF_FROM` for `ROTK_PROF_N` are profiled.

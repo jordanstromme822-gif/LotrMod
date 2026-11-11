@@ -1,0 +1,386 @@
+diff --git a/src/gba/gba_ppu.cpp b/src/gba/gba_ppu.cpp
+index 4cd597b..345b02a 100644
+--- a/src/gba/gba_ppu.cpp
++++ b/src/gba/gba_ppu.cpp
+@@ -18,6 +18,7 @@
+ #include "snapshot.h"
+ 
+ extern "C" { int g_obj_ext_tiles = 0; }
++extern "C" { int g_ppu_repeat_skip = 0; unsigned g_ppu_view_sig = 0; }
+ // OBJ entries drawn: 128 normally; with the extra sprite memory on, entries 128-250 follow at OAM+0x400.
+ // BG keys sit at p*256+251+layer so every OBJ index (0-250) stays in front of a same-priority BG.
+ static inline int obj_entry_count() { return g_obj_ext_tiles ? 251 : 128; }
+@@ -2915,6 +2916,44 @@ void GbaPpu::render(uint8_t* rgb,
+ 
+ #endif
+ 
++// Repeat-frame skip: are the picture inputs the same as the reference copy? Palette, OAM and BG VRAM must match;
++// in OBJ VRAM only the tiles that an enabled OAM entry points at count (the game streams the next animation frames
++// into free tile slots while the current picture is showing; those writes don't change it).
++static bool repeat_inputs_same(const std::vector<uint8_t>& rv, const std::vector<uint8_t>& ro, const std::vector<uint8_t>& rp,
++                               uint16_t dispcnt, const uint8_t* vram, const uint8_t* oam, const uint8_t* pal) {
++    if (std::memcmp(rp.data(), pal, 1024) != 0 || std::memcmp(ro.data(), oam, 8 * 1024) != 0) return false;
++    const unsigned bg_mode = dispcnt & 7u;
++    if (bg_mode >= 3) return std::memcmp(rv.data(), vram, 128 * 1024) == 0;
++    if (std::memcmp(rv.data(), vram, 0x10000) != 0) return false;
++    if (!(dispcnt & 0x1000u)) return true;
++    static const uint8_t wh[3][4][2] = {{{1,1},{2,2},{4,4},{8,8}}, {{2,1},{4,1},{4,2},{8,4}}, {{1,2},{1,4},{2,4},{4,8}}};
++    const bool one_d = (dispcnt & 0x0040u) != 0;
++    const uint32_t tmask = g_obj_ext_tiles ? 0x7FFu : 0x3FFu;
++    uint8_t seen[2048 / 8] = {};
++    for (int idx = 0; idx < obj_entry_count(); ++idx) {
++        const uint8_t* e = oam + idx * 8;
++        const uint16_t a0 = uint16_t(e[0] | e[1] << 8), a1 = uint16_t(e[2] | e[3] << 8), a2 = uint16_t(e[4] | e[5] << 8);
++        if (!(a0 & 0x0100u) && (a0 & 0x0200u)) continue;
++        const unsigned shape = (a0 >> 14) & 3u, size = (a1 >> 14) & 3u;
++        if (shape >= 3) continue;
++        const bool c256 = (a0 & 0x2000u) != 0;
++        const uint32_t tn = (a2 & 0x3FFu) | ((g_obj_ext_tiles && (a0 & 0x1000u)) ? 0x400u : 0u);
++        const unsigned tw = wh[shape][size][0] * (c256 ? 2u : 1u), th = wh[shape][size][1];
++        for (unsigned r = 0; r < th; ++r) {
++            const uint32_t row = one_d ? tn + r * tw : tn + r * 32u;
++            for (unsigned c = 0; c < tw; ++c) {
++                const uint32_t t = (row + c) & tmask;
++                if (seen[t >> 3] & (1u << (t & 7))) continue;
++                seen[t >> 3] |= uint8_t(1u << (t & 7));
++                const uint32_t a = 0x10000u + t * 32u;
++                if (a + 32u > 128u * 1024u) return false;
++                if (std::memcmp(rv.data() + a, vram + a, 32) != 0) return false;
++            }
++        }
++    }
++    return true;
++}
++
+ void GbaPpu::render_scanline(uint32_t y,
+                              uint16_t dispcnt,
+                              const uint8_t* io,
+@@ -2966,6 +3005,55 @@ void GbaPpu::render_scanline(uint32_t y,
+     }
+ 
+     if (!rasterization_enabled_) return;
++    // Repeat-frame skip (LotrMod 2-player speed-up, 2026-11-11). The game draws a new picture at most every other
++    // VBlank (and far less often in big fights), so most frames are composed from exactly the same VRAM, OAM,
++    // palette and registers as the frame before. When g_ppu_repeat_skip is on and everything a line reads is the
++    // same as when the previous frame drew it (plus the host view signature g_ppu_view_sig for the wide margins),
++    // the line keeps the previous frame's pixels. VRAM/OAM/palette are compared at line 0 and again after the last
++    // line; a frame that changed them mid-way is redrawn from the end-of-frame memory, and a drawn frame whose
++    // memory changed mid-way is never used as a reference.
++    if (g_ppu_repeat_skip && !high_resolution_ && !presentation_ && y < kScreenHeight) {
++        const std::size_t vb = 128u * 1024u, ob = 8u * 1024u, pb = 1024u;
++        uint8_t* line_io = rs_.io.data() + y * 0x60u;
++        if (y == 0) {
++            rs_.skipping = rs_.valid && rs_.sig == g_ppu_view_sig && std::memcmp(line_io, io, 0x60) == 0 &&
++                repeat_inputs_same(rs_.vram, rs_.oam, rs_.pal, dispcnt, vram, oam, pal);
++            if (!rs_.skipping) {
++                rs_.vram.assign(vram, vram + vb); rs_.oam.assign(oam, oam + ob); rs_.pal.assign(pal, pal + pb);
++                rs_.sig = g_ppu_view_sig; rs_.valid = false;
++            }
++        } else if (rs_.skipping && std::memcmp(line_io, io, 0x60) != 0) {
++            rs_.skipping = false;   // registers changed mid-frame: draw the rest; earlier lines had identical inputs
++        }
++        if (!rs_.skipping) std::memcpy(line_io, io, 0x60);
++        if (y + 1 == kScreenHeight) {
++            const bool same = repeat_inputs_same(rs_.vram, rs_.oam, rs_.pal, dispcnt, vram, oam, pal);
++            static const bool dbg = std::getenv("ROTK_RS_DBG") != nullptr;
++            if (dbg && !same) {
++                int fv = -1; for (std::size_t i = 0; i < vb; ++i) if (rs_.vram[i] != vram[i]) { fv = int(i); break; }
++                int fo = -1; for (std::size_t i = 0; i < ob; ++i) if (rs_.oam[i] != oam[i]) { fo = int(i); break; }
++                int fp = -1; for (std::size_t i = 0; i < pb; ++i) if (rs_.pal[i] != pal[i]) { fp = int(i); break; }
++                int vis = -1;
++                if (rs_.skipping) {
++                    static std::vector<uint8_t> tmp; tmp.assign(work_fb_.begin(), work_fb_.end());
++                    render(tmp.data(), dispcnt, io, vram, oam, pal);
++                    vis = std::memcmp(tmp.data(), work_fb_.data(), render_bytes()) != 0;
++                }
++                std::fprintf(stderr, "[rs] frame %llu skip=%d vram@%x oam@%x pal@%x visible=%d\n", (unsigned long long)frame_count_, rs_.skipping, fv, fo, fp, vis);
++            }
++            if (rs_.skipping) {
++                if (same) { ++repeat_frames_skipped; return; }
++                // Memory changed during a skipped frame: draw the whole frame from what is there now.
++                ++repeat_frames_redrawn;
++                rs_.valid = false;
++                render(work_fb_.data(), dispcnt, io, vram, oam, pal);
++                return;
++            }
++            ++repeat_frames_drawn;
++            rs_.valid = same;     // a usable reference only if nothing changed while it was drawn
++        }
++        if (rs_.skipping) return;
++    }
+ #if defined(GBARECOMP_NATIVE_DRAW_JOBS)
+     // Capture at the existing post-affine, pre-HBlank-DMA boundary. Foreign
+     // content is not hardware input and must execute its original callback path.
+diff --git a/src/gba/gba_ppu.h b/src/gba/gba_ppu.h
+index ba352cf..ab56277 100644
+--- a/src/gba/gba_ppu.h
++++ b/src/gba/gba_ppu.h
+@@ -236,6 +236,16 @@ private:
+     HighResolutionAffineProvider high_resolution_provider_ = nullptr;
+     PresentationObserver* presentation_ = nullptr; // borrowed; not serialized
+     bool rasterization_enabled_ = true; // host configuration, not serialized
++    // Repeat-frame skip (LotrMod, 2026-11-11): see render_scanline. Host-only, not serialized.
++    struct RepeatSkip {
++        bool valid = false, skipping = false;
++        uint32_t sig = 0;
++        std::vector<uint8_t> vram, oam, pal;
++        std::array<uint8_t, 160 * 0x60> io{};
++    } rs_;
++public:
++    uint64_t repeat_frames_skipped = 0, repeat_frames_drawn = 0, repeat_frames_redrawn = 0;
++private:
+     uint32_t scanline_        = 0;   // 0..227
+     uint32_t dot_in_scanline_ = 0;   // 0..307 (in dots, not cycles)
+     uint32_t cycle_in_dot_    = 0;   // 0..3
+diff --git a/src/runtime/multiplayer_slice.cpp b/src/runtime/multiplayer_slice.cpp
+index 596de89..49352ef 100644
+--- a/src/runtime/multiplayer_slice.cpp
++++ b/src/runtime/multiplayer_slice.cpp
+@@ -5,6 +5,7 @@
+ #include <unordered_map>
+ #include <array>
+ #include <memory>
++#include <cstring>
+ 
+ namespace gbarecomp {
+ namespace {
+@@ -31,7 +32,8 @@ bool opcode(const gba::GbaBus& b,std::uint32_t pc,bool thumb,std::uint32_t& word
+         bytes=b.rom_ptr();
+     }
+     if (!bytes || pc&(width-1)) return false;
+-    word=0; for (unsigned i=0;i<width;++i) word|=std::uint32_t(bytes[off+i])<<(i*8);
++    if (width==4) { std::uint32_t w; std::memcpy(&w,bytes+off,4); word=w; }   // little-endian host (x86, wasm)
++    else word=std::uint32_t(bytes[off])|std::uint32_t(bytes[off+1])<<8;
+     return true;
+ }
+ bool plain_memory(std::uint32_t lo,std::uint32_t hi,bool load) {
+@@ -44,7 +46,7 @@ bool plain_memory(std::uint32_t lo,std::uint32_t hi,bool load) {
+ // DMA registers (v116): the game sets up immediate DMA copies to VRAM/OAM/RAM from IWRAM code many times a frame.
+ // Address/count writes and reads only touch register state; an immediate copy between plain memory regions is the
+ // same as the CPU's own stores (devices have no event inside a slice), and timed DMAs only arm. Anything else syncs.
+-bool dma_access_safe(const gba::GbaBus& b,std::uint32_t address,unsigned size,bool load,std::uint32_t value) {
++[[gnu::noinline]] bool dma_access_safe(const gba::GbaBus& b,std::uint32_t address,unsigned size,bool load,std::uint32_t value) {
+     const std::uint32_t lo=address&~(size-1u), off=lo-0x04000000u;
+     if (lo<0x040000B0u || lo+size>0x040000E0u) return false;
+     if (load) return true;
+@@ -69,68 +71,43 @@ bool dma_access_safe(const gba::GbaBus& b,std::uint32_t address,unsigned size,bo
+     const bool dst_ok=(dad>=0x02000000u && d_hi<0x04000000u) || (dad>=0x05000000u && d_hi<0x08000000u);
+     return src_ok && dst_ok;
+ }
+-}
+-bool multiplayer_slice_safe(const gba::GbaBus& bus,const ArmCpuState& cpu) {
++// Compact per-opcode verdicts (LotrMod 2-player speed-up, 2026-11-11): this check runs before every guest
++// instruction of both games, so the decoded instruction is boiled down once into 16 bytes (kind + the few fields
++// the address check needs) instead of chasing a heap-allocated Instr each time.
++struct SliceOp {
++    std::uint32_t word=0, imm=0;
++    std::uint8_t kind=0;            // 0 not filled, 1 always safe, 2 never safe, 3 load/store, 4 block transfer
++    std::uint8_t rn=0, rm=0, rd=0, shift_type=0, shift_n=0, flags=0, size=0;
++};
++enum : std::uint8_t { kLoad=1, kPre=2, kAdd=4, kByReg=8, kByteOp=16, kBlockLoad=32 };
++SliceOp make_slice_op(const armv4t::Instr& i,std::uint32_t word) {
+     using namespace armv4t;
+-    const auto pc=cpu.R[15]; const bool thumb=cpu.cpsr&CPSR_T_BIT;
+-    std::uint32_t word;
+-    if (!opcode(bus,pc,thumb,word)) return false;
+-    // Thumb formats 1..5 contain only ALU/register/branch operations. These
+-    // dominate ordinary game code and need no decoded-memory metadata.
+-    if (thumb && word < 0x4800u) return true;
+-    // Classification depends on opcode bits and live registers, not on the
+-    // decode PC. Thumb's finite opcode space permits direct lookup instead of
+-    // hashing the guest PC at every generated instruction. Read actual bytes
+-    // first so RAM code changes and different cartridges remain isolated.
+-    struct Cached { std::uint32_t word; Instr instruction; };
+-    static std::array<std::unique_ptr<Instr>,65536> thumb_cache;
+-    const Instr* instruction;
+-    if (thumb) {
+-        auto& slot=thumb_cache[word];
+-        if (!slot) slot=std::make_unique<Instr>(ThumbDecoder::decode(static_cast<std::uint16_t>(word),0));
+-        instruction=slot.get();
+-    } else {
+-        // Direct-mapped decode cache (a hash map lookup per ARM instruction was a measurable cost).
+-        static std::array<std::unique_ptr<Cached>,8192> arm_cache;
+-        auto& slot=arm_cache[(word ^ (word>>13) ^ (word>>26)) & 8191u];
+-        if (!slot || slot->word!=word) slot=std::make_unique<Cached>(Cached{word,ArmDecoder::decode(word,0)});
+-        instruction=&slot->instruction;
+-    }
+-    const auto& i=*instruction;
+-    if (i.is_undefined) return false;
+-    const auto reg=[&](unsigned n) { return n==15 ? pc+(thumb ? 4u : 8u) : cpu.R[n]; };
++    SliceOp o; o.word=word;
++    if (i.is_undefined) { o.kind=2; return o; }
+     switch (i.op) {
+     case IrOp::LDR: case IrOp::LDRB: case IrOp::LDRH: case IrOp::LDRSB: case IrOp::LDRSH:
+     case IrOp::STR: case IrOp::STRB: case IrOp::STRH: {
+-        const bool load=i.op!=IrOp::STR && i.op!=IrOp::STRB && i.op!=IrOp::STRH;
+-        auto base=reg(i.mem.rn);
+-        if (thumb && i.mem.rn==15) base&=~3u;
+-        auto off=i.mem.imm_offset;
++        o.kind=3; o.rn=i.mem.rn; o.rd=i.rd; o.imm=i.mem.imm_offset;
++        if (i.op!=IrOp::STR && i.op!=IrOp::STRB && i.op!=IrOp::STRH) o.flags|=kLoad;
++        if (i.mem.pre_indexed) o.flags|=kPre;
++        if (i.mem.add) o.flags|=kAdd;
++        if (i.op==IrOp::STRB || i.op==IrOp::LDRB || i.op==IrOp::LDRSB) o.flags|=kByteOp;
++        o.size=(i.op==IrOp::LDR || i.op==IrOp::STR) ? 4u : 2u;
+         if (i.mem.by_register) {
+-            const auto& shift=i.mem.reg_offset;
+-            if (shift.by_register) return false;
+-            // Every immediate shift (the game's sound mixer reads samples with ASR #16; v116).
+-            const std::uint32_t v=reg(shift.rm), n=shift.imm_or_rs&31u;
+-            switch (shift.type) {
+-            case ShiftType::LSL: off=v<<n; break;
+-            case ShiftType::LSR: off=n ? v>>n : 0u; break;
+-            case ShiftType::ASR: off=static_cast<std::uint32_t>(static_cast<std::int32_t>(v)>>(n ? n : 31u)); break;
+-            default: if (!n) return false; off=(v>>n)|(v<<(32u-n)); break;   // ROR (RRX needs the carry)
++            const auto& sh=i.mem.reg_offset;
++            if (sh.by_register) { o.kind=2; return o; }
++            o.flags|=kByReg; o.rm=sh.rm; o.shift_n=static_cast<std::uint8_t>(sh.imm_or_rs&31u);
++            switch (sh.type) {
++            case ShiftType::LSL: o.shift_type=0; break;
++            case ShiftType::LSR: o.shift_type=1; break;
++            case ShiftType::ASR: o.shift_type=2; break;
++            default: if (!o.shift_n) { o.kind=2; return o; } o.shift_type=3; break;   // ROR (RRX needs the carry)
+             }
+         }
+-        const auto address=i.mem.pre_indexed ? (i.mem.add ? base+off : base-off) : base;
+-        // Cover byte, halfword, aligned-word and signed-unaligned accesses.
+-        if (plain_memory(address&~3u,(address&~3u)+3,load)) return true;
+-        if ((address>>24)==4u && i.op!=IrOp::STRB && i.op!=IrOp::LDRB && i.op!=IrOp::LDRSB && i.rd!=15) {
+-            const unsigned size=(i.op==IrOp::LDR || i.op==IrOp::STR) ? 4u : 2u;
+-            return dma_access_safe(bus,address,size,load,load ? 0u : reg(i.rd));
+-        }
+-        return false;
+-    }
+-    case IrOp::LDM: case IrOp::STM: {
+-        const auto base=reg(i.block.rn);
+-        return base>=64 && plain_memory(base-64,base+64,i.op==IrOp::LDM);
++        return o;
+     }
++    case IrOp::LDM: case IrOp::STM:
++        o.kind=4; o.rn=i.block.rn; if (i.op==IrOp::LDM) o.flags|=kBlockLoad; return o;
+     case IrOp::AND: case IrOp::EOR: case IrOp::SUB: case IrOp::RSB:
+     case IrOp::ADD: case IrOp::ADC: case IrOp::SBC: case IrOp::RSC:
+     case IrOp::TST: case IrOp::TEQ: case IrOp::CMP: case IrOp::CMN:
+@@ -138,8 +115,58 @@ bool multiplayer_slice_safe(const gba::GbaBus& bus,const ArmCpuState& cpu) {
+     case IrOp::B: case IrOp::BL: case IrOp::BX: case IrOp::BL_prefix: case IrOp::BL_suffix:
+     case IrOp::MUL: case IrOp::MLA: case IrOp::UMULL: case IrOp::UMLAL: case IrOp::SMULL: case IrOp::SMLAL:
+     case IrOp::MRS: case IrOp::MSR:
+-        return true;
+-    default: return false;
++        o.kind=1; return o;
++    default: o.kind=2; return o;
++    }
++}
++std::array<SliceOp,65536> g_thumb_ops;
++std::array<SliceOp,8192> g_arm_ops;
++// Decoding is rare (once per distinct opcode); keep it out of the hot function's frame.
++[[gnu::noinline]] void fill_slice_op(bool thumb,std::uint32_t word) {
++    using namespace armv4t;
++    if (thumb) g_thumb_ops[word]=make_slice_op(ThumbDecoder::decode(static_cast<std::uint16_t>(word),0),word);
++    else g_arm_ops[(word ^ (word>>13) ^ (word>>26)) & 8191u]=make_slice_op(ArmDecoder::decode(word,0),word);
++}
++}
++bool multiplayer_slice_safe(const gba::GbaBus& bus,const ArmCpuState& cpu) {
++    using namespace armv4t;
++    const auto pc=cpu.R[15]; const bool thumb=cpu.cpsr&CPSR_T_BIT;
++    std::uint32_t word;
++    if (!opcode(bus,pc,thumb,word)) return false;
++    // Thumb formats 1..5 contain only ALU/register/branch operations.
++    if (thumb && word < 0x4800u) return true;
++    const SliceOp* op;
++    if (thumb) {
++        op=&g_thumb_ops[word];
++        if (!op->kind) fill_slice_op(true,word);
++    } else {
++        op=&g_arm_ops[(word ^ (word>>13) ^ (word>>26)) & 8191u];
++        if (!op->kind || op->word!=word) fill_slice_op(false,word);
++    }
++    if (op->kind==1) return true;
++    if (op->kind==2) return false;
++    const auto reg=[&](unsigned n) { return n==15 ? pc+(thumb ? 4u : 8u) : cpu.R[n]; };
++    if (op->kind==4) {
++        const auto base=reg(op->rn);
++        return base>=64 && plain_memory(base-64,base+64,(op->flags&kBlockLoad)!=0);
++    }
++    const bool load=(op->flags&kLoad)!=0;
++    auto base=reg(op->rn);
++    if (thumb && op->rn==15) base&=~3u;
++    std::uint32_t off=op->imm;
++    if (op->flags&kByReg) {
++        const std::uint32_t v=reg(op->rm), n=op->shift_n;
++        switch (op->shift_type) {
++        case 0: off=v<<n; break;
++        case 1: off=n ? v>>n : 0u; break;
++        case 2: off=static_cast<std::uint32_t>(static_cast<std::int32_t>(v)>>(n ? n : 31u)); break;
++        default: off=(v>>n)|(v<<(32u-n)); break;
++        }
+     }
++    const auto address=(op->flags&kPre) ? ((op->flags&kAdd) ? base+off : base-off) : base;
++    if (plain_memory(address&~3u,(address&~3u)+3,load)) return true;
++    if ((address>>24)==4u && !(op->flags&kByteOp) && op->rd!=15)
++        return dma_access_safe(bus,address,op->size,load,load ? 0u : reg(op->rd));
++    return false;
+ }
+ }
+diff --git a/src/runtime/runtime.cpp b/src/runtime/runtime.cpp
+index b5cdaa8..543b2c4 100644
+--- a/src/runtime/runtime.cpp
++++ b/src/runtime/runtime.cpp
+@@ -1459,6 +1459,8 @@ static void web_single_tick() {
+         ++g_web_frames;
+     }
+ }
++// Background play (v93): the page calls this from a worker timer while the tab is hidden.
++extern "C" EMSCRIPTEN_KEEPALIVE void rotk_bg_tick() { if (g_web_iter) web_single_tick(); }
+ template <class F> [[noreturn]] static void web_single_run(F& f) {
+     g_web_iter = [&f]() { return f(); };
+     emscripten_set_main_loop(web_single_tick, 0, 1);
+diff --git a/src/runtime/runtime_bus_bridge.cpp b/src/runtime/runtime_bus_bridge.cpp
+index 4f0b0be..0eff5bc 100644
+--- a/src/runtime/runtime_bus_bridge.cpp
++++ b/src/runtime/runtime_bus_bridge.cpp
+@@ -831,8 +831,14 @@ extern "C" void runtime_set_cpu_speed(uint32_t pct) {
+ }
+ extern "C" uint32_t runtime_get_cpu_speed(void) { return g_cpu_speed_pct; }
+ 
++static void runtime_tick_slow(uint32_t cycles);
++// Session fast path first (LotrMod 2-player speed-up, 2026-11-11): in a 2-player game every generated instruction
++// ends here; keeping the rest out of line saves the big function's register spills on each call.
+ extern "C" void runtime_tick(uint32_t cycles) {
+     if (g_session_execution) { g_runtime_cycles += cycles; return; }
++    runtime_tick_slow(cycles);
++}
++[[gnu::noinline]] static void runtime_tick_slow(uint32_t cycles) {
+     // P6 shadow-tick: a healed shard's validation re-run only accumulates its
+     // cycle cost (for the cycle diff); the interpreter pass already pumped the
+     // devices / delivered IRQs for this window, so do nothing else here.
+@@ -1150,7 +1156,29 @@ extern "C" void runtime_slice_stats_dump() {
+     for (std::size_t i = 0; i < v.size() && i < 60; ++i) std::fprintf(stderr, " %08X:%llu", v[i].second, (unsigned long long)v[i].first);
+     std::fprintf(stderr, "\n"); g_slice_unsafe.clear(); for (auto& x : g_slice_end) x = 0;
+ }
++// Same stack-guard test as runtime_should_yield_full (a compile-time false where the guard isn't supported).
++static inline bool host_stack_guard_live() {
++    if constexpr (gbarecomp::host_stack_guard_supported()) {
++        char probe;
++        return g_irq_nest_depth != 0u ? gbarecomp::host_stack_critically_low(&probe)
++                                       : gbarecomp::mobile_stack_over_budget(&probe);
++    }
++    return false;
++}
++static bool runtime_should_yield_full(void);
++// 2-player hot path (LotrMod, 2026-11-11): inside a running slice, the next instruction only needs the slice check;
++// everything else (stack guard, IRQ entry, BIOS latch) is handled as before by the full version.
+ extern "C" bool runtime_should_yield(void) {
++    if (g_session_execution && g_session_instruction_started && g_session_slice && !g_session_slice_stopped &&
++        g_runtime_cycles < g_session_slice_deadline && !host_stack_guard_live()) {
++        auto* bus = gbarecomp::g_active_bus;
++        if (bus && !gbarecomp::runtime_dispatch_suspended() && (g_cpu.cpsr & CPSR_I_BIT || !bus->io().irq_pending()) &&
++            g_cpu.R[15] >= 0x00004000u && gbarecomp::multiplayer_slice_safe(*bus, g_cpu))
++            return false;
++    }
++    return runtime_should_yield_full();
++}
++[[gnu::noinline]] static bool runtime_should_yield_full(void) {
+     // Host-stack budget guard: branch/dispatch chains that fail to unwind
+     // (e.g. a busy-wait split across generated functions whose wake flag
+     // never arrives) nest host frames without bound on finite-stack threads
