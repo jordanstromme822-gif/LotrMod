@@ -65,3 +65,12 @@ one violet cast shadow / darkest colour.
 
 Sam and Smeagol are not on the select screen (`tools/unlockheroes.py`), still to do.
 OBJ palette 2 (weapons and effects) is shared by many objects; the sample recolours it too.
+
+## Into the Play Room skin
+
+- `herocut.py out.npz name:capdump ...` repaints every captured hero pose at 4x and cuts it into skin-atlas
+  cells with the skin's FNV keys (tile bytes + OBJ palette bank). Merge into the live atlas with
+  `tools/skin/merge.py livebg out.npz newskin`. Captures: run.c `dump 06010000 8000`, `dump 05000000 400`,
+  `dump 07000000 400` per frame while walking 8 ways, idling, attacking (about 250 poses per hero).
+- `herosheet.py outdir name:capdump ...` writes per-hero 2x tile sheets + key json for hand redraws
+  (tools/redraw/pack.py). Its output is game art: keep it in the private project files, never in the repo.
