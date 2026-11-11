@@ -8,3 +8,5 @@ tools/run
 tools/link2
 tools/orcslots/*.o
 tools/orcslots/*.elf
+tools/turn16/*.o
+tools/turn16/*.elf
