@@ -296,6 +296,8 @@ function hd2dMake(gl, prog, tex, MVP, MVP_FLIP, blit){
     };
     bind(0, api.col, api.near); gl.uniform1i(u.Texture, 0);
     bind(1, env.raw || env.outs[0], api.lin); if (u.Raw) gl.uniform1i(u.Raw, 1);
+    const wem = window.__hdWeaponEm || null;
+    bind(6, wem || api.dummy, api.lin); if (u.WeaponEm) gl.uniform1i(u.WeaponEm, 6); if (u.WeaponEmOn) gl.uniform1f(u.WeaponEmOn, wem ? 1 : 0);
     const glow = env.lit && env.gT && env.gT[1];
     bind(2, glow || api.dummy, api.lin); if (u.Glow) gl.uniform1i(u.Glow, 2);
     bind(3, mode === 1 ? api.frameTex : mode === 2 ? api.atlTex : api.dummy, api.near); if (u.Normals) gl.uniform1i(u.Normals, 3);

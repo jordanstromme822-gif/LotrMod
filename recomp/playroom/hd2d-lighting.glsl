@@ -29,7 +29,7 @@ void main(){ gl_Position = MVPMatrix * VertexCoord; v = TexCoord.xy; }
 #else
 precision highp float;
 in vec2 v; out vec4 o;
-uniform sampler2D Texture, Raw, Glow, Normals, Tags, Lut;
+uniform sampler2D Texture, Raw, Glow, Normals, Tags, Lut, WeaponEm; uniform float WeaponEmOn;
 uniform vec3 FogCol, NightTint;
 uniform vec4 LPos[12], LCol[12], PPos[8], PCol[8];
 uniform float Night, Sun, Fog, Vig, Time, HudY, Menu, Already, GlowOn, NMode, ShadowCut, HeroK, LN, PN, Dbg;
@@ -210,6 +210,12 @@ void main(){
         + textureLod(Raw, uv + vec2(0.0, o2.y), 0.0).rgb
         + textureLod(Raw, uv - vec2(0.0, o2.y), 0.0).rgb;
       c += b * 0.2 * em * 0.2;
+    }
+    if (WeaponEmOn > 0.5) {
+      vec3 we = textureLod(WeaponEm, uv, 0.0).rgb;
+      we += textureLod(WeaponEm, uv + vec2(GPx.x * 3.0, 0.0), 0.0).rgb + textureLod(WeaponEm, uv - vec2(GPx.x * 3.0, 0.0), 0.0).rgb;
+      we += textureLod(WeaponEm, uv + vec2(0.0, GPx.y * 3.0), 0.0).rgb + textureLod(WeaponEm, uv - vec2(0.0, GPx.y * 3.0), 0.0).rgb;
+      c += we * 0.28;
     }
   }
 

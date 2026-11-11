@@ -383,6 +383,23 @@ Copy `anim.json` with the atlas into the page's `skin/` folder. Chip **Extra fra
 
 - Sources: `playroom/anim-frames.js`, `playroom/anim-frames.py`, `tools/redraw/cycles.py`.
 
+## HD weapons (Graphics phase 6)
+
+Characters stay on the crisp pixel path. Weapon tiles can be replaced by a smooth atlas, off unless the player turns it on. No game art is in this pack. The private hero sheets stay out of the repo. A procedural sword under `skin/standin/weapons/` is only a test, mapped to the stand-in swing keys.
+
+```
+python3 -m tools.redraw.weapon skin/standin/weapons
+python3 recomp/playroom/hd-weapons.py in.html out.html
+```
+
+Copy `skin/standin/weapons/` to the Play Room's `skin/weapons/` to try the test sword. A real pack uses the same files with FNV keys.
+
+- Chip **HD weapons**, or **W** while playing. `localStorage rotk-hdweapons` is off when missing. **G**, **H**, **J**, and **K** are unchanged. While it is off the atlas is not fetched and the picture path is unchanged.
+- While it is on, the canvas backing store is the screen size times `devicePixelRatio`. The pass runs at that resolution. A tile whose key is in `skin/weapons/map.json` is sampled from the 128px cell with linear mipmaps (the page premultiplies the straight-alpha colour atlas on upload). Every other pixel is left as the crisp or ScaleFX pass drew it, and that pass is forced to nearest while weapons are on. Horizontal and vertical flips are tag bits 23 and 24, the same as crisp skin. Affine OBJ are not tagged, so they are not replaced.
+- Shading is metal Fresnel and GGX from the same top-left key light as HD-2D, plus up to four torch lights when HD-2D (`rotk-hd2d`) is on. A procedural sky gradient stands in for the environment. Material alpha is emissive and is added in the HD-2D bloom when that pass is on. With HD-2D off, the key light still provides the specular.
+- Format: `map.json` is `{scale:16, cell:130, pad:1, per_row, tiles:{key:[col,row]}}`. Keys match crisp skin (`%08x%08x%d`). `atlas.png`, `normals.png` (tangent, +Y up), and `material.png` (R metal, G roughness, B edge, A emissive) share that grid. Column and row must be 0–254.
+- Sources: `playroom/hd-weapons.glsl`, `playroom/hd-weapons.js`, `playroom/hd-weapons.py`, `tools/redraw/weapon.py`.
+
 ## v155 Skin (test) hook (graphics thread, 2026-11-10)
 - `recomp/gbarecomp-skin.patch` (gba_ppu.cpp + host_window_web.cpp): when `rotk_skin(1)` is on, the wide renderer writes one
   u32 tag per output pixel: bits 0-11 VRAM tile slot (addr/32), 12-15 palette bank, 16 8bpp, 17-19 texel x, 20-22 texel y,
