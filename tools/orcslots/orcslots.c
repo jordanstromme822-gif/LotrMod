@@ -236,6 +236,9 @@ static u32 with_count(u32 w, int n) { return (w & 0xFF00FFFFu) | ((u32)(n & 0xFF
 static int is_leg(int p) { return p < 2 && HERO_ID(p) == 1; }
 static int is_frodo(int p) { return p < 2 && HERO_ID(p) == 0; }
 static int nas(int p) { return is_leg(p) ? 2 : is_frodo(p) ? 1 : 0; }   /* arrow slots: Legolas 2, Frodo 1 (his crossbows) */
+#define MINLVL(it)            (((fn4)0x0802D2F9)((int)(it), 0, 0, 0) & 0xFF)
+/* arrows the hero is high enough level to use (Jordan, 2026-11-11: the arrow slots had no level check) */
+static int lvl_ok(int p, u32 w) { return MINLVL(w) <= *(volatile u8 *)(HERO + p * HERO_SZ + 0x19C) + 1; }
 static void a_norm(int p) { for (int k = 0; k < 2; k++) if (!is_arrow(ASLOT[p][k])) ASLOT[p][k] = NOARROW; }
 
 /* keep QMAX/QWORD in step with what the hero wears (called every gameplay and Backpack frame) */
@@ -314,7 +317,8 @@ static void a_cycle(int p, int quiet)
     a_norm(p);
     u32 w0 = it[2], n0 = w0, n1 = ASLOT[p][0], n2 = ASLOT[p][1];
     if ((!is_arrow(w0) && (w0 & 0xF) != 0xF) || (!is_arrow(n1) && !is_arrow(n2))) { if (!quiet) SOUND(5); return; }
-    for (int k = 0; k < 2; k++) { u32 t = n0; n0 = n1; n1 = n2; n2 = t; if (is_arrow(n0)) break; }
+    for (int k = 0; k < 2; k++) { u32 t = n0; n0 = n1; n1 = n2; n2 = t; if (is_arrow(n0) && lvl_ok(p, n0)) break; }
+    if (!is_arrow(n0) || !lvl_ok(p, n0)) { if (!quiet) SOUND(5); return; }   /* nothing this hero can use */
     ASLOT[p][0] = is_arrow(n1) ? n1 : NOARROW;
     ASLOT[p][1] = is_arrow(n2) ? n2 : NOARROW;
     if (is_arrow(w0)) ITEMSTATS(w0, 2, p, 1);
@@ -333,7 +337,7 @@ static void a_cycle(int p, int quiet)
 int apick_wrap(u32 *item, int p)
 {
     u32 w = *item, *it = inv(p);
-    if ((LINKED && ALV[p] != 1) || !nas(p) || !is_arrow(w)) return AE68(item, p);
+    if ((LINKED && ALV[p] != 1) || !nas(p) || !is_arrow(w) || !lvl_ok(p, w)) return AE68(item, p);
     if (is_leg(p) && (!is_arrow(it[2]) || same_wrap(it[2], w))) return AE68(item, p);
     a_norm(p);
     int ns = nas(p);
@@ -731,7 +735,7 @@ static int itemdesc_core(char *buf, int p, u32 item, u16 *x, u16 *y, u16 *tile)
     }
     if (!is_orc(item)) return r;
     char *d = bonus_text(buf, item >> 16);
-    put(d, ". Works only in an Orc Head slot (the row under your backpack).");
+    put(d, ". Works only in an Orc Head slot (page 2 of your backpack: down from the bottom row).");
     return (int)buf;
 }
 
@@ -742,7 +746,25 @@ int itemdesc_wrap(char *buf, int p, u32 item, u16 *x, u16 *y, u16 *tile)
     return r;
 }
 
-/* ---- the slots ---- */
+/* ---- the slots: a second Backpack page (Jordan, 2026-11-11) ----
+   The Backpack is the game's own again (grid and full item text). Down from the grid's bottom row turns to page 2, which
+   shows the 4 Orc Head slots in the grid's top row and the arrow slots (Legolas 2, Frodo 1) in its second row, with
+   the game's whole item text under them. Up from the Orc Head row turns back. Page 2 is shown while the cursor is on a
+   slot (cursors 20-25); the page's Backpack button asks for a turn through PGREQ and presses Down, so the turn is made in
+   the game's cursor move (nav_c). Turning from frame_hook left the cursor showing the item picture of the grid cell it
+   had been on. */
+#define PGREQ   (*(volatile u8 *)0x0203F600)          /* page's button: 1 = turn the Backpack page */
+#define BGDIRTY (*(volatile u8 *)0x0203F601)          /* page 2 is drawn over the game's boxes (BGSAVE has them) */
+#define BGSAVE  ((volatile u16 *)0x0203F610)          /* BG0 tile rows 4-12, columns 15-29, as the game drew them */
+#define OROW_Y  32                                    /* page 2: Orc Head row = the grid's top row */
+#define AROW_Y  56                                    /* ... arrow slots = its second row */
+static int on_p2(int cur) { return cur >= FIRST && cur < AFIRST + 2; }
+/* an empty slot: a title and a line of help, each from the next free text tile */
+static void empty_text(const char *title, const char *help)
+{
+    int tile = DRAWTEXT(0x13, 0x79, 0x50, 0x76, title, 0);
+    DRAWTEXT(tile, 0x79, 0x60, 0x76, help, 0);
+}
 static void desc(int cur)
 {
     int p = LOCAL_P, c = cur - FIRST;
@@ -750,7 +772,11 @@ static void desc(int cur)
     TEXTCOLOR(0, 3, 0);
     if (cur >= AFIRST) {                             /* an arrow slot: the game's own description */
         u32 w = ASLOT[p][cur - AFIRST];
-        if (!is_arrow(w)) return;
+        if (!is_arrow(w)) {
+            empty_text("Arrow slot (empty)", is_frodo(p) ? "Equip arrows from your backpack. Your crossbows shoot them."
+                                                         : "Arrows you pick up go here first. L puts on the next quiver.");
+            return;
+        }
         u16 x = 0x79, y = 0x50, tile = 0x13;
         char buf[0xC8];
         for (int i = 0; i < 0xC8; i++) buf[i] = 0;
@@ -758,7 +784,10 @@ static void desc(int cur)
         if (r) DRAWTEXT(tile, x, 0x68, 0x76, r, 0);
         return;
     }
-    if (c >= cnt(p)) return;                         /* empty: the faded head says it all */
+    if (c >= cnt(p)) {
+        empty_text("Orc Head slot (empty)", "Equip an Orc Head from your backpack. Its bonus works only from these 4 slots.");
+        return;
+    }
     u16 x = 0x79, y = 0x50, tile = 0x13;
     char buf[0xC8];
     for (int i = 0; i < 0xC8; i++) buf[i] = 0;
@@ -769,18 +798,35 @@ static void desc(int cur)
     DRAWTEXT(tile, x, 0x68, 0x76, buf, 0);
 }
 
-static int shape_of(int n) { return n >= AFIRST ? 13 + n - AFIRST : 12 + n - FIRST; }
+/* our slots use the grid's plain cursor picture. CURSHAPE(12..15) would pick the "item under the cursor" picture whenever
+   that grid cell holds an item, which then showed over the slots. */
+#define SETANIM(o, a)         ((fn4)0x08001AC5)((int)(o), (int)(a), 0, 0)
+#define CUR_GRID              0x08062C84
+static void cur_plain(u8 *ui) { if (*(volatile u32 *)(ui + 0x24) != CUR_GRID) SETANIM(ui, CUR_GRID); }
+static int ax0(int p) { return nas(p) == 1 ? 165 : 150; }   /* arrow slots: under Orc Head slots 2 and 3 (Frodo's one
+                                                                between them) */
 static void place_cursor(u8 *ui, int n)
 {
-    int c = n - FIRST, y = 80;
-    int x = 120 + 30 * c;
-    if (n >= AFIRST) { y = 104; x = nas(LOCAL_P) == 1 ? 165 : 150 + 30 * (n - AFIRST); }   /* arrow slots: under Orc Head
-                                                                         slots 2 and 3 (Frodo's one between them) */
+    int x, y;
+    if (n >= FIRST) {
+        y = OROW_Y; x = 120 + 30 * (n - FIRST);
+        if (n >= AFIRST) { y = AROW_Y; x = ax0(LOCAL_P) + 30 * (n - AFIRST); }
+        cur_plain(ui);
+    } else {                                         /* one of the game's own cursors */
+        const short *t = (const short *)(0x08062AA4 + 8 * n);
+        x = t[0]; y = t[2];
+        CURSHAPE(n);
+    }
     *(int *)(ui + 0xAC) = x << 16;
     *(int *)(ui + 0xB0) = y << 16;
     *(u32 *)(ui + 0xE8) |= 0x80;
     ui[0x62] = n;
-    CURSHAPE(shape_of(n));
+}
+static void go(u8 *ui, int n)
+{
+    place_cursor(ui, n);
+    if (n >= FIRST) desc(n); else GAMEDESC(n);
+    SOUND(2);
 }
 
 /* ---- cursor movement (Backpack, no menu open): returns the cursor the game should go on with ---- */
@@ -788,25 +834,33 @@ int nav_c(int proposed)
 {
     u8 *ui = UI;
     int old = ui[0x62], k = KEYS(LOCAL_P), n = proposed, ar = nas(LOCAL_P);
-    if (old >= AFIRST) {                 /* arrow slots: up to Orc Head slots 2/3, down to the grid's top row */
+    if (PGREQ) {                         /* the page's Backpack button (it sends a Down press with it): turn the page */
+        PGREQ = 0;
+        if (on_p2(old)) n = old >= AFIRST ? 12 : 12 + old - FIRST;
+        else n = FIRST + (old >= 8 && old < 16 ? old & 3 : 0);
+        if (n < FIRST) return n;         /* back to page 1: the game's own move */
+        place_cursor(ui, n);
+        desc(n);
+        SOUND(2);
+        return n;
+    }
+    if (old >= AFIRST) {                 /* arrow slots: up to the Orc Head slots above them */
         int c = old - AFIRST;
-        if (k & 0x40) n = FIRST + 1 + c;
-        else if (k & 0x80) n = 9 + c;
+        if (k & 0x40) n = ar == 1 ? FIRST + 1 : FIRST + 1 + c;
         else if (k & 0x30) n = ar == 2 ? AFIRST + (c ^ 1) : old;
         else n = old;
     } else if (old >= FIRST) {
         int c = old - FIRST;
-        if (k & 0x40) n = 12 + c;
-        else if (k & 0x80) n = ar == 2 ? AFIRST + (c >= 2) : ar ? AFIRST : 8 + c;
-        /* off the row's ends like the grid row above it (Jordan, 2026-11-09): left to the shield, right to the weapon */
+        if (k & 0x40) n = 12 + c;                  /* up: back to page 1, the grid's bottom row */
+        else if (k & 0x80) n = ar == 2 ? AFIRST + (c >= 2) : ar ? AFIRST : old;
+        /* off the row's ends like the grid row (Jordan, 2026-11-09): left to the shield, right to the weapon */
         else if (k & 0x20) n = c ? FIRST + c - 1 : 2;
         else if (k & 0x10) n = c < 3 ? FIRST + c + 1 : 1;
         else n = old;
-    } else if (old >= 12 && old <= 15 && (k & 0x80)) n = FIRST + old - 12;
-    else if (old >= 8 && old <= 11 && (k & 0x40)) n = ar == 2 ? AFIRST + (old >= 10) : ar ? AFIRST : FIRST + old - 8;
-    if (n < FIRST || n == old) return n;
+    } else if (old >= 12 && old <= 15 && (k & 0x80)) n = FIRST + old - 12;   /* down off the grid: page 2 */
+    if (n < FIRST || n == old) return n;   /* the game's own move (it also leaves the slots this way) */
     place_cursor(ui, n);                 /* the game then sees no change and stops */
-    desc(n);
+    if (n >= FIRST) desc(n);
     SOUND(2);
     return n;
 }
@@ -903,6 +957,7 @@ void menu_wrap(void)
     if (cur >= 8 && cur < 16 && sel == 0 && is_arrow(it[cur]) && is_frodo(p)) {   /* Frodo: Equip arrows = into his
                                                                                     arrow slot (for his crossbows) */
         if (LINKED) { SOUND(5); MENU[4] = 2; return; }
+        if (!lvl_ok(p, it[cur])) { error_text("You are not high enough level to use these arrows."); return; }
         u32 w = it[cur], a = ASLOT[p][0];
         if (is_arrow(a) && same_wrap(a, w) && !is_regen(w)) {
             int c = (a >> 16) & 0xFF, m = (w >> 16) & 0xFF;
@@ -944,7 +999,7 @@ void discard_wrap(int cur, int p)
 /* ---- menu closed: description of the cursor ---- */
 void desc_wrap(int cur)
 {
-    if (cur >= FIRST) { CURSHAPE(shape_of(cur)); desc(cur); }
+    if (cur >= FIRST) { cur_plain(UI); desc(cur); }
     else GAMEDESC(cur);
 }
 
@@ -954,13 +1009,7 @@ void sound_wrap(int n)
     SOUND(n);
 }
 
-/* ---- every Backpack frame: boxes, text shift, Orc Head pictures ---- */
-static int row_empty(const u16 *m, int r)
-{
-    const u32 *w = (const u32 *)(m + r * 32);
-    for (int i = 0; i < 16; i++) if (w[i]) return 0;
-    return 1;
-}
+/* ---- every Backpack frame: page 2 (boxes, Orc Head and arrow pictures) or the game's own page 1 ---- */
 
 /* arrow slots: blue boxes (OBJ palette 2, tiles 940-955), the arrows' pictures (palettes 4/5, tiles 960-983) or a
    faded blue quiver (palette 6, already blended with the box colour, tiles 984-995). OBJ palettes 0, 2, 4-6 are unused on this screen (the game puts its
@@ -977,7 +1026,7 @@ static void draw_arrows(int p, int ns)
     cp32(OBJT(984), (const u32 *)aquiv_tiles, 96);
     cp32(OBJP(2), (const u32 *)abox_pal, 8);
     cp32(OBJP(6), (const u32 *)aquiv_pal, 8);
-    int x0 = ns == 1 ? 165 : 150;
+    int x0 = ax0(p);
     for (int k = 0; k < ns; k++) {
         u32 w = ASLOT[p][k];
         int x = x0 + 30 * k, t = (w >> 8) & 0xFF, base = 984, pal = 6, fade = 0;
@@ -986,93 +1035,70 @@ static void draw_arrows(int p, int ns)
             cp32(OBJT(base), (const u32 *)(arrow_tiles + 384 * t), 96);
             cp32(OBJP(pal), (const u32 *)(arrow_pal + 16 * t), 8);
         }
-        a[0] = 104 | (1 << 14) | fade; a[1] = x | (1 << 14); a[2] = base | (1 << 10) | (pal << 12); a[3] = 0;
+        a[0] = AROW_Y | (1 << 14) | fade; a[1] = x | (1 << 14); a[2] = base | (1 << 10) | (pal << 12); a[3] = 0;
         OAMADD(OAM_COUNT, a);
-        a[0] = 112 | (1 << 14) | fade; a[1] = x | (2 << 14); a[2] = (base + 4) | (1 << 10) | (pal << 12);
+        a[0] = (AROW_Y + 8) | (1 << 14) | fade; a[1] = x | (2 << 14); a[2] = (base + 4) | (1 << 10) | (pal << 12);
         OAMADD(OAM_COUNT, a);
     }
     for (int k = 0; k < ns; k++) {
-        a[0] = 102; a[1] = (x0 - 2 + 30 * k) | (2 << 14); a[2] = 940 | (1 << 10) | (2 << 12); a[3] = 0;
+        a[0] = AROW_Y - 2; a[1] = (x0 - 2 + 30 * k) | (2 << 14); a[2] = 940 | (1 << 10) | (2 << 12); a[3] = 0;
         OAMADD(OAM_COUNT, a);
     }
 }
 
 #define SUBSTATE  (*(volatile u32 *)0x030041C0)
-#define BG0_SAVE  ((u16 *)0x0203FF80)          /* 45 entries: the panel under the grid, as the game drew it */
+#define OAMBUF    (*(volatile u32 **)0x03004B40)   /* the game's OAM image (and a second one 0x400 bytes on) */
+
+/* page 2 hides the backpack's 8 item pictures (OBJ palettes 8-15 over the grid) */
+static void hide_grid_items(void)
+{
+    volatile u32 *o = OAMBUF;
+    int n = OAM_COUNT;
+    if (n > 128) n = 128;
+    for (int i = 0; i < n; i++) {
+        u32 w0 = o[2 * i], w1 = o[2 * i + 1];
+        int y = w0 & 0xFF, x = (w0 >> 16) & 0x1FF, pal = (w1 >> 12) & 0xF;
+        if (pal >= 8 && x >= 112 && y >= 24 && y < 80) {
+            o[2 * i] = 0x200;
+            o[2 * i + 256] = 0x200;
+        }
+    }
+}
 
 void frame_hook(void)
 {
-    u16 *bg0 = (u16 *)0x0600F800;
-    int sub = SUBSTATE;
-    q_sync(LOCAL_P);
-    if (bg0[10 * 32 + 15] != red(bg0[7 * 32 + 15]))          /* freshly drawn by the game: keep a copy */
-        for (int r = 0; r < 3; r++)
-            for (int x = 15; x < 30; x++) BG0_SAVE[r * 15 + x - 15] = bg0[(10 + r) * 32 + x];
-    if (sub == 4 || sub == 5) {                          /* Carve Rune uses the space under the grid */
-        for (int r = 0; r < 3; r++)
-            for (int x = 15; x < 30; x++) bg0[(10 + r) * 32 + x] = BG0_SAVE[r * 15 + x - 15];
-        BG1CNT = (BG1CNT & ~0x1F00) | (0x1E << 8);
+    vu16 *bg0 = (vu16 *)0x0600F800;
+    u8 *ui = UI;
+    int sub = SUBSTATE, cur = ui ? ui[0x62] : 0, p = LOCAL_P;
+    q_sync(p);
+    BG1CNT = (BG1CNT & ~0x1F00) | (0x1E << 8);       /* the game's own text layer, on both pages */
+    if (sub != 0) PGREQ = 0;                         /* a turn is only for the Backpack with no menu open */
+    int p2 = on_p2(cur) && sub != 4 && sub != 5 && sub != 6;   /* never during Carve Rune or Move Item */
+    if (!p2) {                                       /* page 1: exactly the game's screen */
+        if (BGDIRTY)
+            for (int r = 0; r < 9; r++)
+                for (int x = 15; x < 30; x++) bg0[(4 + r) * 32 + x] = BGSAVE[r * 15 + x - 15];
+        else                                         /* keep a copy of the game's own boxes */
+            for (int r = 0; r < 9; r++)
+                for (int x = 15; x < 30; x++) BGSAVE[r * 15 + x - 15] = bg0[(4 + r) * 32 + x];
+        BGDIRTY = 0;
         OAMFINISH();
         return;
     }
-    /* BG0: copy the second grid row's boxes (tile rows 7-9) to rows 10-12, in dark red */
-    for (int r = 0; r < 3; r++)
-        for (int x = 15; x < 30; x++) bg0[(10 + r) * 32 + x] = red(bg0[(7 + r) * 32 + x]);
+    if (!BGDIRTY)                                    /* turning to page 2: the game's screen is still up */
+        for (int r = 0; r < 9; r++)
+            for (int x = 15; x < 30; x++) BGSAVE[r * 15 + x - 15] = bg0[(4 + r) * 32 + x];
+    BGDIRTY = 1;
+    /* page 2, BG0: the grid's top row of boxes in dark red for the Orc Heads; its second row becomes the plain
+       panel the game draws under the grid (the arrow slots have their own blue boxes) */
+    for (int x = 15; x < 30; x++) {
+        for (int r = 0; r < 3; r++) bg0[(4 + r) * 32 + x] = red(BGSAVE[r * 15 + x - 15]);
+        for (int r = 0; r < 3; r++) bg0[(7 + r) * 32 + x] = BGSAVE[(6 + r) * 15 + x - 15];
+    }
     u32 *bp = (u32 *)(0x05000000 + 6 * 32);
     const u32 *bs = (const u32 *)slot_pal;
     for (int i = 0; i < 8; i++) bp[i] = bs[i];
-
-    /* BG1 (text): show a copy with text rows 10.. moved down to 13..18 */
-    const u16 *src = (const u16 *)0x0600F000;
-    u32 *dst = (u32 *)0x0600D800;
-    const u32 *s32 = (const u32 *)src;
-    for (int i = 0; i < 10 * 16; i++) dst[i] = s32[i];
-    u8 rows[8]; int n = 0, leg = nas(LOCAL_P) > 0;
-    for (int r = 10; r < 18; r++) rows[n++] = r;
-    static const u8 order[] = {12, 11, 17, 16, 15, 14, 13};
-    while (!leg && n > 6) {
-        int drop = -1;
-        for (int o = 0; o < 7 && drop < 0; o++)
-            for (int i = 0; i < n; i++)
-                if (rows[i] == order[o] && row_empty(src, order[o])) { drop = i; break; }
-        if (drop < 0) drop = n - 1;
-        for (int i = drop; i < n - 1; i++) rows[i] = rows[i + 1];
-        n--;
-    }
-    if (leg) {                                           /* Legolas and Frodo: the arrow slots take rows 13-15, so
-                                                            the text goes under them on the right (rows 16-18, Jordan
-                                                            2026-11-09). Longer text scrolls a line a second. */
-        vu16 *d16 = (vu16 *)dst;
-        for (int r = 10; r < 20; r++)
-            for (int x = 0; x < 32; x++) d16[r * 32 + x] = (x < 15 && r < 14) ? src[r * 32 + x] : 0;
-        u8 lines[8]; int m = 0;
-        u32 h = 0;
-        for (int r = 10; r < 18; r++) {
-            const u16 *q = src + r * 32 + 15;
-            int any = 0;
-            for (int x = 0; x < 15; x++) { if (q[x]) any = 1; h = h * 31 + q[x]; }
-            if (any) lines[m++] = r;
-        }
-        if (h != SCR_HASH) { SCR_HASH = h; SCR_T = 0; SCR_STEP = 0; }
-        int top = 0;
-        if (m > 3) {
-            int steps = m - 3;                           /* a line a second (30 ticks); 2 s pause at both ends */
-            int t = SCR_STEP;
-            if (++SCR_T >= 30) { SCR_T = 0; t++; if (t >= steps + 4) t = 0; SCR_STEP = t; }
-            top = t < 2 ? 0 : t - 2 > steps ? steps : t - 2;
-        }
-        for (int d = 0; d < 3 && top + d < m; d++)
-            for (int x = 0; x < 15; x++) d16[(16 + d) * 32 + 15 + x] = src[lines[top + d] * 32 + 15 + x];
-    } else {
-        for (int i = 10 * 16; i < 13 * 16; i++) dst[i] = 0;
-        for (int d = 0; d < 6; d++) {
-            u32 *o = dst + (13 + d) * 16;
-            if (d < n) { const u32 *q = s32 + rows[d] * 16; for (int i = 0; i < 16; i++) o[i] = q[i]; }
-            else for (int i = 0; i < 16; i++) o[i] = 0;
-        }
-        for (int i = 19 * 16; i < 20 * 16; i++) dst[i] = 0;
-    }
-    BG1CNT = (BG1CNT & ~0x1F00) | (0x1B << 8);
+    hide_grid_items();
 
     /* Orc Head pictures: tiles 1000-1011, palette 7 */
     u32 *tv = (u32 *)(0x06010000 + 1000 * 32);
@@ -1081,23 +1107,25 @@ void frame_hook(void)
     u32 *pv = (u32 *)(0x05000200 + 7 * 32);
     const u32 *ps = (const u32 *)orc_pal;
     for (int i = 0; i < 8; i++) pv[i] = ps[i];
-    int p = LOCAL_P, c = cnt(p);
+    int c = cnt(p);
     /* full head in a filled slot; in an empty one the same head half see-through (the screen's own 50/50
        blend with BG0), since OBJ palettes 8-15 belong to the backpack's 8 item pictures */
     for (int k = 0; k < 4; k++) {
         u16 a[4];
         int x = 120 + 30 * k, fade = k < c ? 0 : 1 << 10;
-        a[0] = 80 | (1 << 14) | fade; a[1] = x | (1 << 14); a[2] = 1000 | (1 << 10) | (7 << 12); a[3] = 0;
+        a[0] = OROW_Y | (1 << 14) | fade; a[1] = x | (1 << 14); a[2] = 1000 | (1 << 10) | (7 << 12); a[3] = 0;
         OAMADD(OAM_COUNT, a);
-        a[0] = 88 | (1 << 14) | fade; a[1] = x | (2 << 14); a[2] = 1004 | (1 << 10) | (7 << 12);
+        a[0] = (OROW_Y + 8) | (1 << 14) | fade; a[1] = x | (2 << 14); a[2] = 1004 | (1 << 10) | (7 << 12);
         OAMADD(OAM_COUNT, a);
     }
-    if (leg) draw_arrows(p, nas(p));
+    if (nas(p)) draw_arrows(p, nas(p));
     OAMFINISH();
 }
 
 void exit_hook(void)
 {
+    BGDIRTY = 0;                                     /* the next Backpack starts from the game's own screen */
+    PGREQ = 0;
     BG1CNT = (BG1CNT & ~0x1F00) | (0x1E << 8);
     STATE_EXIT();
 }
