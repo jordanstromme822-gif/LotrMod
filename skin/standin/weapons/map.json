@@ -1,0 +1,74 @@
+{
+ "scale": 16,
+ "cell": 130,
+ "pad": 1,
+ "per_row": 1,
+ "tiles": {
+  "standin:wayfarer/swing/0/0": [
+   0,
+   0
+  ],
+  "standin:wayfarer/swing/0/1": [
+   0,
+   0
+  ],
+  "standin:wayfarer/swing/1/0": [
+   0,
+   0
+  ],
+  "standin:wayfarer/swing/1/1": [
+   0,
+   0
+  ],
+  "standin:wayfarer/swing/2/0": [
+   0,
+   0
+  ],
+  "standin:wayfarer/swing/2/1": [
+   0,
+   0
+  ],
+  "standin:wayfarer/swing/3/0": [
+   0,
+   0
+  ],
+  "standin:wayfarer/swing/3/1": [
+   0,
+   0
+  ],
+  "standin:wayfarer/swing/4/0": [
+   0,
+   0
+  ],
+  "standin:wayfarer/swing/4/1": [
+   0,
+   0
+  ],
+  "standin:wayfarer/swing/5/0": [
+   0,
+   0
+  ],
+  "standin:wayfarer/swing/5/1": [
+   0,
+   0
+  ],
+  "standin:wayfarer/swing/6/0": [
+   0,
+   0
+  ],
+  "standin:wayfarer/swing/6/1": [
+   0,
+   0
+  ],
+  "standin:wayfarer/swing/7/0": [
+   0,
+   0
+  ],
+  "standin:wayfarer/swing/7/1": [
+   0,
+   0
+  ]
+ },
+ "standin": true,
+ "note": "Procedural test sword. Copy this folder to the Play Room skin/weapons/ to try it. Real keys are the crisp-skin FNV string."
+}
