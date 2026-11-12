@@ -462,3 +462,13 @@ item positions to the final lighting pass. Each item gets a soft pulsing glow an
 about every 2 s on its own beat (gear gold, food and herbs green, gems pale blue), stronger at night. Needs Rich
 lighting. Tested on the bench with `window.__itemsDbg = [[x, y, type], ...]`; positions from the real game not yet
 checked on screen.
+
+## Graphics High/Low (2026-11-12)
+
+Jordan: "Even solo it slows down huge with the graphics we added". `tools/lightbench/perf.js` times the lighting code per
+setting (swiftshader, so only the ratios count). Nearly all the cost was the final lighting pass, which ran once per
+screen pixel: about 3 million on a 3x phone in landscape, although the sharpened picture it reads is only ~1032x480.
+`recomp/playroom/gfx_v172.py` caps the canvas while Sharp HD is on (High: longest side 1280 px, Low: 860 px; the browser
+stretches it smoothly). Low also skips the living fire/trees/shadow pass. Setup chip "Graphics: High/Low" (localStorage
+`rotk-gfx`). When the picture rate stays under 40/s, the page first drops to Low, then to plain pixels as before.
+Bench (344x160 picture, ms per draw on swiftshader): old full size 746, High 218, Low 92, lighting off 17.
