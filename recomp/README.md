@@ -442,3 +442,38 @@ rounded where they should be round and sharp where it needs to be sharp". Page p
 - Test bench: `tools/lightbench/` (`mk.py page.html dir/index.html` pulls the lighting code out of a page;
   `shot.js dir out picture.png <look|level|off> <night 0-1> x y w h scale t1,t2,...` renders game pictures through it in
   headless Chromium). Pictures: project files `screenshots/alive-*`.
+
+**v166 fix (2026-11-11, Jordan: "Everything is on fire now").** The v164 flame test also caught thatched roofs, autumn
+trees, Gimli's hair, skin and lava fields, so they grew tongues and sparks. `playroom/fire_v166.py <page> <out>` (for a
+page that already has Living light; `alive.py` has the same new detector):
+- A flame pixel is now a hot yellow core (r > 0.9, g > 0.75) brighter than around it, with at least two deep orange
+  pixels close by that have almost no blue (b < 0.15 r). Straw, leaves, skin, hair and gold all have more blue than
+  that. Weak hits are dropped and real ones count full. Tested on 13 level pictures plus every hero's poses: only
+  braziers (and a few volcano specks) remain.
+- The ALIVE map now runs before the light map, and the light map carries "how much of this pool is flame" in alpha. Only
+  flame-lit pools get the strong fire flicker and waver; other pools (bright autumn trees, spells) keep the gentle
+  v163 flicker. The "flame nearby" test uses the same alpha. Tongues are a bit taller to make up for fewer flame pixels.
+
+**Day/night on play time (v171, 2026-11-11, Jordan: "Day and night cycles in the game count as 4 minutes of play
+time").** The v161 cycle (4 min day + 4 min night) ran on the wall clock, so it kept turning in menus, on pause and with
+the page closed. `playroom/daynight_v171.py <page> <out>`: it now only advances while a level is being played (game
+state 1) with the page in view, a new player starts in full day, and the count is kept in localStorage (`rotk-playT`)
+so a reload carries on. Two online players each count their own play time, so their skies can drift slightly apart.
+
+**Items on the ground sparkle (2026-11-12, Jordan: "make items on the ground sparkle a little bit to better see
+them").** `playroom/item_sparkle.py <page> <out>`: each frame the page walks the game's entity list (ground items: update
+0x0802F131, state +0x63 == 3, x/y +0xAE/+0xB2, type +0x60; same camera maths as Gandalf's aura) and hands up to 16
+item positions to the final lighting pass. Each item gets a soft pulsing glow and a small four-point glint that flashes
+about every 2 s on its own beat (gear gold, food and herbs green, gems pale blue), stronger at night. Needs Rich
+lighting. Tested on the bench with `window.__itemsDbg = [[x, y, type], ...]`; positions from the real game not yet
+checked on screen.
+
+## Graphics High/Low (2026-11-12)
+
+Jordan: "Even solo it slows down huge with the graphics we added". `tools/lightbench/perf.js` times the lighting code per
+setting (swiftshader, so only the ratios count). Nearly all the cost was the final lighting pass, which ran once per
+screen pixel: about 3 million on a 3x phone in landscape, although the sharpened picture it reads is only ~1032x480.
+`recomp/playroom/gfx_v172.py` caps the canvas while Sharp HD is on (High: longest side 1280 px, Low: 860 px; the browser
+stretches it smoothly). Low also skips the living fire/trees/shadow pass. Setup chip "Graphics: High/Low" (localStorage
+`rotk-gfx`). When the picture rate stays under 40/s, the page first drops to Low, then to plain pixels as before.
+Bench (344x160 picture, ms per draw on swiftshader): old full size 746, High 218, Low 92, lighting off 17.
