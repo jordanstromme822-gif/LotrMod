@@ -21,3 +21,7 @@ host_window_web.cpp part of gbarecomp-skin.patch, and the `rotk_bg_tick` line in
 Runtime libs: `emcmake cmake -G Ninja -DCMAKE_BUILD_TYPE=Release -DGBARECOMP_WEB_HOST=ON -DCMAKE_CXX_FLAGS="-mtail-call -include compat.h"`
 (emsdk 3.1.6, compat.h = recomp/web/compat.h). main.o = recomp/main-modded.cpp, shim-skin.o = recomp/web/shim-skin.cpp (-O2).
 The 2-player engine was NOT rebuilt: the page gives it a ROM with the old slot code (recomp/playroom/backpack-page2-v169.py).
+
+## Backpack step 1 solo engine (2026-11-12)
+`solo-backpack-step1.sh` = solo-v169.sh with gen7: gen ROM = the step-1 page ROM (live v171 page + pagejs + backpack-step1.py)
+plus the PC cull bytes (0x2F88, 20 bytes) and the mixer dump (0xFFAAD0, 0x624 bytes) copied from modded6-pc-gen.gba. Same runtime.

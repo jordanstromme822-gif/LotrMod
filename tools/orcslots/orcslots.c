@@ -739,8 +739,49 @@ static int itemdesc_core(char *buf, int p, u32 item, u16 *x, u16 *y, u16 *tile)
     return (int)buf;
 }
 
+/* Compare arrows (Jordan, 2026-11-12): for a backpack item, the description of what the hero wears in that item's slot
+   goes to a second record, so the page can put a green / red arrow by each stat. Built before the hovered item's own
+   description, so the game's text state ends on the hovered item. +0 count, +4 worn item (0 = none), +8 text. */
+#define PANEL2     ((volatile u8 *)0x0203F740)         /* 0x0203F740-0x0203F81F */
+#define CATTAB     0x08068F50u
+static int slot_of(u32 w)
+{
+    int cat = w & 15, idx = (w >> 8) & 0xFF;
+    if (cat > 14) return -1;
+    const u8 *ct = (const u8 *)(CATTAB + cat * 0x28);
+    if (idx >= *(const u32 *)(ct + 0x24)) return -1;
+    u32 m = *(const u32 *)(*(const u32 *)(ct + 0x20) + idx * 8);
+    for (int b = 0; b < 8; b++) if (m & (1u << (18 + b))) return b;
+    return -1;
+}
+static void panel_worn(int p, u32 item)
+{
+    volatile u8 *Q = PANEL2;
+    u8 *ui = UI;
+    int cur = ui ? ui[0x62] : 0xFF;
+    u32 worn = 0;
+    if (cur >= 8 && cur < 16 && item != 0 && item != 0xFFFFFFFFu && !is_orc(item)) {
+        int s = slot_of(item);
+        if (s >= 0) worn = inv(p)[s];
+        if (worn == 0xFFFFFFFFu || worn == item || slot_of(worn) != s) worn = 0;
+    }
+    *(volatile u32 *)(Q + 4) = worn;
+    Q[8] = 0;
+    if (worn) {
+        char b2[0xC8];
+        u16 x2 = 0x79, y2 = 0x50, t2 = 0x13;
+        for (int i = 0; i < 0xC8; i++) b2[i] = 0;
+        const char *t = (const char *)itemdesc_core(b2, p, worn, &x2, &y2, &t2);
+        int i = 0;
+        if (t) for (; i < 199 && t[i]; i++) Q[8 + i] = t[i];
+        Q[8 + i] = 0;
+    }
+    *(volatile u32 *)Q = *(volatile u32 *)Q + 1;
+}
+
 int itemdesc_wrap(char *buf, int p, u32 item, u16 *x, u16 *y, u16 *tile)
 {
+    panel_worn(p, item);
     int r = itemdesc_core(buf, p, item, x, y, tile);
     panel(p, item, (const char *)r);
     return r;
