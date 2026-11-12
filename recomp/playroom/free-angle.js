@@ -32,7 +32,7 @@ setInterval(() => {
     const hero = dv.getUint32(iw + 0x3C00, true);
     if (hero < 0x02000000 || hero >= 0x02040000) return;
     const at = ew + (hero - 0x02000000) + 0x14, cur = dv.getUint32(at, true);
-    if (freeOn() && cur === FREE_GAME) dv.setUint32(at, FREE_HOOK, true);
-    else if (!freeOn() && cur === FREE_HOOK) { dv.setUint32(at, FREE_GAME, true); H[ew + FREE_MB] = 0; }
+    if (cur === FREE_GAME) dv.setUint32(at, FREE_HOOK, true);        // always on: it also turns Frodo's crossbows (16 facings)
+    if (!freeOn()) H[ew + FREE_MB] = 0;                               // joystick 8 ways: the hook leaves his walk alone
   } catch (e) {}
 }, 8);

@@ -13,7 +13,7 @@ typedef int (*fn7)(int, int, int, int, int, int, int);
 #define KTOUCH(k, t)      ((fn4)0x080169B5)((int)(k), (int)(t), 0, 0)
 #define HIT(h, t, d)      ((fn4)0x08010381)((int)(h), (int)(t), d, 0)
 #define HITOK(h, t)       ((fn4)0x08011A89)((int)(h), (int)(t), 0, 0)
-#define STUN(t, n)        ((fn4)0x08008A6D)((int)(t), n, 0, 0)
+#define STUN(t, n)        ((fn4)0x0809FF01)((int)(t), n, 0, 0)   /* the game's stun (state 0x1A), tools/turn16/turn16.c kt_stun */
 #define STARS(h, t, n)    ((fn7)0x0801C33D)((int)(h), (int)(t), n, 0xC, 8, 0, 8)
 #define SOUND(n)          ((fn4)0x08046EED)(n, 0, 0, 0)
 #define ANGLE(dx, dy)     ((fn4)0x080329B5)(dx, dy, 0, 0)
