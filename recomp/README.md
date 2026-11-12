@@ -454,3 +454,11 @@ time").** The v161 cycle (4 min day + 4 min night) ran on the wall clock, so it 
 the page closed. `playroom/daynight_v171.py <page> <out>`: it now only advances while a level is being played (game
 state 1) with the page in view, a new player starts in full day, and the count is kept in localStorage (`rotk-playT`)
 so a reload carries on. Two online players each count their own play time, so their skies can drift slightly apart.
+
+**Items on the ground sparkle (2026-11-12, Jordan: "make items on the ground sparkle a little bit to better see
+them").** `playroom/item_sparkle.py <page> <out>`: each frame the page walks the game's entity list (ground items: update
+0x0802F131, state +0x63 == 3, x/y +0xAE/+0xB2, type +0x60; same camera maths as Gandalf's aura) and hands up to 16
+item positions to the final lighting pass. Each item gets a soft pulsing glow and a small four-point glint that flashes
+about every 2 s on its own beat (gear gold, food and herbs green, gems pale blue), stronger at night. Needs Rich
+lighting. Tested on the bench with `window.__itemsDbg = [[x, y, type], ...]`; positions from the real game not yet
+checked on screen.
