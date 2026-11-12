@@ -296,6 +296,7 @@ extern std::uint64_t g_session_slice_lookahead;
 extern "C" int g_session_bridge_misses;
 extern "C" unsigned g_session_bridged_misses;
 extern "C" int g_web_tick_stats[12];
+extern "C" unsigned rotk_link_hash();
 namespace gba { extern unsigned g_link_hub_starts; }
 extern "C" unsigned g_ws_extra, g_ws_extra_left, g_ws_extra_right, g_ws_view_width, g_ws_active;
 void runtime_set_frame_start_hook(std::function<void()>);
@@ -579,9 +580,9 @@ static int run_link(const gbarecomp::RunOptions& opts) {
             const auto now = std::chrono::steady_clock::now();
             int objs = 0;
             for (unsigned o = iwr(0, 0x2420); o >> 24 == 2 && objs < 400; ++objs) { const std::uint8_t* e = S.machine(0).bus.ewram_ptr() + (o - 0x02000000u); o = e[0] | (e[1] << 8) | (e[2] << 16) | (unsigned(e[3]) << 24); }
-            if (tw_f) std::printf("[speed] frames %u-%u: %.2f ms/frame (%.1f fps) objects=%d state=%u/%u lvl=%u gameframe=%u skipped=%llu drawn=%llu redrawn=%llu\n", tw_f, f,
+            if (tw_f) std::printf("[speed] frames %u-%u: %.2f ms/frame (%.1f fps) objects=%d state=%u/%u lvl=%u gameframe=%u skipped=%llu drawn=%llu redrawn=%llu hash=%08x\n", tw_f, f,
                 std::chrono::duration<double, std::milli>(now - tw).count() / (f - tw_f), (f - tw_f) * 1000.0 / std::chrono::duration<double, std::milli>(now - tw).count(), objs,
-                iwr(0, 0x41B0) & 255, iwr(1, 0x41B0) & 255, iw8(0, 0x41F8), iwr(0, 0x41A4), RS_COUNT(skipped), RS_COUNT(drawn), RS_COUNT(redrawn));
+                iwr(0, 0x41B0) & 255, iwr(1, 0x41B0) & 255, iw8(0, 0x41F8), iwr(0, 0x41A4), RS_COUNT(skipped), RS_COUNT(drawn), RS_COUNT(redrawn), rotk_link_hash());
             std::fflush(stdout);
             tw = now; tw_f = f;
         }
