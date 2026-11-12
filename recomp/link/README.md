@@ -126,3 +126,13 @@ Headless test (native `link_main`, not the web build): `ROTK_LINK_AUTO=p1slot,p2
 then a fight bot keeps both heroes at full HP, attacks and walks a square, and prints `[speed]` lines (ms per frame,
 object count, frames skipped/drawn/redrawn) every 300 frames. `ROTK_LINK_POKES="after:addr:value;..."` writes RAM in
 both games after the level starts. Under valgrind the frames from `ROTK_PROF_FROM` for `ROTK_PROF_N` are profiled.
+
+## ALU yield fast path (2026-11-12)
+
+`link-alu-yield.patch` (apply to gbarecomp) lets plain ALU/multiply instructions
+skip the full `runtime_should_yield()` check while the session slice deadline
+is still ahead (`runtime_should_yield_alu`, cached deadline reset on every
+slice/dispatch boundary). Game state is identical frame for frame (`hash=` in
+the `[speed]` line). Native 2-player fight: 12.4-12.6 -> 10.6-11.1 ms/frame
+(~12-14%); browser at 3x CPU throttle: +6-9% engine frames/s.
+Regenerate the link code with the patched `gba_recompile` after applying it.
