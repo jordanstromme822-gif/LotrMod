@@ -25,3 +25,7 @@ The 2-player engine was NOT rebuilt: the page gives it a ROM with the old slot c
 ## Backpack step 1 solo engine (2026-11-12)
 `solo-backpack-step1.sh` = solo-v169.sh with gen7: gen ROM = the step-1 page ROM (live v171 page + pagejs + backpack-step1.py)
 plus the PC cull bytes (0x2F88, 20 bytes) and the mixer dump (0xFFAAD0, 0x624 bytes) copied from modded6-pc-gen.gba. Same runtime.
+
+## HD Backpack solo engine (2026-11-12)
+`solo-hd-backpack.sh`: same as the step-1 build (gen8), generated from the HD Backpack page ROM (live v173 page + pagejs + backpack-step1.py
++ hd-backpack.py; page ROM sha1 e55da74b). Item pictures: tools/orcslots/itempics.py (needs tools/run.c and a state in play).

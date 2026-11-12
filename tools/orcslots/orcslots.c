@@ -871,10 +871,55 @@ static void go(u8 *ui, int n)
 }
 
 /* ---- cursor movement (Backpack, no menu open): returns the cursor the game should go on with ---- */
+/* HD Backpack (Jordan, 2026-11-12: "stop limiting to gba"): the page draws the whole Backpack itself and sets HDMODE every
+   frame while it does. The cursor then moves on the page's layout: worn gear in 3 rows of 3 (amulet helm cape / weapon
+   armor shield / gloves boots Orc Head slot 1), under it the backpack in rows of 4 (grid 8-11, 12-15, Orc Head slots 2-4),
+   under that the arrow slots. CURREQ (target + 1) is a tap on a box: the page sets it and presses Down. */
+#define HDMODE  (*(volatile u8 *)0x0203F602)
+#define CURREQ  (*(volatile u8 *)0x0203F603)
+static const signed char HD_E[3][3] = { { 7, 3, 4 }, { 1, 0, 2 }, { 5, 6, 20 } };
+static const signed char HD_I[3][4] = { { 8, 9, 10, 11 }, { 12, 13, 14, 15 }, { 21, 22, 23, -1 } };
+static int hd_nav(int old, int k, int ar)
+{
+    int r = -1, c = 0, n;
+    for (int y = 0; y < 3; y++) for (int x = 0; x < 3; x++) if (HD_E[y][x] == old) { r = y; c = x; }
+    if (r >= 0) {                                    /* worn gear */
+        if (k & 0x40) return r ? HD_E[r - 1][c] : old;
+        if (k & 0x80) return r < 2 ? HD_E[r + 1][c] : HD_I[0][c == 0 ? 0 : c == 1 ? 1 : 3];
+        if (k & 0x20) return c ? HD_E[r][c - 1] : old;
+        if (k & 0x10) return c < 2 ? HD_E[r][c + 1] : old;
+        return old;
+    }
+    for (int y = 0; y < 3; y++) for (int x = 0; x < 4; x++) if (HD_I[y][x] == old) { r = y; c = x; }
+    if (r >= 0) {                                    /* backpack */
+        if (k & 0x40) return r ? HD_I[r - 1][c] : HD_E[2][c == 0 ? 0 : c == 3 ? 2 : 1];
+        if (k & 0x80) return r < 2 ? (HD_I[r + 1][c] >= 0 ? HD_I[r + 1][c] : HD_I[r + 1][2]) : ar ? AFIRST + (ar == 2 && c >= 2) : old;
+        if (k & 0x20) return c ? HD_I[r][c - 1] : old;
+        if (k & 0x10) return c < 3 && HD_I[r][c + 1] >= 0 ? HD_I[r][c + 1] : old;
+        return old;
+    }
+    if (old >= AFIRST) {                             /* arrow slots */
+        c = old - AFIRST;
+        if (k & 0x40) return HD_I[2][ar == 2 ? c * 2 : 1];
+        if (k & 0x30) return ar == 2 ? AFIRST + (c ^ 1) : old;
+        return old;
+    }
+    n = old; return n;
+}
 int nav_c(int proposed)
 {
     u8 *ui = UI;
     int old = ui[0x62], k = KEYS(LOCAL_P), n = proposed, ar = nas(LOCAL_P);
+    if (HDMODE) {
+        if (CURREQ) { n = CURREQ - 1; CURREQ = 0; PGREQ = 0; if (n == 25 && ar < 2) n = old; if (n == 24 && !ar) n = old; }
+        else n = hd_nav(old, k, ar);
+        if (n == old || n < 0) return old;
+        if (n < FIRST) return n;                     /* the game's own move */
+        place_cursor(ui, n);
+        desc(n);
+        SOUND(2);
+        return n;
+    }
     if (PGREQ) {                         /* the page's Backpack button (it sends a Down press with it): turn the page */
         PGREQ = 0;
         if (on_p2(old)) n = old >= AFIRST ? 12 : 12 + old - FIRST;

@@ -1,5 +1,5 @@
 """Play Room: Backpack redesign step 1 (Jordan, 2026-11-12; plan https://claude.ai/artifact/8eiYJjb2pi62WvS6thrKbq).
-Usage: backpack-step1.py in.html old.gba live.gba new.gba out.html
+Usage: backpack-step1.py in.html old.gba live.gba new.gba out.html [solo engine version, default bp1]
   in.html  = the live page, already rewritten by tools/orcslots/pagejs.py for the new orcslots.bin
   old.gba  = the ROM the 2-player engine was built from (page ROM sha1 e686d065, before Backpack page 2)
   live.gba = page ROM built from the live page before pagejs (buildGame("mod")), new.gba = the same from in.html
@@ -133,6 +133,8 @@ rep('''  (function itemPanel() {
 ''')
 
 # 4. 1-player engine version (2-player engine unchanged)
-rep('''const V = isLink ? "?v=169" : "?v=169";''', '''const V = isLink ? "?v=169" : "?v=bp1";   // Backpack step 1: solo engine web-backpack-step1 (compare record), 2026-11-12; link unchanged''')
+m = re.search(r'const V = isLink \? ("\?v=[^"]*") : "\?v=[^"]*";', t); assert m
+SOLO_V = sys.argv[6] if len(sys.argv) > 6 else "bp1"
+t = t[:m.start()] + 'const V = isLink ? %s : "?v=%s";   // Backpack (2026-11-12): solo engine with the compare record / HD Backpack cursor; link unchanged' % (m.group(1), SOLO_V) + t[m.end():]
 open(out, 'w').write(t)
 print('ok')
