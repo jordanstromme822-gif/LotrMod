@@ -2,10 +2,15 @@
 # Web build of the 2-player engine (Play Room wide/rotk-link.js + rotk-link-0/1.wasm, game-link.txt).
 # Runtime: gbarecomp with gbarecomp-link.patch, configured for emscripten with
 #   CMAKE_CXX_FLAGS="-include compat.h -fwasm-exceptions" GBARECOMP_GENERATED_BIOS_DIR=<recompiled cobios>
+#   GBARECOMP_NATIVE_RAM_CODE_VIEWS=ON (2026-11-11 speed-up; the game code below needs the same define)
+# Runtime patches, in order: ../gbarecomp-pc-and-web.patch, gbarecomp-link.patch, ../smooth-v87-steady-poses.patch,
+#   engine-speed-v116.patch, multiplayer-slice-speed.patch, ../gbarecomp-cpu-speed.patch, ../gbarecomp-obj-ext.patch,
+#   ../gbarecomp-oam-ext.patch, ../../tools/skin/apply_skin_ppu.py + the host_window_web part of ../gbarecomp-skin.patch,
+#   link-speed.patch.
 # Game code: gba_recompile --config game-link.toml --codegen-shards 8 --out gen
 set -e
 G=${G:-/tmp/rc/gbarecomp}; RT=${RT:-/tmp/rc/webrt}; GEN=${GEN:-/tmp/rc/mp/gen}; SRC=$(dirname "$0")
-FL="-std=c++20 -mtail-call -include ../web/compat.h -I$G/src/armv4t -I$G/src/gba -I$G/src/runtime -I$G/src/debug -I$G/external/arm-recomp-core/profiles/armv4t_gba"
+FL="-std=c++20 -mtail-call -include ../web/compat.h -DGBARECOMP_NATIVE_RAM_CODE_VIEWS=1 -I$G/src/armv4t -I$G/src/gba -I$G/src/runtime -I$G/src/debug -I$G/external/arm-recomp-core/profiles/armv4t_gba"
 for f in $GEN/*.cpp; do em++ $FL -O1 -g0 -c $f -o $(basename $f .cpp).o; done
 for f in $SRC/link_main.cpp $SRC/mixer_hook.cpp $SRC/shim-web.cpp; do em++ $FL -fwasm-exceptions -O2 -c $f -o $(basename $f .cpp).o; done
 em++ -O2 -mtail-call -fwasm-exceptions link_main.o shim-web.o mixer_hook.o recompiled_*.o dispatch_table.o symbol_map.o \

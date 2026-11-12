@@ -1,4 +1,4 @@
-#if defined(__EMSCRIPTEN__)
+#if defined(__EMSCRIPTEN__) && !defined(ROTK_NODE_BENCH)
 #define GBR_WEB_SINGLE 1
 #endif
 #include "runtime.h"
@@ -26,6 +26,11 @@
 // tile sits in the level; only a verified match draws margins. BG1 (sky) is a
 // repeating pattern and simply keeps wrapping; BG0 (HUD) stays native.
 // Anything else (menus, maps, cutscenes) shows black side bars.
+#if defined(ROTK_OLD_RUNTIME)   // speed comparison against a runtime without the repeat-frame skip
+namespace gba { extern "C" { int g_ppu_repeat_skip = 0; unsigned g_ppu_view_sig = 0; } }
+#else
+namespace gba { extern "C" int g_ppu_repeat_skip; extern "C" unsigned g_ppu_view_sig; }
+#endif
 namespace rotk_view {
 
 struct Layer {
@@ -238,6 +243,24 @@ void frame(const gbarecomp::ExtendedViewFrameInfo* f) {
         }
     }
     gba::g_ws_pillarbox = ready ? 0 : 1;
+    {   // What the wide margins are drawn from, for the repeat-frame skip (gba_ppu.cpp g_ppu_view_sig).
+        std::uint32_t h = 2166136261u;
+        const auto mix = [&h](std::uint32_t v) { h = (h ^ v) * 16777619u; };
+        mix(ready); mix(static_cast<std::uint32_t>(W));
+        for (const auto& l : layers) { mix(l.ok); mix(l.map); mix(l.set); mix(static_cast<std::uint32_t>(l.ox)); mix(static_cast<std::uint32_t>(l.oy)); }
+        if (ready && ewram) {
+            std::uint32_t done[4]; int nd = 0;
+            for (const auto& l : layers) {
+                if (!l.ok || l.map + 0x2800u > 0x40000u) continue;
+                bool seen = false; for (int i = 0; i < nd; ++i) seen |= done[i] == l.map;
+                if (seen) continue; done[nd++] = l.map;
+                const std::uint32_t* m = reinterpret_cast<const std::uint32_t*>(ewram + l.map);
+                if (reinterpret_cast<std::uintptr_t>(m) & 3u) { for (std::uint32_t o = 0; o < 0x2800u; ++o) mix(ewram[l.map + o]); }
+                else for (std::uint32_t o = 0; o < 0x2800u / 4u; ++o) mix(m[o]);
+            }
+        }
+        gba::g_ppu_view_sig = h;
+    }
     const int status = ready ? 1 : 0;
     if (status != last_status && std::getenv("ROTK_VIEW_LOG")) {
         std::fprintf(stderr, "[rotk:view] %s frame=%llu bg2=%d bg3=%d\n", ready ? "wide" : "native",
@@ -265,11 +288,15 @@ void frame(const gbarecomp::ExtendedViewFrameInfo* f) {
 #include <string>
 #include <chrono>
 #include <algorithm>
+#if !defined(__EMSCRIPTEN__) && __has_include(<valgrind/callgrind.h>)
+#include <valgrind/callgrind.h>
+#endif
 extern gba::GbaBus* g_session_hook_bus;
 extern std::uint64_t g_session_slice_lookahead;
 extern "C" int g_session_bridge_misses;
 extern "C" unsigned g_session_bridged_misses;
 extern "C" int g_web_tick_stats[12];
+extern "C" unsigned rotk_link_hash();
 namespace gba { extern unsigned g_link_hub_starts; }
 extern "C" unsigned g_ws_extra, g_ws_extra_left, g_ws_extra_right, g_ws_view_width, g_ws_active;
 void runtime_set_frame_start_hook(std::function<void()>);
@@ -366,6 +393,8 @@ static int run_link(const gbarecomp::RunOptions& opts) {
     g_link_net = std::atoi(env("ROTK_LINK_NET", "0")) != 0;
     g_link_show = std::atoi(env("ROTK_LINK_SHOW", "0")) ? 1u : 0u;
     S.machine(1 - g_link_show).ppu.set_rasterization_enabled(false);
+    // Repeat frames keep the last picture instead of being drawn again (2026-11-11). ROTK_REPEAT_SKIP=0 turns it off.
+    gba::g_ppu_repeat_skip = std::atoi(env("ROTK_REPEAT_SKIP", "1")) != 0;
     { extern gba::GbaBus* g_link_quiet_bus; g_link_quiet_bus = g_link_net ? nullptr : &S.machine(1).bus; }
     {   // same cold start as the link probe (before the wide view: snapshots refuse it)
         auto cold = S.save_state();
@@ -461,11 +490,102 @@ static int run_link(const gbarecomp::RunOptions& opts) {
     const char* dump = std::getenv("ROTK_LINK_DUMP");
     const unsigned every = std::atoi(env("ROTK_LINK_DUMP_EVERY", "60"));
     std::size_t ri = 0; std::array<std::uint16_t, 2> keys{0, 0};
+    // ROTK_LINK_AUTO="p1slot,p2slot": the page's boot (title -> Multiplayer -> Load Game -> path screen) run here,
+    // then a fight bot for both heroes (attack + walk in a square, HP kept full) and a speed report every 300
+    // frames: host ms per game frame, object count (speed test for big Helm's Deep fights, 2026-11-11).
+    int auto_p[2] = {-1, -1};
+    if (const char* a = std::getenv("ROTK_LINK_AUTO")) std::sscanf(a, "%d,%d", &auto_p[0], &auto_p[1]);
+    const auto iwr = [&S](unsigned i, unsigned o) { const std::uint8_t* iw = S.machine(i).bus.iwram_ptr(); return iw[o] | (iw[o + 1] << 8) | (iw[o + 2] << 16) | (unsigned(iw[o + 3]) << 24); };
+    const auto iw8 = [&S](unsigned i, unsigned o) { return unsigned(S.machine(i).bus.iwram_ptr()[o]); };
+    struct Press { unsigned k0, k1, hold, after; };
+    std::vector<Press> presses; unsigned press_t = 0, phase = 0, phase_t = 0, tries = 0, level_f = 0;
+    auto tw = std::chrono::steady_clock::now(); unsigned tw_f = 0;
+    const auto auto_keys = [&](unsigned f) -> std::array<std::uint16_t, 2> {
+        if (!presses.empty()) {
+            Press& p = presses.front();
+            if (press_t == 0) press_t = f;
+            const unsigned d = f - press_t;
+            if (d < p.hold) return {static_cast<std::uint16_t>(p.k0), static_cast<std::uint16_t>(p.k1)};
+            if (d >= p.hold + p.after) { presses.erase(presses.begin()); press_t = 0; }
+            return {0, 0};
+        }
+        const unsigned s0 = iwr(0, 0x41B0) & 255, s1 = iwr(1, 0x41B0) & 255;
+        if (phase == 0) {   // title menu: both cursors to Multiplayer (2), A
+            if (s0 != 5 || s1 != 5 || iw8(0, 0x41C0) != 2 || iw8(1, 0x41C0) != 2) return {0, 0};
+            if (!phase_t) phase_t = f;
+            if (f - phase_t < 60) return {0, 0};
+            const unsigned c0 = iw8(0, 0x41B8), c1 = iw8(1, 0x41B8);
+            if (c0 == 2 && c1 == 2) { presses.push_back({1, 1, 6, 60}); phase = 1; phase_t = 0; return {0, 0}; }
+            const auto mv = [](unsigned c) { return c < 2 ? 128u : c > 2 ? 64u : 0u; };
+            presses.push_back({mv(c0), mv(c1), 4, 24}); return {0, 0};
+        }
+        if (phase == 1) {   // Load Game: cursors to the slots (2x2 grid), A
+            if (s0 != 9 || s1 != 9) return {0, 0};
+            if (!phase_t) phase_t = f;
+            if (f - phase_t < 120) return {0, 0};
+            const unsigned c[2] = {iw8(0, 0x41BC), iw8(1, 0x41BC)};
+            if (int(c[0]) == auto_p[0] && int(c[1]) == auto_p[1]) { presses.push_back({1, 1, 4, 60}); phase = 2; phase_t = f; return {0, 0}; }
+            const auto mv = [&](unsigned i) { const unsigned w = unsigned(auto_p[i]); return (c[i] & 1) != (w & 1) ? (w & 1 ? 16u : 32u) : (c[i] >> 1) != (w >> 1) ? (w >> 1 ? 128u : 64u) : 0u; };
+            if (++tries > 20) { std::fprintf(stderr, "[auto] slots failed\n"); phase = 9; }
+            presses.push_back({mv(0), mv(1), 4, 20}); return {0, 0};
+        }
+        if (phase == 2) {   // path screen: P1 presses A until both games are in the level
+            if (s0 == 1 && s1 == 1 && f - phase_t > 200) { phase = 3; level_f = f; std::fprintf(stderr, "[auto] in level %u at frame %u\n", iw8(0, 0x41F8), f); return {0, 0}; }
+            if (s0 == 9 && s1 == 9 && iw8(0, 0x41C0) == 0 && iw8(1, 0x41C0) == 0 && f - phase_t > 120) { phase_t = f; presses.push_back({1, 1, 6, 60}); return {0, 0}; }
+            if (s0 == 11 && f % 240 == 0) presses.push_back({1, 0, 4, 90});
+            return {0, 0};
+        }
+        if (phase == 3) {   // fight: HP full, attack, walk a slow square
+            // ROTK_LINK_POKES="after:addr:value;...": 32-bit RAM writes into both games, frames after the level start
+            // (e.g. the test-only spawn ROM from tools/engine/build_spawntest.py for a bigger fight).
+            static std::vector<std::array<unsigned, 3>> pokes = [] {
+                std::vector<std::array<unsigned, 3>> v; const char* e = std::getenv("ROTK_LINK_POKES");
+                for (const char* q = e; q && *q;) { unsigned a, b, c; int n = 0; if (std::sscanf(q, "%u:%x:%x%n", &a, &b, &c, &n) < 3) break; v.push_back({a, b, c}); q += n; if (*q == ';') ++q; }
+                return v; }();
+            for (const auto& pk : pokes) if (pk[0] == f - level_f) for (unsigned m = 0; m < 2; ++m) {
+                std::uint8_t* b = pk[1] >> 24 == 2 ? S.machine(m).bus.ewram_ptr() + (pk[1] & 0x3FFFF) : S.machine(m).bus.iwram_ptr() + (pk[1] & 0x7FFF);
+                for (int k = 0; k < 4; ++k) b[k] = static_cast<std::uint8_t>(pk[2] >> (8 * k));
+            }
+            for (unsigned m = 0; m < 2; ++m) for (unsigned pl = 0; pl < 2; ++pl) {
+                const unsigned h = iwr(m, 0x3C00 + 0x1AC * pl);
+                if (h >> 24 == 2) { std::uint8_t* e = S.machine(m).bus.ewram_ptr() + (h - 0x02000000u) + 0x5A; e[0] = 0x2C; e[1] = 0x01; }
+            }
+            const unsigned t = f - level_f;
+            static const unsigned dirs[4] = {16, 128, 32, 64};
+            const unsigned d0 = dirs[(t / 90) % 4], d1 = dirs[(t / 90 + 2) % 4];
+            const unsigned atk = (t % 12) < 4 ? 2u : 0u;
+            return {static_cast<std::uint16_t>(((t % 180) < 60 ? d0 : 0) | atk), static_cast<std::uint16_t>(((t % 180) < 60 ? d1 : 0) | atk)};
+        }
+        return {0, 0};
+    };
+#if defined(ROTK_OLD_RUNTIME)
+#define RS_COUNT(x) 0ull
+#else
+#define RS_COUNT(x) (unsigned long long)m0.ppu.repeat_frames_##x
+#endif
     const auto t0 = std::chrono::steady_clock::now();
     unsigned mids = 0;
     for (unsigned f = 0; f < frames; ++f) {
         while (ri < rows.size() && rows[ri][0] == f) { keys = {static_cast<std::uint16_t>(rows[ri][1]), static_cast<std::uint16_t>(rows[ri][2])}; ++ri; }
+        if (auto_p[0] >= 0) keys = auto_keys(f);
         S.run_frame(keys); link_force_level();
+#if !defined(__EMSCRIPTEN__) && __has_include(<valgrind/callgrind.h>)
+        if (auto_p[0] >= 0 && phase == 3) {   // profile only frames [ROTK_PROF_FROM, +ROTK_PROF_N) after the level start
+            static const unsigned pf = std::atoi(env("ROTK_PROF_FROM", "600")), pn = std::atoi(env("ROTK_PROF_N", "120"));
+            if (f - level_f == pf) CALLGRIND_START_INSTRUMENTATION;
+            if (f - level_f == pf + pn) { CALLGRIND_STOP_INSTRUMENTATION; CALLGRIND_DUMP_STATS; }
+        }
+#endif
+        if (auto_p[0] >= 0 && phase == 3 && (f - level_f) % 300 == 0) {
+            const auto now = std::chrono::steady_clock::now();
+            int objs = 0;
+            for (unsigned o = iwr(0, 0x2420); o >> 24 == 2 && objs < 400; ++objs) { const std::uint8_t* e = S.machine(0).bus.ewram_ptr() + (o - 0x02000000u); o = e[0] | (e[1] << 8) | (e[2] << 16) | (unsigned(e[3]) << 24); }
+            if (tw_f) std::printf("[speed] frames %u-%u: %.2f ms/frame (%.1f fps) objects=%d state=%u/%u lvl=%u gameframe=%u skipped=%llu drawn=%llu redrawn=%llu hash=%08x\n", tw_f, f,
+                std::chrono::duration<double, std::milli>(now - tw).count() / (f - tw_f), (f - tw_f) * 1000.0 / std::chrono::duration<double, std::milli>(now - tw).count(), objs,
+                iwr(0, 0x41B0) & 255, iwr(1, 0x41B0) & 255, iw8(0, 0x41F8), iwr(0, 0x41A4), RS_COUNT(skipped), RS_COUNT(drawn), RS_COUNT(redrawn), rotk_link_hash());
+            std::fflush(stdout);
+            tw = now; tw_f = f;
+        }
         if (m0.ppu.has_latched_framebuffer()) {
             fb.assign(m0.ppu.latched_framebuffer(), m0.ppu.latched_framebuffer() + m0.ppu.render_bytes());
             if (smoother.apply(m0.ppu, fb.data(), fb.size())) ++mids;

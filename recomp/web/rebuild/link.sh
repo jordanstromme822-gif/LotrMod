@@ -8,7 +8,7 @@ ls cobios_gen
 if [ ! -f weblinkrt/build.ninja ]; then
   emcmake cmake -S $G -B weblinkrt -G Ninja -DCMAKE_BUILD_TYPE=Release -DGBARECOMP_WEB_HOST=ON \
     -DCMAKE_CXX_FLAGS="-mtail-call -include /tmp/rc/emcompat/compat.h -fwasm-exceptions" \
-    -DGBARECOMP_GENERATED_BIOS_DIR=/tmp/rc/cobios_gen > weblinkrt.cfg.log 2>&1
+    -DGBARECOMP_GENERATED_BIOS_DIR=/tmp/rc/cobios_gen -DGBARECOMP_NATIVE_RAM_CODE_VIEWS=ON > weblinkrt.cfg.log 2>&1
 fi
 cd weblinkrt && ninja gbarecomp_runtime gbarecomp_debug gbarecomp_gba gbarecomp_armv4t gbarecomp_recompile_core gbarecomp_heal_gate > ../weblinkrt.build.log 2>&1; cd ..
 # 3 game-link toml for the arrows-sized ROM
@@ -24,7 +24,7 @@ rm -rf portlink4 && GBARECOMP_CORE=gbarecomp/build/gba_recompile python3 gbareco
 rm -rf gen-link4 && cp -r portlink4/generated gen-link4 && python3 $W/orcslots/genpatch.py gen-link4 /mnt/project-files/engine-build/arrows-sized/orcslots.sym | tail -2
 # 4 compile + link
 mkdir -p /tmp/rc/link4 && cd /tmp/rc/link4
-FL="-std=c++20 -mtail-call -include /tmp/rc/emcompat/compat.h -I$G/src/armv4t -I$G/src/gba -I$G/src/runtime -I$G/src/debug -I$G/external/arm-recomp-core/profiles/armv4t_gba"
+FL="-std=c++20 -mtail-call -include /tmp/rc/emcompat/compat.h -DGBARECOMP_NATIVE_RAM_CODE_VIEWS=1 -I$G/src/armv4t -I$G/src/gba -I$G/src/runtime -I$G/src/debug -I$G/external/arm-recomp-core/profiles/armv4t_gba"
 ls /tmp/rc/gen-link4/*.cpp | xargs -P4 -I{} sh -c "em++ $FL -O1 -g0 -c {} -o \$(basename {} .cpp).o"
 for f in $W/link/link_main.cpp $W/link/mixer_hook.cpp $W/link/shim-web.cpp; do em++ $FL -fwasm-exceptions -O2 -c $f -o $(basename $f .cpp).o; done
 RT=/tmp/rc/weblinkrt

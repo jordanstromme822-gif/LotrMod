@@ -1,0 +1,142 @@
+diff --git a/src/armv4t/runtime_arm.cpp b/src/armv4t/runtime_arm.cpp
+index eeb5f3e..4f79f53 100644
+--- a/src/armv4t/runtime_arm.cpp
++++ b/src/armv4t/runtime_arm.cpp
+@@ -1949,6 +1949,7 @@ void runtime_set_return_yield(bool enabled) {
+     g_dispatch_suspended = false;
+ }
+ bool runtime_suspend_dispatch() {
++    g_session_fast_ok = 0;
+     if (!g_return_yield) throw RuntimeDispatchYield{};
+     g_suspended_pc = g_cpu.R[15];
+     g_dispatch_suspended = true;
+diff --git a/src/armv4t/runtime_arm.h b/src/armv4t/runtime_arm.h
+index a109624..93abb18 100644
+--- a/src/armv4t/runtime_arm.h
++++ b/src/armv4t/runtime_arm.h
+@@ -489,6 +489,17 @@ extern unsigned long long g_runtime_state_epoch;
+ // at machine reset (runtime_trace_reset). Stamped onto every ring entry so the
+ // recomp and interp oracle can be aligned by identical cycle counts. (MC-HP-002.)
+ extern unsigned long long g_runtime_cycles;
++// 2-player slice fast path (LotrMod, 2026-11-12). runtime_should_yield sets g_session_fast_ok when it lets an
++// instruction run inside a session slice with every slow condition already checked (slice running, not stopped,
++// stack guard fine, no unmasked IRQ pending, not suspended). Codegen calls runtime_should_yield_alu() instead of
++// runtime_should_yield() for instructions that can't change any of those (register ALU/multiply ops that don't
++// write PC or CPSR): they only need the slice deadline. Anything that ends or changes the slice clears the flag.
++extern unsigned char g_session_fast_ok;
++extern unsigned long long g_session_fast_deadline;
++static inline bool runtime_should_yield_alu(void) {
++    if (g_session_fast_ok && g_runtime_cycles < g_session_fast_deadline) return false;
++    return runtime_should_yield();
++}
+ 
+ // P6 sljit differential gate — shadow-tick mode. While g_runtime_shadow_tick is
+ // nonzero (only during a healed shard's throwaway validation re-run) runtime_tick
+diff --git a/src/runtime/runtime_bus_bridge.cpp b/src/runtime/runtime_bus_bridge.cpp
+index 0eff5bc..90ce780 100644
+--- a/src/runtime/runtime_bus_bridge.cpp
++++ b/src/runtime/runtime_bus_bridge.cpp
+@@ -1168,14 +1168,19 @@ static inline bool host_stack_guard_live() {
+ static bool runtime_should_yield_full(void);
+ // 2-player hot path (LotrMod, 2026-11-11): inside a running slice, the next instruction only needs the slice check;
+ // everything else (stack guard, IRQ entry, BIOS latch) is handled as before by the full version.
++extern "C" unsigned char g_session_fast_ok = 0;
++extern "C" unsigned long long g_session_fast_deadline = 0;
+ extern "C" bool runtime_should_yield(void) {
+     if (g_session_execution && g_session_instruction_started && g_session_slice && !g_session_slice_stopped &&
+         g_runtime_cycles < g_session_slice_deadline && !host_stack_guard_live()) {
+         auto* bus = gbarecomp::g_active_bus;
+         if (bus && !gbarecomp::runtime_dispatch_suspended() && (g_cpu.cpsr & CPSR_I_BIT || !bus->io().irq_pending()) &&
+-            g_cpu.R[15] >= 0x00004000u && gbarecomp::multiplayer_slice_safe(*bus, g_cpu))
++            g_cpu.R[15] >= 0x00004000u && gbarecomp::multiplayer_slice_safe(*bus, g_cpu)) {
++            g_session_fast_ok = 1; g_session_fast_deadline = g_session_slice_deadline;
+             return false;
++        }
+     }
++    g_session_fast_ok = 0;
+     return runtime_should_yield_full();
+ }
+ [[gnu::noinline]] static bool runtime_should_yield_full(void) {
+@@ -1431,16 +1436,16 @@ void runtime_session_execution(bool enabled) {
+     g_runtime_native_region_context=enabled?0u:1u;
+     g_session_execution = enabled;
+     g_session_instruction_started = false;
+-    g_session_slice = false;
++    g_session_slice = false; g_session_fast_ok = 0;
+     g_session_private_memory_owner = nullptr;
+     g_session_private_memory_deadline = 0;
+     g_session_private_memory_owner_check = nullptr;
+ }
+ void runtime_session_begin_instruction() {
+-    g_session_instruction_started = false; g_session_slice = false;
++    g_session_instruction_started = false; g_session_slice = false; g_session_fast_ok = 0;
+ }
+ void runtime_session_begin_slice(std::uint64_t deadline) {
+-    g_session_instruction_started = false; g_session_slice = true;
++    g_session_instruction_started = false; g_session_slice = true; g_session_fast_ok = 0;
+     g_session_slice_stopped = false; g_session_slice_deadline = deadline;
+ }
+ void runtime_session_ram_dispatch_boundary(std::uint32_t pc) {
+@@ -1454,7 +1459,7 @@ void runtime_session_ram_dispatch_boundary(std::uint32_t pc) {
+     }
+     // A callback is trusted native coverage, but not decoded by the batching
+     // classifier. Its generated body runs through the reference safe points.
+-    g_session_slice=false;
++    g_session_slice=false; g_session_fast_ok = 0;
+ }
+ void runtime_session_private_memory_owner(const void* owner, std::uint64_t deadline,
+     bool (*check)(const void*, const gba::GbaBus&)) {
+@@ -1514,7 +1519,7 @@ void runtime_session_private_memory_end(RuntimeNativeRegion& region) {
+     }
+     region.owner_bus = nullptr;
+     g_session_instruction_started = true;
+-    g_session_slice_stopped = true;
++    g_session_slice_stopped = true; g_session_fast_ok = 0;
+     runtime_tick(region.cycles);
+ }
+ void runtime_session_tick_devices(std::uint32_t cycles) {
+diff --git a/external/arm-recomp-core/profiles/armv4t_gba/arm_codegen.cpp b/external/arm-recomp-core/profiles/armv4t_gba/arm_codegen.cpp
+index 4345cce..66ce145 100644
+--- a/external/arm-recomp-core/profiles/armv4t_gba/arm_codegen.cpp
++++ b/external/arm-recomp-core/profiles/armv4t_gba/arm_codegen.cpp
+@@ -65,6 +65,23 @@ std::string stm_pc_store_value(const Instr& ins, const CodegenCtx& ctx) {
+ // from the destination register / reg-list, so the codegen folds it into
+ // the instruction's fixed cost. Mirrors interpreter.cpp's `wrote_pc &&
+ // !branch_op` test.
++// LotrMod 2-player fast path (2026-11-12): register ALU/multiply ops that write neither PC nor CPSR's mode/IRQ
++// bits only need the slice deadline from the yield check (runtime_should_yield_alu, runtime_arm.h).
++bool yield_alu_safe(const Instr& ins) {
++    if (ins.pc < 0x4000u) return false;
++    switch (ins.op) {
++    case IrOp::AND: case IrOp::EOR: case IrOp::SUB: case IrOp::RSB:
++    case IrOp::ADD: case IrOp::ADC: case IrOp::SBC: case IrOp::RSC:
++    case IrOp::TST: case IrOp::TEQ: case IrOp::CMP: case IrOp::CMN:
++    case IrOp::ORR: case IrOp::MOV: case IrOp::BIC: case IrOp::MVN:
++        return ins.rd != 15u;
++    case IrOp::MUL: case IrOp::MLA: case IrOp::UMULL: case IrOp::UMLAL: case IrOp::SMULL: case IrOp::SMLAL:
++    case IrOp::MRS:
++        return ins.rd != 15u;
++    default:
++        return false;
++    }
++}
+ bool writes_pc_nonbranch(const Instr& ins) {
+     switch (ins.op) {
+         case IrOp::AND: case IrOp::EOR: case IrOp::SUB: case IrOp::RSB:
+@@ -1552,7 +1569,7 @@ static std::string emit_reference_instr(const Instr& ins, const CodegenCtx& ctx,
+     // keeping R15 at the current instruction PC here is only for the
+     // exception/IRQ resume state read by runtime_irq/runtime_swi.
+     os << "    g_cpu.R[15] = " << pc_expr(ins.pc, ctx) << ";\n";
+-    os << "    if (runtime_should_yield()) return;\n";
++    os << (yield_alu_safe(ins) ? "    if (runtime_should_yield_alu()) return;\n" : "    if (runtime_should_yield()) return;\n");
+     // Per-instruction fingerprint (armed): record pre-execution state so the
+     // recomp can be diffed against the interp oracle at identical cycle counts
+     // (MC-HP-002). Placed AFTER the yield check so a yielded (not-executed)
+@@ -1698,6 +1715,7 @@ std::string ArmCodegen::emit_instr(const Instr& ins, const CodegenCtx& ctx,
+     // can occur inside the admitted prefix, so these per-instruction callbacks
+     // would only recreate the bookkeeping that the region removes.
+     for(const std::string line : {"    if (runtime_should_yield()) return;\n",
++                                 "    if (runtime_should_yield_alu()) return;\n",
+                                  "    if (g_runtime_insn_trace) runtime_insn_fp();\n"}) {
+         for(auto at=source.find(line);at!=std::string::npos;at=source.find(line))
+             source.erase(at,line.size());
