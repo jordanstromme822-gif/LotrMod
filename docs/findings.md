@@ -349,4 +349,5 @@ Measured on the original ROM in mGBA (Hornburg Valley, level 47) with `tools/eng
   record; then u16 offsets (from + 0xC). Record: flags (0x20 LZ77, 0x40 the game's packing via IWRAM 0x03003940,
   0 raw) | part count, 0, width, height, u16 tile offset, u16 bytes, + 0xB boxes, then 4 bytes per OAM part:
   bits 0-8 x, 9-17 y (signed), 18-19 size, 20-21 shape, 22-31 first tile. Sprite tiles are allocated per picture.
-- ROM 0x8A000-0x9E3FF (German text bank) and 0x9F000-0x9FFFF are used by the 16-facing test (tools/turn16).
+- ROM 0x9F000-0x9FFFF is the 16-facing hook (tools/turn16), 0x94400 its crossbow pictures. Since v176 the hero pictures are
+  past 16 MB (ROM 0x1000000, gen16all.py, all 8 heroes); 0x8A000-0x943FF (Frodo's old block) is free again in the page's build.
