@@ -1,0 +1,95 @@
+diff --git a/src/gba/gba_link_hub.cpp b/src/gba/gba_link_hub.cpp
+index b775ff0..b19527b 100644
+--- a/src/gba/gba_link_hub.cpp
++++ b/src/gba/gba_link_hub.cpp
+@@ -6,6 +6,7 @@
+ #include <cstdio>
+ 
+ namespace gba {
++extern bool g_link_virtual1;
+ namespace {
+ constexpr std::uint16_t kBusy = 0x80, kIrq = 0x4000;
+ // Behavioral timing observations, in 16.777216 MHz CPU cycles. Rows are
+@@ -150,6 +151,8 @@ void GbaLinkHub::start_normal(std::size_t port) {
+     start_=ports_[port].cycle; finish_=start_+duration; active_=true;
+ }
+ unsigned g_link_hub_starts = 0;
++std::uint16_t (*g_link_virtual_word)(std::uint16_t master, std::uint16_t slave) = nullptr;
++bool g_link_virtual1 = false;   // port 1's machine is switched off: port 1 follows port 0's clock
+ void GbaLinkHub::start() {
+     if (!ready()) return;
+     ++g_link_hub_starts;
+@@ -161,6 +164,7 @@ void GbaLinkHub::start() {
+         transfer_[i] = ports_[i].send;
+         ports_[i].receive.fill(0xffff);
+     }
++    if (g_link_virtual_word && count_ >= 2) transfer_[1] = g_link_virtual_word(transfer_[0], transfer_[1]);
+     finish_ = ports_[0].cycle + duration;
+     active_ = true;
+ }
+@@ -179,6 +183,7 @@ void GbaLinkHub::Endpoint::tick(std::uint32_t cycles) {
+     if (hub_.active_ && p.cycle + cycles > hub_.finish_)
+         throw std::logic_error("GBA crossed an unprocessed cable event");
+     p.cycle += cycles;
++    if (g_link_virtual1 && port_ == 0 && hub_.count_ >= 2) hub_.ports_[1].cycle = p.cycle;
+     hub_.complete_if_ready();
+ }
+ std::uint32_t GbaLinkHub::Endpoint::cycles_until_event() const {
+diff --git a/src/runtime/multiplayer_session.cpp b/src/runtime/multiplayer_session.cpp
+index 8537b98..c5f6558 100644
+--- a/src/runtime/multiplayer_session.cpp
++++ b/src/runtime/multiplayer_session.cpp
+@@ -14,6 +14,7 @@
+ std::uint64_t g_session_slice_lookahead = 63;
+ extern "C" void runtime_slice_stats_dump();
+ namespace gbarecomp {
++unsigned g_session_skip_mask = 0;   // machines switched off (bit i = machine i): no CPU, no devices
+ namespace {
+ template<class Archive, class Context> void execution_state(Archive& a, Context& state) {
+     auto& c = state.cpu;
+@@ -173,8 +174,9 @@ void GbaMultiplayerSession::run_until(std::uint64_t target) {
+         // Simultaneous CPU edges have stable manifest order. Every device is
+         // already at cycle_, so even a transfer begun by either CPU sees the
+         // peer's state at that same time, never a host scheduling artifact.
+-        for (auto& ptr : machines_) {
+-            auto& instance = *ptr;
++        for (std::size_t mi = 0; mi < machines_.size(); ++mi) {
++            auto& instance = *machines_[mi];
++            if (g_session_skip_mask >> mi & 1) continue;
+             auto& io = instance.bus.io();
+             if (instance.timing.cycles > cycle_) continue;
+             if (io.halted()) {
+@@ -198,7 +200,8 @@ void GbaMultiplayerSession::run_until(std::uint64_t target) {
+                 // lookahead (normal 8-bit fast clock takes 64 cycles).
+                 // Existing device events and the caller's boundary shorten it.
+                 auto deadline=cycle_+std::min<std::uint64_t>(target-cycle_,g_session_slice_lookahead);
+-                for (const auto& machine : machines_) {
++                for (std::size_t mj = 0; mj < machines_.size(); ++mj) {
++                    const auto& machine = machines_[mj]; if (g_session_skip_mask >> mj & 1) continue;
+                     const auto& device_io=machine->bus.io();
+                     auto distance=std::min({machine->ppu.cycles_until_next_event(),
+                         machine->bus.audio().cycles_until_next_shared_event(),
+@@ -221,8 +224,9 @@ void GbaMultiplayerSession::run_until(std::uint64_t target) {
+         const auto schedule_start = profile ? ProfileClock::now() : ProfileClock::time_point{};
+         std::uint64_t next = target;
+         int w = 7;
+-        for (auto& ptr : machines_) {
+-            auto& instance = *ptr;
++        for (std::size_t mi = 0; mi < machines_.size(); ++mi) {
++            auto& instance = *machines_[mi];
++            if (g_session_skip_mask >> mi & 1) continue;
+             auto& io = instance.bus.io();
+             if (!io.halted() && instance.timing.cycles < next) { next = instance.timing.cycles; w = 0; }
+             const std::uint64_t ev[4] = {instance.ppu.cycles_until_next_event(),
+@@ -245,8 +249,9 @@ void GbaMultiplayerSession::run_until(std::uint64_t target) {
+         if (next < cycle_) throw std::logic_error("GBA session lost cycle debt");
+         const auto delta = static_cast<std::uint32_t>(next - cycle_);
+         const auto device_start = profile ? ProfileClock::now() : ProfileClock::time_point{};
+-        for (auto& ptr : machines_) {
+-            auto& instance = *ptr;
++        for (std::size_t mi = 0; mi < machines_.size(); ++mi) {
++            auto& instance = *machines_[mi];
++            if (g_session_skip_mask >> mi & 1) continue;
+             auto bind_start = profile ? ProfileClock::now() : ProfileClock::time_point{};
+             // Serial endpoints and DMA buses are publicly replaceable. Only
+             // the session-owned implementations have a callback-free contract.
