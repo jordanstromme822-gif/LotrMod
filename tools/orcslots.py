@@ -259,6 +259,10 @@ def patch(rom: bytearray) -> bytearray:
     for off, b in skillicons.icons(rom):             # Frodo's Bolt Trap and Quick Drop icons
         rom[off:off + len(b)] = b
     rom[CODE_AT:CODE_AT + len(code)] = code
+    # Knife Toss stuns through kt_stun (tools/turn16/turn16.c, fixed at 0x0809FF00): put it in too, so builds without
+    # the rest of the 16-facing hook still have it.
+    t16 = open(os.path.join(os.path.dirname(D), "turn16", "turn16.bin"), "rb").read()
+    rom[0x9FF00:0x9FF00 + len(t16) - 0xF00] = t16[0xF00:]
     return rom
 
 

@@ -333,3 +333,20 @@ Measured on the original ROM in mGBA (Hornburg Valley, level 47) with `tools/eng
 - Engine (`recomp/gbarecomp-oam-ext.patch`, on top of obj-ext): with the extra sprite memory on, OAM becomes 8 KB. Entries 128-250 are drawn from 0x07000400, after entry 127. BG priority keys move from p*256+128+layer to p*256+251+layer so OBJ indexes up to 250 fit, which changes nothing for 128 entries. The native draw-jobs path is skipped in this mode.
 - Game (`bigsprites_init.c`, same ROM step): the four OAM functions are rewritten in C and allow 251 entries when the engine has the memory. Shadow copies of entries 128-250 live at 0x07000800 (buffer 0x03004340) and 0x07001000 (buffer 0x03004B80), with half B at +0x400. A stub at 0x0802A164 copies the shown half into 0x07000400 in the same VBlank as the game's DMA.
 - Test at Hornburg Valley with 68 extra monsters and 400% CPU: up to 246 sprite entries are visible, and monsters are drawn whole where they were missing pieces before. Game speed was 24.8 fps (23.6 without the extra memory). In mGBA the game plays the same as the original.
+
+## Hero walking, facings and pictures (16-facing test, 2026-11-11)
+
+- Hero update 0x080236B8 (object + 0x14 = 0x080236B9, set from the literal at 0x08025CA8 when the hero is made).
+  Player = object + 0x96. D-pad -> direction 0-7 (0 up, clockwise) or -1: 0x08029DF0(player) (held keys 0x0300407C,
+  table 0x08062A60). Walk velocity 0x08001C80(out, flags, dir, speed + 0xE4): unit vectors 0x08282150 (2:1 ground,
+  diagonal = (0.894, 0.447)) or 0x08282190 when flags + 0xE8 & 0x1000000. Velocity ends in + 0xB4 / + 0xB8; the move
+  step 0x080023C0 (after the update) makes + 0xCC from it and the object loop (0x080007D6) copies it to + 0xAC.
+- Facing + 0xF8 (0-7), anim kind + 0x95 (4 stand, 6 walk; Frodo: 12 frames each), picture set by
+  0x08000D58(object, table + 0x88, kind, DIR5[facing]) with DIR5 = 0x08050418 (0 1 2 3 4 3 2 1); facings 5-7 flip
+  (+ 0xDF bit 0x10). Table: kind -> 5 entries of 16 bytes {tiles, frames header, 0, hold time}; + 0x24 is the entry
+  in use. 0x08000DE8(object, frame) shows a frame. Frodo's table 0x0806170C (56 kinds), Eowyn's 0x080622DC.
+- Frames header (12 bytes): + 6 frame count, + 8 biggest frame in bytes, + 0xA / + 0xB extra words / 6-byte boxes per
+  record; then u16 offsets (from + 0xC). Record: flags (0x20 LZ77, 0x40 the game's packing via IWRAM 0x03003940,
+  0 raw) | part count, 0, width, height, u16 tile offset, u16 bytes, + 0xB boxes, then 4 bytes per OAM part:
+  bits 0-8 x, 9-17 y (signed), 18-19 size, 20-21 shape, 22-31 first tile. Sprite tiles are allocated per picture.
+- ROM 0x8A000-0x9E3FF (German text bank) and 0x9F000-0x9FFFF are used by the 16-facing test (tools/turn16).
