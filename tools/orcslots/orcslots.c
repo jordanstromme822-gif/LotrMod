@@ -236,6 +236,65 @@ static u32 with_count(u32 w, int n) { return (w & 0xFF00FFFFu) | ((u32)(n & 0xFF
 static int is_leg(int p) { return p < 2 && HERO_ID(p) == 1; }
 static int is_frodo(int p) { return p < 2 && HERO_ID(p) == 0; }
 static int nas(int p) { return is_leg(p) ? 2 : is_frodo(p) ? 1 : 0; }   /* arrow slots: Legolas 2, Frodo 1 (his crossbows) */
+
+/* ---------------- 12 backpack slots (Jordan, 2026-11-12: "12 regular inventory slots now and only 1 orc head slot") ------
+   The game keeps 8 backpack items (grid 8-15). The 4 more live in a stash, and grid cell 15 is a window onto them:
+   the backpack is cells 8-14 plus 5 more (L7..L11), and whichever of those 5 the cursor is on sits in cell 15, so the
+   game's own Equip / Discard / Carve Rune / Move Item / shops all work on it. STASH[p][t] holds L(7+t), except
+   t = WIN[p], whose item is in cell 15 (its STASH entry is unused). In play, cell 15 is kept empty while the stash has
+   room, so pickups fill all 12. The HD Backpack shows the 12; the cursor values 30-34 there are L7..L11. */
+#define STASH   ((volatile u32 (*)[5])0x0203F840)    /* [player][5] */
+#define WIN     ((volatile u8 *)0x0203F868)          /* [player]: which of the 5 is in cell 15 */
+#define SSAVED  ((volatile u32 (*)[6])0x0203F870)    /* [save slot][6]: STASH + WIN of the slots shown (like ASAVED) */
+#define SKEEP   ((volatile u32 (*)[4][6])0x0203F8D0) /* [page][save slot][6]: in the save file, blocks XB_STASH.. */
+#define XB_STASH 133                                 /* 3 blocks per page and slot: 133-156 */
+#define VFIRST  30                                   /* HD Backpack cursor values for L7..L11 */
+#define NOITEM  0xFFFFFFFFu
+static int empty_w(u32 w) { return w == 0 || (w & 0xF) == 0xF; }
+static void s_norm(int p)
+{
+    if (WIN[p] > 4) WIN[p] = 0;
+    for (int t = 0; t < 5; t++) if (empty_w(STASH[p][t]) || t == WIN[p]) STASH[p][t] = NOITEM;
+}
+static int s_keep(u32 w)                             /* "Keep in backpack to use" (list word bit 16) */
+{
+    u32 lst = *(volatile u32 *)(0x08068F50 + (w & 0xF) * 0x28 + 0x20);
+    return (*(volatile u32 *)(lst + ((w >> 8) & 0xFF) * 8) >> 16) & 1;
+}
+static void s_window(int p, int t)                   /* put L(7+t) in cell 15 */
+{
+    u32 *it = (u32 *)(HERO + p * HERO_SZ + 0x3C);
+    int w = WIN[p];
+    if (t == w || t < 0 || t > 4) return;
+    u32 was = it[15], now = empty_w(STASH[p][t]) ? NOITEM : STASH[p][t];
+    if (!empty_w(was) && s_keep(was)) ((fn4)0x0802DB91)((int)was, 15, p, 1);   /* keepsakes count only in cell 15 */
+    STASH[p][w] = was;
+    it[15] = now;
+    STASH[p][t] = NOITEM;
+    WIN[p] = t;
+    if (!empty_w(now) && s_keep(now)) ((fn4)0x0802DB91)((int)now, 15, p, 0);
+    if (GSTATE == 10 && p == (LOCAL_P & 1)) {             /* Backpack open: cell 15's picture object, which Equip reads too */
+        volatile u32 *o = (volatile u32 *)0x03001F20 + 15;
+        if (*o) { volatile u32 *f = (volatile u32 *)(*o + 0xE8); *f = (*f | 2) & ~1u; *o = 0; }
+        if (!empty_w(now)) MKSPRITE(15);
+    }
+}
+/* into the backpack (grid 8-15, then the 4 stash boxes, 1-player only); 0 when all 12 are full. Shows the picture. */
+static int pack_put(int p, u32 w)
+{
+    u32 *it = (u32 *)(HERO + p * HERO_SZ + 0x3C);
+    for (int j = 8; j < 16; j++) if (empty_w(it[j])) { it[j] = w; if (GSTATE == 10) MKSPRITE(j); return 1; }
+    if (LINKED) return 0;
+    for (int t = 0; t < 5; t++) if (t != WIN[p] && empty_w(STASH[p][t])) { STASH[p][t] = w; return 1; }
+    return 0;
+}
+/* in play: keep cell 15 free while the stash has room */
+static void s_room(int p)
+{
+    u32 *it = (u32 *)(HERO + p * HERO_SZ + 0x3C);
+    if (empty_w(it[15])) return;
+    for (int t = 0; t < 5; t++) if (t != WIN[p] && empty_w(STASH[p][t])) { s_window(p, t); return; }
+}
 #define MINLVL(it)            (((fn4)0x0802D2F9)((int)(it), 0, 0, 0) & 0xFF)
 /* arrows the hero is high enough level to use (Jordan, 2026-11-11: the arrow slots had no level check) */
 static int lvl_ok(int p, u32 w) { return MINLVL(w) <= *(volatile u8 *)(HERO + p * HERO_SZ + 0x19C) + 1; }
@@ -369,6 +428,32 @@ static int q_info(u32 w, int *cur)
     return 0;
 }
 
+/* one Orc Head slot (Jordan, 2026-11-12): a hero who wears 2-4 heads keeps the best (tier, then the first), the others go
+   into the backpack's free cells, then the stash, then onto the ground at the hero's feet */
+static void set_applied(int p, volatile u16 *codes, int n);
+static void one_head(int p)
+{
+    int n = COUNT[p] > 4 ? 4 : COUNT[p], best = 0;
+    if (n <= 1) return;
+    for (int i = 1; i < n; i++) if ((CODE[p][i] >> 14) != 3 && (CODE[p][i] >> 14) > (CODE[p][best] >> 14)) best = i;
+    u32 *it = inv(p);
+    for (int i = 0; i < n; i++) {
+        if (i == best) continue;
+        u32 w = item_of(CODE[p][i]);
+        int j, t;
+        for (j = 8; j < 16 && !empty_w(it[j]); j++) ;
+        if (j < 16) { it[j] = w; continue; }
+        for (t = 0; t < 5 && (t == WIN[p] || !empty_w(STASH[p][t])); t++) ;
+        if (t < 5) { STASH[p][t] = w; continue; }
+        u8 *h = *(u8 **)(HERO + p * HERO_SZ);
+        if (h) SPAWN(*(int *)(h + 0xAC) + ((8 + 12 * i) << 16), *(int *)(h + 0xB0), 84, (int)w, 0x708);
+    }
+    CODE[p][0] = CODE[p][best];
+    for (int i = 1; i < 4; i++) CODE[p][i] = 0xFFFF;
+    COUNT[p] = 1;
+    set_applied(p, CODE[p], 1);
+}
+
 /* what is on each hero is tracked, so taking bonuses off is always exact */
 static void set_applied(int p, volatile u16 *codes, int n)
 {
@@ -432,10 +517,22 @@ int gp_hook(int a, int b, int c, int d)
     for (int p = 0; p < 2; p++)
         if (ACP[p] == 2) { ACP[p] = 0; if (ALV[p] == 1 && is_leg(p)) a_cycle(p, 1); }
     x_check();
+    if (!LINKED) { int p = LOCAL_P & 1; s_norm(p); one_head(p); s_room(p); }
     QCLK++;
     q_frame(0);
     if (LINKED) q_frame(1);
     return r;
+}
+
+/* ---- the title screen clears both players: Orc Head counts, arrow slots, backpack stash ---- */
+void clear_c(void)
+{
+    *(volatile u32 *)0x0203FFE0 = 0;
+    for (int p = 0; p < 2; p++) {
+        ASLOT[p][0] = NOARROW; ASLOT[p][1] = NOARROW;
+        for (int t = 0; t < 5; t++) STASH[p][t] = NOITEM;
+        WIN[p] = 0;
+    }
 }
 
 /* ---- saves: the slot heads of save slot s live in EEPROM block 0x32 + s ---- */
@@ -447,6 +544,7 @@ void pack_c(u8 *h, int p)
     h[0x4B] = (h[0x4B] & 0x1F) | (n << 5);
     if (s >= 0) for (int i = 0; i < 4; i++) SAVED[s][i] = (i < n ? CODE[p][i] : 0xFFFF) ^ EE_KEY;
     if (s >= 0 && p < 2) { a_norm(p); ASAVED[s][0] = ASLOT[p][0]; ASAVED[s][1] = ASLOT[p][1]; }
+    if (s >= 0 && p < 2) { s_norm(p); for (int i = 0; i < 5; i++) SSAVED[s][i] = STASH[p][i]; SSAVED[s][5] = WIN[p]; }
     q_sync(p);                                         /* worn regenerating quiver: packed full (header + 8 = off hand) */
     if (QMAX[p] && h[8] == (QWORD[p] & 0xFF)) h[10] = 0x80 | QMAX[p];
 }
@@ -460,6 +558,7 @@ void unpack_c(const u8 *h, int p)
     APPN[p] = 0;
     SENT = 0;
     if (p < 2) { QMAX[p] = 0; DEBTN[p] = 0; }          /* its quiver comes in packed: full */
+    if (p < 2) { for (int i = 0; i < 5; i++) STASH[p][i] = s >= 0 ? SSAVED[s][i] : NOITEM; WIN[p] = s >= 0 ? (u8)SSAVED[s][5] : 0; s_norm(p); }
     if (p < 2) { ASLOT[p][0] = s >= 0 ? ASAVED[s][0] : NOARROW; ASLOT[p][1] = s >= 0 ? ASAVED[s][1] : NOARROW; a_norm(p); ALV[p] = 0; LTAP[p] = 0xFF; }
 }
 
@@ -500,6 +599,7 @@ static void x_write_all(void)
     EE_WRITE(XB_PAGE, 56, PBUF);
     EE_WRITE(XB_HEAD, 4, PHEAD);
     EE_WRITE(XB_AKEEP, 8, AKEEP);
+    EE_WRITE(XB_STASH, 24, SKEEP);
     m[0] = XMARK0; m[1] = XMARK1;
     EE_WRITE(XB_MARK, 1, m);
     XSTATE = 1;
@@ -514,10 +614,15 @@ static void x_check(void)
     EE_READ(XB_PAGE, 56, PBUF);
     EE_READ(XB_HEAD, 4, PHEAD);
     EE_READ(XB_AKEEP, 8, AKEEP);
+    EE_READ(XB_STASH, 24, SKEEP);
     PREADY = 1; AREADY = 1; PGEN++; AGEN++;          /* the page keeps its backup copies of them */
     XSTATE = 1;
 }
-static void x_akeep(int pg, int slot) { if (XSTATE == 1) EE_WRITE(XB_AKEEP + pg * 4 + slot, 1, AKEEP[pg][slot]); }
+static void x_akeep(int pg, int slot)
+{
+    for (int i = 0; i < 6; i++) SKEEP[pg][slot][i] = SSAVED[slot][i];
+    if (XSTATE == 1) { EE_WRITE(XB_AKEEP + pg * 4 + slot, 1, AKEEP[pg][slot]); EE_WRITE(XB_STASH + 3 * (pg * 4 + slot), 3, SKEEP[pg][slot]); }
+}
 
 int save_wrap(int src, int slot)
 {
@@ -547,6 +652,7 @@ int load_wrap(int dst, int slot)
 {
     x_check();
     ASAVED[slot][0] = AKEEP[PAGE & 1][slot][0]; ASAVED[slot][1] = AKEEP[PAGE & 1][slot][1];
+    for (int i = 0; i < 6; i++) SSAVED[slot][i] = XSTATE == 1 ? SKEEP[PAGE & 1][slot][i] : (i < 5 ? NOITEM : 0);
     if (PAGE) {
         if (!PREADY) empty_page();
         cpy((volatile u8 *)dst, PBUF + slot * 0x70, 0x70);
@@ -871,10 +977,66 @@ static void go(u8 *ui, int n)
 }
 
 /* ---- cursor movement (Backpack, no menu open): returns the cursor the game should go on with ---- */
+/* HD Backpack (Jordan, 2026-11-12: "stop limiting to gba"): the page draws the whole Backpack itself and sets HDMODE every
+   frame while it does. The cursor then moves on the page's layout: worn gear in 3 rows of 3 (amulet helm cape / weapon
+   armor shield / gloves boots Orc Head slot 1), under it the backpack in rows of 4 (grid 8-11, 12-15, Orc Head slots 2-4),
+   under that the arrow slots. CURREQ (target + 1) is a tap on a box: the page sets it and presses Down. */
+#define HDMODE  (*(volatile u8 *)0x0203F602)
+#define CURREQ  (*(volatile u8 *)0x0203F603)
+static const signed char HD_E[3][3] = { { 7, 3, 4 }, { 1, 0, 2 }, { 5, 6, 20 } };
+static const signed char HD_I[3][4] = { { 8, 9, 10, 11 }, { 12, 13, 14, VFIRST }, { VFIRST + 1, VFIRST + 2, VFIRST + 3, VFIRST + 4 } };
+static int hd_nav(int old, int k, int ar)
+{
+    int r = -1, c = 0, n;
+    for (int y = 0; y < 3; y++) for (int x = 0; x < 3; x++) if (HD_E[y][x] == old) { r = y; c = x; }
+    if (r >= 0) {                                    /* worn gear */
+        if (k & 0x40) return r ? HD_E[r - 1][c] : old;
+        if (k & 0x80) return r < 2 ? HD_E[r + 1][c] : HD_I[0][c == 0 ? 0 : c == 1 ? 1 : 3];
+        if (k & 0x20) return c ? HD_E[r][c - 1] : old;
+        if (k & 0x10) return c < 2 ? HD_E[r][c + 1] : old;
+        return old;
+    }
+    for (int y = 0; y < 3; y++) for (int x = 0; x < 4; x++) if (HD_I[y][x] == old) { r = y; c = x; }
+    if (r >= 0) {                                    /* backpack */
+        if (k & 0x40) return r ? HD_I[r - 1][c] : HD_E[2][c == 0 ? 0 : c == 3 ? 2 : 1];
+        if (k & 0x80) return r < 2 ? (HD_I[r + 1][c] >= 0 ? HD_I[r + 1][c] : HD_I[r + 1][2]) : ar ? AFIRST + (ar == 2 && c >= 2) : old;
+        if (k & 0x20) return c ? HD_I[r][c - 1] : old;
+        if (k & 0x10) return c < 3 && HD_I[r][c + 1] >= 0 ? HD_I[r][c + 1] : old;
+        return old;
+    }
+    if (old >= AFIRST) {                             /* arrow slots */
+        c = old - AFIRST;
+        if (k & 0x40) return HD_I[2][ar == 2 ? c * 2 : 1];
+        if (k & 0x30) return ar == 2 ? AFIRST + (c ^ 1) : old;
+        return old;
+    }
+    n = old; return n;
+}
 int nav_c(int proposed)
 {
     u8 *ui = UI;
     int old = ui[0x62], k = KEYS(LOCAL_P), n = proposed, ar = nas(LOCAL_P);
+    if (HDMODE) {
+        int p = LOCAL_P & 1, vo = old == 15 && !LINKED ? VFIRST + WIN[p] : old;   /* cell 15 = the stash cell in it */
+        if (CURREQ) { n = CURREQ - 1; CURREQ = 0; PGREQ = 0; if (n == 25 && ar < 2) n = vo; if (n == 24 && !ar) n = vo; }
+        else n = hd_nav(vo, k, ar);
+        if (n == 15 || (n >= 21 && n < 24) || n > VFIRST + 4 || (n >= 26 && n < VFIRST)) n = vo;
+        if (n >= VFIRST && LINKED) n = vo;
+        if (n == vo || n < 0) return old;
+        if (n >= VFIRST) {                           /* a stash cell: into cell 15, then the cursor goes there */
+            s_window(p, n - VFIRST);
+            if (old != 15) return 15;                /* the game's own move (and description) */
+            place_cursor(ui, 15);
+            GAMEDESC(15);
+            SOUND(2);
+            return 15;
+        }
+        if (n < FIRST) return n;                     /* the game's own move */
+        place_cursor(ui, n);
+        desc(n);
+        SOUND(2);
+        return n;
+    }
     if (PGREQ) {                         /* the page's Backpack button (it sends a Down press with it): turn the page */
         PGREQ = 0;
         if (on_p2(old)) n = old >= AFIRST ? 12 : 12 + old - FIRST;
@@ -952,11 +1114,8 @@ void menu_wrap(void)
     if (cur >= AFIRST) {                                   /* an arrow slot: Unequip into the backpack, or Discard */
         int k = cur - AFIRST;
         if (sel == 0) {
-            for (j = 8; j < 16 && (it[j] & 0xF) != 0xF; j++) ;
-            if (j == 16) { error_text("Your backpack is full!"); return; }
-            it[j] = ASLOT[p][k];
+            if (!pack_put(p, ASLOT[p][k])) { error_text("Your backpack is full!"); return; }
             ASLOT[p][k] = NOARROW;
-            MKSPRITE(j);
         } else if (SETTINGS & 1) {
             ASLOT[p][k] = NOARROW;
         } else {
@@ -975,11 +1134,8 @@ void menu_wrap(void)
     if (cur >= FIRST) {
         int c = cur - FIRST;
         if (sel == 0) {                                    /* Unequip: back into the backpack */
-            for (j = 8; j < 16 && (it[j] & 0xF) != 0xF; j++) ;
-            if (j == 16) { error_text("Your backpack is full!"); return; }
-            it[j] = item_of(CODE[p][c]);
+            if (!pack_put(p, item_of(CODE[p][c]))) { error_text("Your backpack is full!"); return; }
             remove_slot(p, c);
-            MKSPRITE(j);
         } else if (SETTINGS & 1) {                         /* Discard with Fast Discard on */
             remove_slot(p, c);
         } else {                                           /* Discard: "Are you sure?" first, like the game */
@@ -1016,13 +1172,20 @@ void menu_wrap(void)
     if (cur >= 8 && cur < 16 && sel == 0 && is_orc(it[cur])) {   /* Equip an Orc Head: into the next free slot */
         if (LINKED) { SOUND(5); MENU[4] = 2; return; }
         int n = cnt(p);
-        if (n >= 4) { error_text("All 4 Orc Head slots are full!"); return; }
         u16 code = it[cur] >> 16;
         if (is_old(code)) code = local_code(0, DIFF ? 1 : 0);
+        if (n >= 1) {                                      /* one Orc Head slot: swap with the worn head */
+            it[cur] = item_of(CODE[p][0]);
+            CODE[p][0] = code;
+            set_applied(p, CODE[p], 1);
+            SOUND(3);
+            MENU[4] = 2;
+            return;
+        }
         DISCARD(cur, p);                                   /* removes it and its picture (plays a sound) */
-        CODE[p][n] = code;
-        COUNT[p] = n + 1;
-        set_applied(p, CODE[p], n + 1);
+        CODE[p][0] = code;
+        COUNT[p] = 1;
+        set_applied(p, CODE[p], 1);
         MENU[4] = 2;
         return;
     }
