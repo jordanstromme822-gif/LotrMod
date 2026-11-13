@@ -27,7 +27,7 @@ JS = r'''
     { let s = 0; for (const c of CNT) { START.push(s); s += c; } }
     const AW = 104, AH = 80, ACOLS = 16;
     const EQ = [[7, "Amulet"], [3, "Helm"], [4, "Cloak"], [1, "Weapon"], [0, "Armor"], [2, "Shield"], [5, "Gloves"], [6, "Boots"], [20, "Orc Head"]];
-    const INV = [8, 9, 10, 11, 12, 13, 14, 15, 21, 22, 23];
+    const INV = [8, 9, 10, 11, 12, 13, 14, 30, 31, 32, 33, 34];   // 30-34: the 5 cells of the stash (cell 15 shows one of them)
     const COL = { 3: "#f8e050", 9: "#6fe06f", 12: "#6fe06f", 6: "#ff6450" };
     const PGREQ = 0x3F600, HDMODE = 0x3F602, CURREQ = 0x3F603;
     const esc = (s) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
@@ -103,11 +103,12 @@ JS = r'''
           step();
           return;
         }
-        const c = +t.dataset.c;
+        let c = +t.dataset.c;
         if (sub === 0) {
-          if (c === cur) press(8);
+          if (c === ctx.vcur) press(8);
           else { H8[ew + CURREQ] = c + 1; press(5); }
-        } else if (sub === 6 && c >= 8 && c < 16) {   // Move Item: walk the game's grid cursor there, then A
+        } else if (sub === 6 && ((c >= 8 && c < 15) || c === 30 + ctx.win)) {   // Move Item: walk the game's grid cursor there, then A
+          if (c >= 30) c = 15;
           let x = (cur & 3), y = (cur >> 2) & 1; const tx = c & 3, ty = (c >> 2) & 1, seq = [];
           while (x < tx) { seq.push(7); x++; } while (x > tx) { seq.push(6); x--; } while (y < ty) { seq.push(5); y++; } while (y > ty) { seq.push(4); y--; }
           seq.push(8);
@@ -138,7 +139,9 @@ JS = r'''
         const nOrc = Math.min(4, H8[ew + 0x3FFE0 + p]), orc = [];
         for (let i = 0; i < 4; i++) orc.push(i < nOrc ? (((H8[ew + 0x3FF00 + 8 * p + 2 * i] | H8[ew + 0x3FF01 + 8 * p + 2 * i] << 8) << 16) | 0x17FE) >>> 0 : 0xFFFFFFFF);
         const nas = hid === 1 ? 2 : hid === 0 ? 1 : 0, aw = [r32(ew + 0x3F2A0 + 8 * p), r32(ew + 0x3F2A4 + 8 * p)];
-        const wordOf = (c) => c < 16 ? inv[c] : c < 24 ? orc[c - 20] : (aw[c - 24] & 15) === 7 ? aw[c - 24] : 0xFFFFFFFF;
+        const win = Math.min(4, H8[ew + 0x3F868 + p]), stash = []; for (let i = 0; i < 5; i++) stash.push(r32(ew + 0x3F840 + 20 * p + 4 * i));
+        const wordOf = (c) => c >= 30 ? (c - 30 === win ? inv[15] : stash[c - 30]) : c < 16 ? inv[c] : c < 24 ? orc[c - 20] : (aw[c - 24] & 15) === 7 ? aw[c - 24] : 0xFFFFFFFF;
+        const vcur = cur === 15 ? 30 + win : cur;
         // the game's item menu (same reading as the item panel): base 0x030041B0, +8 Carve Rune, +0xC option, +0x14 Yes/No
         let menu = null;
         if (sub === 1) {
@@ -148,13 +151,13 @@ JS = r'''
           if (r32(iw + 0x4144) & 0x20) o.push([4, "Trade"]);
           menu = { q: "What would you like to do with this item?", o, sel: H8[iw + 0x41BC] };
         } else if (sub === 3) menu = { q: "Are you sure you want to discard this item?", o: [[0, "Yes"], [1, "No"]], sel: H8[iw + 0x41C4] };
-        ctx = { H8, ew, iw, cur, sub, menu };
+        ctx = { H8, ew, iw, cur, vcur, win, sub, menu };
         // size: the page sits exactly over the game picture
         const fs = Math.max(9, Math.round(r.height * 0.029));
         const c = Math.max(30, Math.min(r.height * 0.86 / 8.3, (r.width * 0.55) / 4.9));
         const P = ew + 0x3F520, Q = ew + 0x3F740, has = H8[P + 10] === cur && r32(P);
         const worn = cur >= 8 && cur < 16 ? r32(Q + 4) : 0, wtext = worn ? str(H8, Q + 8, 200) : "";
-        const key = [r.left, r.top, r.width, r.height, cur, sub, inv.join(), orc.join(), aw.join(), has ? r32(P) : 0, worn, wtext, menu ? menu.sel + ":" + menu.o.length : ""].join("/");
+        const key = [r.left, r.top, r.width, r.height, cur, sub, inv.join(), orc.join(), aw.join(), stash.join(), win, has ? r32(P) : 0, worn, wtext, menu ? menu.sel + ":" + menu.o.length : ""].join("/");
         window.__hdBpOn = true;
         if (key === last && !el.hidden) return;
         last = key;
@@ -162,8 +165,8 @@ JS = r'''
         el.style.setProperty("--fs", fs + "px"); el.style.setProperty("--c", Math.round(c) + "px");
         // left page
         let L = "";
-        const w = wordOf(cur);
-        if (has && w !== 0xFFFFFFFF) {
+        const w = wordOf(vcur);
+        if (has && w && (w & 15) !== 15) {
           const name = str(H8, P + 12, 44), text = str(H8, P + 0x38, 168), lv = H8[P + 9], low = H8[P + 11], col = H8[P + 8];
           const lines = text.replace(/\s*\(page 2 of your backpack[^)]*\)/, "").replace(/in an Orc Head slot/, "in the Orc Head slot").split(/, |\. (?=[A-Z])/).map((s) => s.trim()).filter(Boolean);
           L += '<div class="big">' + pic(w) + "</div>" +
@@ -183,13 +186,13 @@ JS = r'''
         // right page
         const cell = (cc, label, cls) => {
           const ww = wordOf(cc), ar = cc >= 24 && (ww & 15) === 7;
-          return '<div class="cell ' + (cls || "") + " " + tier(ww) + (cc === cur ? " cur" : "") + '" data-c="' + cc + '">' + pic(ww) +
+          return '<div class="cell ' + (cls || "") + " " + tier(ww) + (cc === vcur ? " cur" : "") + '" data-c="' + cc + '">' + pic(ww) +
             (ar ? '<span class="ct">' + ((ww >>> 16) & 255) + "</span>" : "") + (label ? '<span class="lb">' + label + "</span>" : "") + "</div>";
         };
         let R = '<div class="row"><div class="hdr">Equipped</div><div class="gr eq">' +
           EQ.map(([cc, lb]) => cell(cc, lb === "Shield" && (wordOf(2) & 15) === 7 ? "Arrows" : lb, cc === 20 ? "oh" : "")).join("") + "</div></div>";
         R += '<div class="row"><div class="hdr">Backpack</div><div class="gr iv">' +
-          INV.map((cc) => cell(cc, cc >= 20 ? "Orc Head" : "", cc >= 20 ? "oh" : "")).join("") + "</div></div>";
+          INV.map((cc) => cell(cc, "", "")).join("") + "</div></div>";
         if (nas) R += '<div class="row"><div class="gr ar">' + [24, 25].slice(0, nas).map((cc) => cell(cc, "Arrows", "ax")).join("") + "</div></div>";
         R += '<div class="bar"><b data-k="L">&#9666; L Skills</b><b data-k="R">Stats R &#9656;</b></div>';
         el.children[2].innerHTML = R;

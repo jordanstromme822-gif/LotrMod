@@ -121,17 +121,10 @@ unpack_stub:
     .global clear_stub
     .thumb_func
 clear_stub:
-    ldr r3, =0x0203FFE0
-    mov r12, r0
-    movs r0, #0
-    str r0, [r3]
-    ldr r3, =0x0203F2A0      @ and the arrow slots of both players
-    mvns r0, r0
-    str r0, [r3]
-    str r0, [r3, #4]
-    str r0, [r3, #8]
-    str r0, [r3, #12]
-    mov r0, r12
+    push {r0, lr}
+    bl clear_c               @ counts, arrow slots and backpack stash of both players
+    pop {r0, r1}
+    mov lr, r1
     ldr r3, =0x08032D9D
     bx r3
 
