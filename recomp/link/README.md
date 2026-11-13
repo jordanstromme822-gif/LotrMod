@@ -136,3 +136,24 @@ slice/dispatch boundary). Game state is identical frame for frame (`hash=` in
 the `[speed]` line). Native 2-player fight: 12.4-12.6 -> 10.6-11.1 ms/frame
 (~12-14%); browser at 3x CPU throttle: +6-9% engine frames/s.
 Regenerate the link code with the patched `gba_recompile` after applying it.
+
+## P2 inside one game: stand-in partner (prototype, 2026-11-13)
+
+Jordan: nobody links any more, P2 just joins. In a level the two games only swap one 12-byte message per
+game tick (every 2 frames), after a fixed handshake (slave sends beef c0de c0de babe babe):
+
+- word 0: message type (0x13 = buttons) | sequence << 8. P2's sequence is always the master's minus 1.
+- word 1: check word = -(byte sum of the other words + shared session state). So P2's check word =
+  master check word + bytesum(master) - bytesum(P2). The master's packet in flight is at IWRAM 0x03006D14.
+- word 2: buttons, 0xFC00 | pressed bits (~KEYINPUT, built at 0x0803FEFC).
+- word 3: sender's hero position, low bytes of obj+0xAE (x) and obj+0xB2 (y); hero obj ptr at
+  0x03003C00 + 0x1AC * player.
+- other message types (events, e.g. type 6) carry the same payload on both games.
+
+`one-game-partner.patch` (gbarecomp) adds `gba::g_link_virtual_word` (a hook that supplies port 1's word at
+each transfer), `gba::g_link_virtual1` (port 1 follows port 0's clock) and `gbarecomp::g_session_skip_mask`
+(skip a machine's CPU and devices). link_main: `ROTK_VP=check` compares the stand-in's words with the real
+second game; `ROTK_VP_AT=<frame>` switches the second game off at that frame and the stand-in takes over.
+Headless Hornburg fight (spawn test): game keeps running, P2 keeps moving and fighting; 6.7-8.3 ->
+3.9-5.0 ms/frame (~40% less). Boot, menus and level start still need the real second game (type 0x14/0x15
+messages carry P2's own data), and P2's own Backpack menu runs in P2's game.
