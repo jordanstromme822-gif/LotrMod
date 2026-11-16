@@ -324,6 +324,59 @@ static int g_link_net = 0;
 static unsigned g_link_show = 0;
 static std::vector<std::array<std::uint16_t, 2>> g_net_q;
 static std::size_t g_net_head = 0;
+// v180 (Jordan, 2026-11-16: "all updates to affect online and offline"): the page's own changes to game memory
+// (free-angle stick, HD Backpack, hooks...) travel with the buttons. Before each picture the engine compares both
+// games' RAM with how the last frame left it: whatever differs was written by the page. Those bytes are put back and
+// handed to the page (rotk_link_outbox), which sends them with its next frame's buttons; both pages then write them
+// (rotk_link_op) right before that frame runs, so the two pages stay byte-identical.
+struct NetOp { std::uint32_t a; std::uint8_t v, g, kind; };   // a: GBA address; g: bit 0 game 0, bit 1 game 1; kind 0 set, 1 or
+static std::vector<std::vector<NetOp>> g_net_ops;              // with g_net_q, one list per queued frame
+static std::vector<NetOp> g_net_pending, g_net_out;
+static std::vector<std::uint8_t> g_net_snap;                   // [game][iwram 0x8000, ewram 0x40000]
+static bool g_net_snap_ok = false;
+static std::uint8_t* net_mem(unsigned g, std::uint32_t a) {
+    if (!g_link) return nullptr;
+    auto& bus = g_link->machine(g & 1).bus;
+    if ((a >> 24) == 3) return bus.iwram_ptr() + (a & 0x7fff);
+    if ((a >> 24) == 2) return bus.ewram_ptr() + (a & 0x3ffff);
+    return nullptr;
+}
+static void net_apply(const std::vector<NetOp>& ops) {
+    for (const auto& o : ops) for (unsigned g = 0; g < 2; ++g) if (o.g & (1u << g)) {
+        if (std::uint8_t* m = net_mem(g, o.a)) { if (o.kind == 1) *m |= o.v; else *m = o.v; }
+    }
+}
+static void net_take_page_writes() {
+    if (!g_link || !g_net_snap_ok) return;
+    constexpr std::size_t IW = 0x8000, EW = 0x40000;
+    for (unsigned g = 0; g < 2; ++g) {
+        auto& bus = g_link->machine(g).bus;
+        std::uint8_t* regs[2] = {bus.iwram_ptr(), bus.ewram_ptr()};
+        const std::size_t len[2] = {IW, EW}; const std::uint32_t base[2] = {0x03000000u, 0x02000000u};
+        std::uint8_t* snap = g_net_snap.data() + g * (IW + EW);
+        for (int r = 0; r < 2; ++r) {
+            std::uint8_t* m = regs[r]; std::uint8_t* s = snap + (r ? IW : 0);
+            for (std::size_t o = 0; o < len[r]; o += 64) {
+                if (std::memcmp(m + o, s + o, 64) == 0) continue;
+                for (std::size_t b = o; b < o + 64; ++b) if (m[b] != s[b]) {
+                    if (g_net_out.size() < 65536) g_net_out.push_back({static_cast<std::uint32_t>(base[r] + b), m[b], static_cast<std::uint8_t>(1u << g), 0});
+                    m[b] = s[b];
+                }
+            }
+        }
+    }
+}
+static void net_snapshot() {
+    if (!g_link) return;
+    constexpr std::size_t IW = 0x8000, EW = 0x40000;
+    g_net_snap.resize(2 * (IW + EW));
+    for (unsigned g = 0; g < 2; ++g) {
+        auto& bus = g_link->machine(g).bus;
+        std::memcpy(g_net_snap.data() + g * (IW + EW), bus.iwram_ptr(), IW);
+        std::memcpy(g_net_snap.data() + g * (IW + EW) + IW, bus.ewram_ptr(), EW);
+    }
+    g_net_snap_ok = true;
+}
 // The multiplayer path screen only offers story levels; when the page asks for another level,
 // swap it in as the path screen hands its choice to the level loader (both games, same frame).
 static void link_force_level() {
@@ -447,13 +500,18 @@ static int run_link(const gbarecomp::RunOptions& opts) {
         std::array<std::uint16_t, 2> keys{static_cast<std::uint16_t>(~ev.keyinput & 0x3ff), static_cast<std::uint16_t>(g_link_p2_keys & 0x3ff)};
         // Fast start (page sets g_link_turbo while it drives the menus): several game frames per picture, no sound.
         int reps = 1 + (g_link_turbo > 0 ? (g_link_turbo < 8 ? g_link_turbo : 8) : 0);
-        if (g_link_net) reps = static_cast<int>(std::min<std::size_t>(g_net_q.size() - g_net_head, 6));
+        if (g_link_net) { reps = static_cast<int>(std::min<std::size_t>(g_net_q.size() - g_net_head, 6)); net_take_page_writes(); }
         for (int r = 0; r < reps; ++r) {
-            if (g_link_net) { keys = g_net_q[g_net_head++]; if (g_net_head == g_net_q.size()) { g_net_q.clear(); g_net_head = 0; } }
+            if (g_link_net) {
+                net_apply(g_net_ops[g_net_head]);
+                keys = g_net_q[g_net_head++];
+                if (g_net_head == g_net_q.size()) { g_net_q.clear(); g_net_ops.clear(); g_net_head = 0; }
+            }
             try { S.run_frame(keys); link_force_level(); } catch (const std::exception& e) {
                 std::fprintf(stderr, "[rotk:link] stopped: %s\n", e.what()); return false;
             }
             ++g_link_frames;
+            if (g_link_net && r + 1 == reps) net_snapshot();
             if (r + 1 < reps) for (int b = 0; b < 16; ++b) { std::uint32_t rate = 0; if (!m0.bus.audio().drain_sample_block(audio_buf, 2048, rate)) break; }
         }
         if (m0.ppu.frame_count() != last_frame && m0.ppu.has_latched_framebuffer()) {
@@ -613,7 +671,22 @@ const std::uint8_t* rotk_link_iwram(int i) { return g_link ? g_link->machine(i &
 const std::uint8_t* rotk_link_ewram(int i) { return g_link ? g_link->machine(i & 1).bus.ewram_ptr() : nullptr; }
 void rotk_link_level(unsigned level) { g_link_level = level & 0xff; }
 // Online: queue one frame's buttons (GBA bits, 1 = pressed) for both games; returns frames waiting.
-int rotk_link_push(unsigned k0, unsigned k1) { g_net_q.push_back({static_cast<std::uint16_t>(k0 & 0x3ff), static_cast<std::uint16_t>(k1 & 0x3ff)}); return static_cast<int>(g_net_q.size() - g_net_head); }
+int rotk_link_push(unsigned k0, unsigned k1) {
+    g_net_q.push_back({static_cast<std::uint16_t>(k0 & 0x3ff), static_cast<std::uint16_t>(k1 & 0x3ff)});
+    g_net_ops.push_back(std::move(g_net_pending)); g_net_pending.clear();
+    return static_cast<int>(g_net_q.size() - g_net_head);
+}
+// Online (v180): one memory write for the next frame pushed (both pages call it alike): games g (bit 0/1), GBA address
+// a, byte v, kind 0 = set, 1 = or.
+void rotk_link_op(unsigned g, unsigned a, unsigned v, unsigned kind) { g_net_pending.push_back({a, static_cast<std::uint8_t>(v), static_cast<std::uint8_t>(g & 3), static_cast<std::uint8_t>(kind & 1)}); }
+// Online (v180): the page's own writes since the last frame, taken back out of the games: up to max entries of
+// 8 bytes (u32 address, u8 value, u8 games) into out; returns how many.
+int rotk_link_outbox(std::uint8_t* out, int max) {
+    const int n = static_cast<int>(std::min<std::size_t>(g_net_out.size(), static_cast<std::size_t>(max > 0 ? max : 0)));
+    for (int i = 0; i < n; ++i) { const auto& o = g_net_out[i]; std::memcpy(out + 8 * i, &o.a, 4); out[8 * i + 4] = o.v; out[8 * i + 5] = o.g; out[8 * i + 6] = 0; out[8 * i + 7] = 0; }
+    g_net_out.erase(g_net_out.begin(), g_net_out.begin() + n);
+    return n;
+}
 int rotk_link_queued() { return static_cast<int>(g_net_q.size() - g_net_head); }
 // Online: hash of both games' work RAM, compared between the two pages now and then (out of step = different).
 unsigned rotk_link_hash() {
