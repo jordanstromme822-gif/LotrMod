@@ -5,9 +5,10 @@
  * out its 8-direction walk, hero_upd:
  *   - turns the walk velocity (+0xB4 / +0xB8, read by the move step 0x080023C0 that runs next) to the stick's exact
  *     angle at the same speed (+0xE4), so collision and everything after it stay the game's own;
- *   - for Frodo (hero id 0), picks one of 16 facings and shows an in-between picture (walk and stand) for the odd
- *     ones. The pictures are a separate data block at 0x0808A000 (tools/turn16/gen16.py), laid out like the game's
- *     own anim table (+0x88), so 0x08000D58 loads them like any other picture.
+ *   - picks one of 16 facings and shows an in-between picture (walk and stand) for the odd ones, for every hero
+ *     (v176; v170-v175 Frodo only). The pictures are a separate data block past the 16 MB game at 0x09000000
+ *     (tools/turn16/gen16all.py; the page grows the built game for it), starting with 8 pairs {game's anim table,
+ *     ours}; ours is laid out like the game's own table (+0x88), so 0x08000D58 loads them like any other picture.
  * It also turns Frodo's crossbow traps (tools/orcslots/crossbow.c) through 16 facings: each tick a crossbow of this
  * player gets a 16-picture anim set (pictures: xb16.bin at 0x08094400, tools/turn16/xb16.py) and turns one facing
  * a tick toward the nearest foe it would shoot, so it swings round smoothly instead of snapping when it fires.
@@ -17,8 +18,9 @@ typedef unsigned char u8; typedef signed char s8; typedef unsigned short u16; ty
 #include "tables.h"
 
 #define FA        ((volatile u8 *)0x0203FFC0)   /* [4 * player]: +0 bit0 on, bit1 stick held; +1 angle; +2 facing16 | 0x80 */
-#define TBL16     0x0808A000u                   /* our anim table: kinds 4 and 6 have 4 in-between facings */
-#define TBL16_END 0x0808A400u
+#define IDX16     ((const u32 *)0x09000000)     /* hero16.bin (gen16all.py): 8 x {game's table, ours}; kinds 4 and 6 have 4 in-between facings */
+#define OURS_LO   0x09000000u                   /* pictures live past the 16 MB game, ROM 0x1000000 on (the page grows the file) */
+#define OURS_HI   0x09200000u
 #define HERO      0x03003C00u
 #define HERO_SZ   0x1ACu
 #define DIR5      ((const s8 *)0x08050418)      /* facing 0-7 -> drawn direction 0-4 */
@@ -72,13 +74,13 @@ static void turn(u8 *o)
     } else {
         fa[2] = 0;
     }
-    u8 hid = *(volatile u8 *)(HERO + HERO_SZ * p + 0x19F);
-    u32 cur = U32(o, 0x24);
-    int ours = cur >= TBL16 && cur < TBL16_END;
+    u32 cur = U32(o, 0x24), gt = U32(o, 0x88), t16 = 0;
+    int ours = cur >= OURS_LO && cur < OURS_HI;
+    for (int h = 0; h < 8; h++) if (IDX16[2 * h] == gt) { t16 = IDX16[2 * h + 1]; break; }
     if (on && (kind == 4 || kind == 6)) {
         int f8 = f8_of(f), d, flip;
         u32 t;
-        if (hid == 0 && (f & 1)) { t = TBL16; d = f < 8 ? (f - 1) >> 1 : (15 - f) >> 1; flip = f > 8; }
+        if (t16 && (f & 1)) { t = t16; d = f < 8 ? (f - 1) >> 1 : (15 - f) >> 1; flip = f > 8; }
         else { t = U32(o, 0x88); d = DIR5[f8]; flip = f8 > 4; }
         if (cur != *(const u32 *)(t + 4 * kind) + 16 * d) show(o, t, kind, d);
         if (flip) o[0xDF] |= 0x10; else o[0xDF] &= ~0x10;
@@ -206,12 +208,128 @@ static void stun_notes(void)
     }
 }
 
+
+/* ---- enemies in 16 facings (v177, Jordan 2026-11-16: "Next do enemies") ----
+   Enemy species s (object + 0x61) shows anim sets from 0x08056820 + 24 s (0 walk, 1 stand) through 0x08001AC4(object,
+   set + 16 * DIR5[facing]). enemy16.bin (genenemy.py, past 16 MB at 0x09080000) holds 4 in-between entries per walk and
+   stand set; its first word points at SP[82][2] = ours for (species, walk / stand), 0 = none.
+   Each tick, for every awake enemy showing a walk or stand picture:
+   - turning: the facing it shows (0-15, kept per enemy in ESIDE) steps one sixteenth a tick toward the game's facing,
+     so it swings through the in-between pictures instead of snapping (more than 90 degrees still snaps);
+   - chasing (FA[3] bit 0, set by the page): walking within 22.5 degrees of the hero, its velocity turns to point straight
+     at him (same speed), and it faces that exact way. */
+#define ET        0x08056820u
+#define ENX       (*(const u32 *)0x09080000)
+#define ESIDE     ((volatile u32 *)0x0203FB00)   /* 32 x {object, shown facing | 0x100}: free EWRAM (checked in play) */
+#define ESIDE_N   32
+#define TICKS     (*(volatile u32 *)0x030041A4)
+#define SETSET(o, e) ((fn4)0x08001AC5)((int)(o), (int)(e), 0, 0)
+
+static int q64(int n, int d)                /* (n * 64) / d for 0 <= n <= d, without a divide call */
+{
+    int q = 0;
+    for (int b = 32; b; b >>= 1) if ((q + b) * d <= n * 64) q += b;
+    if (q < 64 && (q + 1) * d <= n * 64) q++;
+    return q;
+}
+
+static int atan256(int x, int y)            /* screen angle of (x, y up), 0 = up, clockwise, 256 steps */
+{
+    int ax = x < 0 ? -x : x, ay = y < 0 ? -y : y, a;
+    if (!ax && !ay) return 0;
+    if (ax <= ay) a = ATN[q64(ax, ay)]; else a = 64 - ATN[q64(ay, ax)];
+    if (y < 0) a = 128 - a;
+    if (x < 0) a = -a;
+    return a & 255;
+}
+
+static volatile u32 *eside(u8 *e)
+{
+    volatile u32 *free = 0;
+    for (int i = 0; i < ESIDE_N; i++) {
+        if (ESIDE[2 * i] == (u32)e) return ESIDE + 2 * i;
+        if (!free && !ESIDE[2 * i]) free = ESIDE + 2 * i;
+    }
+    if (!free) { free = ESIDE + 2 * (TICKS & (ESIDE_N - 1)); }
+    free[0] = (u32)e; free[1] = 0;
+    return free;
+}
+
+static void enemies(u8 *hero)
+{
+    u32 sp = ENX;
+    if (sp < 0x09080000u || sp >= 0x09400000u) return;
+    int hx = S32(hero, 0xAC) >> 16, hy = S32(hero, 0xB0) >> 16, chase = FA[3] & 1;
+    for (u8 *e = ENEMIES; e; e = *(u8 **)e) {
+        u32 f = U32(e, 0xE8);
+        if ((f & 0x801000) != 0x1000 || !(f & 0x10040400)) continue;
+        int s = e[0x61];
+        if (s >= 82) continue;
+        u32 cur = U32(e, 0x24), p = 0, a = 0;
+        int k, r, flip = e[0xDF] & 0x10;
+        for (k = 0; k < 2; k++) {
+            p = *(const u32 *)(ET + 24 * s + 4 * k); a = ((const u32 *)sp)[2 * s + k];
+            if (!a) continue;
+            if (cur >= p && cur < p + 0x50) { int d = (cur - p) >> 4; r = flip ? (16 - 2 * d) & 15 : 2 * d; break; }
+            if (cur >= a && cur < a + 0x40) { int j = (cur - a) >> 4; r = flip ? 15 - 2 * j : 2 * j + 1; break; }
+        }
+        if (k == 2) continue;
+        volatile u32 *sd = eside(e);
+        if (sd[1] & 0x100) r = sd[1] & 15;              /* what we showed last tick (the game may have snapped it) */
+        int t = e[0xF8] << 1;
+        if (chase && k == 0 && (S32(e, 0xB4) || S32(e, 0xB8))) {
+            int vx = S32(e, 0xB4), vy = S32(e, 0xB8);
+            int at = atan256((hx - (S32(e, 0xAC) >> 16)) * 64, -((hy - (S32(e, 0xB0) >> 16)) * 64));
+            int av = atan256(vx >> 4, -(vy >> 4)), dl = (s8)(at - av);
+            if (dl >= -16 && dl <= 16) {
+                int c = SIN[(dl + 64) & 255], sn = SIN[dl & 255], x = vx >> 4, y = -vy >> 4;
+                S32(e, 0xB4) = ((x * c) >> 10) + ((y * sn) >> 10);
+                S32(e, 0xB8) = -(((y * c) >> 10) - ((x * sn) >> 10));
+                t = F16[at];
+            }
+        }
+        if (r != t) {                                   /* one sixteenth a tick; a turn of more than 90 degrees snaps */
+            int d = (t - r) & 15;
+            if (d > 4 && d < 12) r = t; else r = (r + (d < 8 ? 1 : 15)) & 15;
+        }
+        sd[1] = 0x100 | r;
+        u32 want; int wf;
+        if (r & 1) { want = a + 16 * (r < 8 ? (r - 1) >> 1 : (15 - r) >> 1); wf = r > 8; }
+        else { int f8 = r >> 1; want = p + 16 * DIR5[f8]; wf = f8 > 4; }
+        if (want != cur) {
+            int fr = e[0x23];
+            SETSET(e, want);
+            if (fr && fr < frames_of(want)) SETFRAME(e, fr);
+        }
+        if (wf) e[0xDF] |= 0x10; else e[0xDF] &= ~0x10;
+    }
+}
+
+/* v179 (one engine, P2 games): the page's stick changes for player 0 go through a small queue stamped with a game tick,
+   so both games of a local P2 game apply each change on the same tick (the two games are not always on the same tick when
+   the page writes). 8 entries of {u32 tick; u8 fa0; u8 angle; u16 0} at EWRAM 0x0203FC00; page count 0x0203FC41, applied
+   count 0x0203FC40. A 1-player game writes FA directly and leaves the queue empty. */
+#define FQ        ((volatile u8 *)0x0203FC00)
+static void fa_queue(void)
+{
+    u8 n = FQ[0x40];
+    while (n != FQ[0x41]) {
+        volatile u8 *e = FQ + 8 * (n & 7);
+        if ((s32)(TICKS - *(volatile u32 *)e) < 0) break;
+        FA[0] = e[4];
+        if (e[4] & 2) FA[1] = e[5];
+        n++;
+    }
+    FQ[0x40] = n;
+}
+
 int hero_upd(u8 *o)
 {
+    if (o[0x96] == 0) fa_queue();
     int r = UPDATE(o);
     turn(o);
     if (o[0x96] <= 1 && *(volatile u8 *)(HERO + HERO_SZ * o[0x96] + 0x19F) == 0) xb_turn(o[0x96]);
-    if (o[0x96] == 0) stun_notes();
+    if (o[0x96] == 0) { stun_notes(); enemies(o); }
     return r;
 }
 

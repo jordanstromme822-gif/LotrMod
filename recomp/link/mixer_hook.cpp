@@ -72,6 +72,9 @@ int mixer(std::uint32_t pc, int thumb) {
 }
 }
 
+// One engine (2026-11-16): a 1-player game in this build runs through run_game, which has no
+// GbaInstance to set up, so the same mixer goes in as the global RAM dispatch hook.
+void rotk_solo_setup() { g_runtime_ram_dispatch_hook = mixer; }
 void rotk_link_setup(gbarecomp::GbaInstance& m) {
     m.execution.ram_dispatch = mixer;
     m.execution.ram_dispatch_filter = filter;

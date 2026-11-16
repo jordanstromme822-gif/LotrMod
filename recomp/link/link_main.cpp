@@ -704,7 +704,7 @@ int rotk_link_save(int i, std::uint8_t* out) {
 }
 }
 int main(int argc, char** argv) {
-    gbarecomp::RunOptions opts;
+    static gbarecomp::RunOptions opts;   // static: on the web the main loop outlives main() (wasm EH would destroy a local)
     opts.builtin_game_name = "The Lord of the Rings: The Return of the King (USA, Europe) Modded";
     opts.builtin_rom_sha1 = "dd6d504c587ce487c983968f4f01748457b30ed8";
     opts.max_view_width = 320;
@@ -712,5 +712,6 @@ int main(int argc, char** argv) {
     opts.extended_view_frame = rotk_view::frame;
     opts.view_geometry = rotk_view::geometry;
     if (std::getenv("ROTK_LINK")) return run_link(opts);
+    { extern void rotk_solo_setup(); rotk_solo_setup(); }   // one engine: the solo game needs the native mixer too
     return gbarecomp::run_game(argc, argv, opts);
 }
