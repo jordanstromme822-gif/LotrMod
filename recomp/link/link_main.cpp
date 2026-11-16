@@ -387,6 +387,41 @@ static bool vp_take_over() {
     return true;
 }
 
+// A hero's 0x70-byte save record, built by the game's own builder (0x0803C6CC) inside game g for player pl
+// (-1 = the game's own player). In one-game play P2 has no game of its own, so P2's save comes from P1's game.
+// Runs through the interpreter between frames; game g's memory, registers and clock are all put back after.
+static int vp_record(gbarecomp::GbaMultiplayerSession& S, int g, int pl, std::uint8_t* out) {
+    auto& m = S.machine(g & 1);
+    std::uint8_t* iw = m.bus.iwram_ptr(); std::uint8_t* ew = m.bus.ewram_ptr();
+    std::vector<std::uint8_t> civ(iw, iw + 0x8000), cew(ew, ew + 0x40000);
+    gbarecomp::RuntimeArmContext saved; gbarecomp::runtime_capture_arm_context(saved);
+    gbarecomp::RuntimeTimingContext tsaved; gbarecomp::runtime_capture_timing_context(tsaved);
+    gba::GbaBus* sbus = gbarecomp::active_bus(); gba::GbaPpu* sppu = gbarecomp::active_ppu();
+    gbarecomp::runtime_restore_arm_context(m.execution); gbarecomp::runtime_restore_timing_context(m.timing);
+    gbarecomp::set_active_bus(&m.bus); gbarecomp::set_active_ppu(&m.ppu);
+    gbarecomp::runtime_session_execution(true);   // the clock only counts; no device or IRQ runs
+    std::uint32_t sp = g_cpu.R[13] & ~7u;
+    if (sp >> 24 != 3 || (sp & 0xFFFFFF) < 0x6000) sp = 0x03007C00;
+    const std::uint32_t dst = sp - 0x100, stop = 0x03007FF0u;
+    auto r32 = [&](std::uint32_t a) { a &= 0x7FFF; return iw[a] | iw[a + 1] << 8 | iw[a + 2] << 16 | std::uint32_t(iw[a + 3]) << 24; };
+    if (pl >= 0) iw[0x3F59] = static_cast<std::uint8_t>(pl);
+    g_cpu.R[0] = dst; g_cpu.R[1] = r32(0x03004174); g_cpu.R[13] = dst - 0x20; g_cpu.R[14] = stop | 1u;
+    g_cpu.cpsr |= CPSR_T_BIT | CPSR_I_BIT;
+    runtime_call_push_return(stop | 1u);   // a caller frame, so the interpreter runs the whole call
+    int ok = 0;
+    try { ok = runtime_bridge_interpret(0x0803C6CCu, true, stop, 4000000u); } catch (...) { ok = 0; }
+    if (ok && out) std::memcpy(out, iw + (dst & 0x7FFF), 0x70);
+    gbarecomp::runtime_session_execution(false);
+    if (std::getenv("ROTK_VP_RECDIFF")) {   // test: which memory the builder touched (besides its stack)
+        for (unsigned i = 0; i < 0x8000; ++i) if (iw[i] != civ[i] && (i < (dst & 0x7FFF) - 0x200 || i >= (dst & 0x7FFF) + 0x100)) std::fprintf(stderr, "[recdiff] iw %04x %02x->%02x\n", i, civ[i], iw[i]);
+        for (unsigned i = 0; i < 0x40000; ++i) if (ew[i] != cew[i]) std::fprintf(stderr, "[recdiff] ew %05x %02x->%02x\n", i, cew[i], ew[i]);
+    }
+    std::memcpy(iw, civ.data(), civ.size()); std::memcpy(ew, cew.data(), cew.size());
+    gbarecomp::runtime_restore_arm_context(saved); gbarecomp::runtime_restore_timing_context(tsaved);
+    gbarecomp::set_active_bus(sbus); gbarecomp::set_active_ppu(sppu);
+    return ok;
+}
+
 extern gba::GbaBus* g_session_hook_bus;
 extern std::uint64_t g_session_slice_lookahead;
 extern "C" int g_session_bridge_misses;
@@ -734,6 +769,14 @@ static int run_link(const gbarecomp::RunOptions& opts) {
                 std::fprintf(stderr, "[vp] f%u P1 %s P2 %s sub %u state %u\n", f, pos(0).c_str(), pos(1).c_str(), g_vp_iw[0x41C0], g_vp_iw[0x41B0]); }
             if (vp_at && f >= vp_at && g_vp_mode == 1) { g_vp_mode = 3; if (vp_take_over())
                 std::fprintf(stderr, "[vp] f%u second game switched off (ok %llu bad %llu so far)\n", f, g_vp_ok, g_vp_bad); else g_vp_mode = 1; } }
+        if (const char* rq = std::getenv("ROTK_VP_REC")) { static const unsigned rf = std::atoi(rq); if (f == rf) {
+            std::uint8_t a[0x70], b[0x70], c[0x70]; const int oa = vp_record(S, 0, 1, a), ob = vp_record(S, 1, -1, b), oc = vp_record(S, 0, -1, c);
+            std::fprintf(stderr, "[rec] f%u built %d %d %d; P2 from game 0 vs game 1:", f, oa, ob, oc); int nd = 0;
+            for (int i = 0; i < 0x70; ++i) if (a[i] != b[i]) { ++nd; std::fprintf(stderr, " %02x:%02x/%02x", i, a[i], b[i]); }
+            std::fprintf(stderr, " (%d differ)\n[rec] P1 own vs saved slot:", nd);
+            const std::uint8_t* iw0 = S.machine(0).bus.iwram_ptr(); const unsigned so = 0x5630 + iw0[0x41BC] * 0x70; nd = 0;
+            for (int i = 0; i < 0x70; ++i) if (c[i] != iw0[so + i]) ++nd;
+            std::fprintf(stderr, " %d differ\n[rec] a:", nd); for (int i = 0; i < 0x70; ++i) std::fprintf(stderr, "%02x", a[i]); std::fprintf(stderr, "\n"); } }
         S.run_frame(keys); link_force_level();
 #if !defined(__EMSCRIPTEN__) && __has_include(<valgrind/callgrind.h>)
         if (auto_p[0] >= 0 && phase == 3) {   // profile only frames [ROTK_PROF_FROM, +ROTK_PROF_N) after the level start
@@ -801,6 +844,8 @@ int rotk_link_outbox(std::uint8_t* out, int max) {
 // Page: P2 is in the level -> run both heroes in one game from now on (the stand-in takes over at a message boundary).
 void rotk_link_one() { g_link_one_req = 1; }
 int rotk_link_is_one() { return g_vp_mode == 2; }
+// One-game play: P2's save record (0x70 bytes, as in RAM) built from P1's game; 1 when built.
+int rotk_link_p2_record(std::uint8_t* out) { return g_link && g_vp_mode == 2 ? vp_record(*g_link, 0, 1, out) : 0; }
 int rotk_link_queued() { return static_cast<int>(g_net_q.size() - g_net_head); }
 // Online: hash of both games' work RAM, compared between the two pages now and then (out of step = different).
 unsigned rotk_link_hash() {
