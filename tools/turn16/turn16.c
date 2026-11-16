@@ -208,12 +208,109 @@ static void stun_notes(void)
     }
 }
 
+
+/* ---- enemies in 16 facings (v177, Jordan 2026-11-16: "Next do enemies") ----
+   Enemy species s (object + 0x61) shows anim sets from 0x08056820 + 24 s (0 walk, 1 stand) through 0x08001AC4(object,
+   set + 16 * DIR5[facing]). enemy16.bin (genenemy.py, past 16 MB at 0x09080000) holds 4 in-between entries per walk and
+   stand set; its first word points at SP[82][2] = ours for (species, walk / stand), 0 = none.
+   Each tick, for every awake enemy showing a walk or stand picture:
+   - turning: the facing it shows (0-15, kept per enemy in ESIDE) steps one sixteenth a tick toward the game's facing,
+     so it swings through the in-between pictures instead of snapping (more than 90 degrees still snaps);
+   - chasing (FA[3] bit 0, set by the page): walking within 22.5 degrees of the hero, its velocity turns to point straight
+     at him (same speed), and it faces that exact way. */
+#define ET        0x08056820u
+#define ENX       (*(const u32 *)0x09080000)
+#define ESIDE     ((volatile u32 *)0x0203FB00)   /* 32 x {object, shown facing | 0x100}: free EWRAM (checked in play) */
+#define ESIDE_N   32
+#define TICKS     (*(volatile u32 *)0x030041A4)
+#define SETSET(o, e) ((fn4)0x08001AC5)((int)(o), (int)(e), 0, 0)
+
+static int q64(int n, int d)                /* (n * 64) / d for 0 <= n <= d, without a divide call */
+{
+    int q = 0;
+    for (int b = 32; b; b >>= 1) if ((q + b) * d <= n * 64) q += b;
+    if (q < 64 && (q + 1) * d <= n * 64) q++;
+    return q;
+}
+
+static int atan256(int x, int y)            /* screen angle of (x, y up), 0 = up, clockwise, 256 steps */
+{
+    int ax = x < 0 ? -x : x, ay = y < 0 ? -y : y, a;
+    if (!ax && !ay) return 0;
+    if (ax <= ay) a = ATN[q64(ax, ay)]; else a = 64 - ATN[q64(ay, ax)];
+    if (y < 0) a = 128 - a;
+    if (x < 0) a = -a;
+    return a & 255;
+}
+
+static volatile u32 *eside(u8 *e)
+{
+    volatile u32 *free = 0;
+    for (int i = 0; i < ESIDE_N; i++) {
+        if (ESIDE[2 * i] == (u32)e) return ESIDE + 2 * i;
+        if (!free && !ESIDE[2 * i]) free = ESIDE + 2 * i;
+    }
+    if (!free) { free = ESIDE + 2 * (TICKS & (ESIDE_N - 1)); }
+    free[0] = (u32)e; free[1] = 0;
+    return free;
+}
+
+static void enemies(u8 *hero)
+{
+    u32 sp = ENX;
+    if (sp < 0x09080000u || sp >= 0x09400000u) return;
+    int hx = S32(hero, 0xAC) >> 16, hy = S32(hero, 0xB0) >> 16, chase = FA[3] & 1;
+    for (u8 *e = ENEMIES; e; e = *(u8 **)e) {
+        u32 f = U32(e, 0xE8);
+        if ((f & 0x801000) != 0x1000 || !(f & 0x10040400)) continue;
+        int s = e[0x61];
+        if (s >= 82) continue;
+        u32 cur = U32(e, 0x24), p = 0, a = 0;
+        int k, r, flip = e[0xDF] & 0x10;
+        for (k = 0; k < 2; k++) {
+            p = *(const u32 *)(ET + 24 * s + 4 * k); a = ((const u32 *)sp)[2 * s + k];
+            if (!a) continue;
+            if (cur >= p && cur < p + 0x50) { int d = (cur - p) >> 4; r = flip ? (16 - 2 * d) & 15 : 2 * d; break; }
+            if (cur >= a && cur < a + 0x40) { int j = (cur - a) >> 4; r = flip ? 15 - 2 * j : 2 * j + 1; break; }
+        }
+        if (k == 2) continue;
+        volatile u32 *sd = eside(e);
+        if (sd[1] & 0x100) r = sd[1] & 15;              /* what we showed last tick (the game may have snapped it) */
+        int t = e[0xF8] << 1;
+        if (chase && k == 0 && (S32(e, 0xB4) || S32(e, 0xB8))) {
+            int vx = S32(e, 0xB4), vy = S32(e, 0xB8);
+            int at = atan256((hx - (S32(e, 0xAC) >> 16)) * 64, -((hy - (S32(e, 0xB0) >> 16)) * 64));
+            int av = atan256(vx >> 4, -(vy >> 4)), dl = (s8)(at - av);
+            if (dl >= -16 && dl <= 16) {
+                int c = SIN[(dl + 64) & 255], sn = SIN[dl & 255], x = vx >> 4, y = -vy >> 4;
+                S32(e, 0xB4) = ((x * c) >> 10) + ((y * sn) >> 10);
+                S32(e, 0xB8) = -(((y * c) >> 10) - ((x * sn) >> 10));
+                t = F16[at];
+            }
+        }
+        if (r != t) {                                   /* one sixteenth a tick; a turn of more than 90 degrees snaps */
+            int d = (t - r) & 15;
+            if (d > 4 && d < 12) r = t; else r = (r + (d < 8 ? 1 : 15)) & 15;
+        }
+        sd[1] = 0x100 | r;
+        u32 want; int wf;
+        if (r & 1) { want = a + 16 * (r < 8 ? (r - 1) >> 1 : (15 - r) >> 1); wf = r > 8; }
+        else { int f8 = r >> 1; want = p + 16 * DIR5[f8]; wf = f8 > 4; }
+        if (want != cur) {
+            int fr = e[0x23];
+            SETSET(e, want);
+            if (fr && fr < frames_of(want)) SETFRAME(e, fr);
+        }
+        if (wf) e[0xDF] |= 0x10; else e[0xDF] &= ~0x10;
+    }
+}
+
 int hero_upd(u8 *o)
 {
     int r = UPDATE(o);
     turn(o);
     if (o[0x96] <= 1 && *(volatile u8 *)(HERO + HERO_SZ * o[0x96] + 0x19F) == 0) xb_turn(o[0x96]);
-    if (o[0x96] == 0) stun_notes();
+    if (o[0x96] == 0) { stun_notes(); enemies(o); }
     return r;
 }
 

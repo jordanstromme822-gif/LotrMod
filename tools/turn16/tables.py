@@ -13,4 +13,6 @@ with open(os.path.join(D, 'tables.h'), 'w') as f:
     f.write('/* made by tables.py */\n')
     f.write('static const short SIN[256] = {%s};\n' % ','.join(map(str, sin)))
     f.write('static const unsigned char F16[256] = {%s};\n' % ','.join(map(str, f16)))
+    atn = [round(math.atan(i / 64) * 128 / math.pi) for i in range(65)]   # atan(i/64) in 256ths of a turn (0-32)
+    f.write('static const unsigned char ATN[65] = {%s};\n' % ','.join(map(str, atn)))
 print(f16)
