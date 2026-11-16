@@ -44,3 +44,21 @@ aura, faint but noticeable", and "Frodo's stuns from knife throw don't show an a
   The 2-player engine compiled knife.c's touch with the old call, so linked games keep the old stun.
 - Trap glow: `recomp/playroom/trapglow_v171.py` (page lighting pass, like Gandalf's aura).
 - Page: `recomp/playroom/xb16-v171.py` + `trapglow_v171.py` + `tools/orcslots/pagejs.py` on the live v170 page.
+
+## v176 (2026-11-13): every hero in 16 facings
+
+Jordan: "Should we do all chapters 360 motion?" (all heroes). Walk and stand in-between pictures for all 8 heroes,
+1-player Wide engine only; attacks stay 8-way for now.
+
+- `gen16all.py <original ROM> hero16.bin` is gen16.py for every hero: hero id h has its anim table at 0x08282898 + 4h
+  (0 Frodo 0x0806170C, 1 Legolas, 2 Aragorn, 3 Gandalf, 4 Eowyn, 5 Gimli, 6 Sam, 7 Smeagol) and its sprite palette
+  at 0x08282C68 + 4h. Colours are matched by palette distance instead of Frodo's hand-made colour groups. The
+  output starts with 8 pairs {game's table, ours}, then each hero's table copy and pictures (about 480 KB in all;
+  made from the game's own art, so it stays out of the repo).
+- That doesn't fit in the freed text banks, so the page grows the built game past 16 MB and puts it at ROM
+  0x1000000 (CPU 0x09000000). The engine loads any ROM size; only the 1-player engine reads it. The 2-player
+  engine and the game file download get the first 16 MB (the hook never runs there, and a 16 MB file saves on any
+  emulator). Frodo's old block at 0x8A000 is no longer written by the page.
+- `hero_upd` finds the hero's own table in that index by its object + 0x88, so any hero (and any costume table
+  listed there) gets the in-between pictures.
+- Page: `recomp/playroom/all360-v176.py in.html out.html turn16.bin hero16.bin` on the live v175 page.

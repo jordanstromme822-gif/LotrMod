@@ -5,9 +5,10 @@
  * out its 8-direction walk, hero_upd:
  *   - turns the walk velocity (+0xB4 / +0xB8, read by the move step 0x080023C0 that runs next) to the stick's exact
  *     angle at the same speed (+0xE4), so collision and everything after it stay the game's own;
- *   - for Frodo (hero id 0), picks one of 16 facings and shows an in-between picture (walk and stand) for the odd
- *     ones. The pictures are a separate data block at 0x0808A000 (tools/turn16/gen16.py), laid out like the game's
- *     own anim table (+0x88), so 0x08000D58 loads them like any other picture.
+ *   - picks one of 16 facings and shows an in-between picture (walk and stand) for the odd ones, for every hero
+ *     (v176; v170-v175 Frodo only). The pictures are a separate data block past the 16 MB game at 0x09000000
+ *     (tools/turn16/gen16all.py; the page grows the built game for it), starting with 8 pairs {game's anim table,
+ *     ours}; ours is laid out like the game's own table (+0x88), so 0x08000D58 loads them like any other picture.
  * It also turns Frodo's crossbow traps (tools/orcslots/crossbow.c) through 16 facings: each tick a crossbow of this
  * player gets a 16-picture anim set (pictures: xb16.bin at 0x08094400, tools/turn16/xb16.py) and turns one facing
  * a tick toward the nearest foe it would shoot, so it swings round smoothly instead of snapping when it fires.
@@ -17,8 +18,9 @@ typedef unsigned char u8; typedef signed char s8; typedef unsigned short u16; ty
 #include "tables.h"
 
 #define FA        ((volatile u8 *)0x0203FFC0)   /* [4 * player]: +0 bit0 on, bit1 stick held; +1 angle; +2 facing16 | 0x80 */
-#define TBL16     0x0808A000u                   /* our anim table: kinds 4 and 6 have 4 in-between facings */
-#define TBL16_END 0x0808A400u
+#define IDX16     ((const u32 *)0x09000000)     /* hero16.bin (gen16all.py): 8 x {game's table, ours}; kinds 4 and 6 have 4 in-between facings */
+#define OURS_LO   0x09000000u                   /* pictures live past the 16 MB game, ROM 0x1000000 on (the page grows the file) */
+#define OURS_HI   0x09200000u
 #define HERO      0x03003C00u
 #define HERO_SZ   0x1ACu
 #define DIR5      ((const s8 *)0x08050418)      /* facing 0-7 -> drawn direction 0-4 */
@@ -72,13 +74,13 @@ static void turn(u8 *o)
     } else {
         fa[2] = 0;
     }
-    u8 hid = *(volatile u8 *)(HERO + HERO_SZ * p + 0x19F);
-    u32 cur = U32(o, 0x24);
-    int ours = cur >= TBL16 && cur < TBL16_END;
+    u32 cur = U32(o, 0x24), gt = U32(o, 0x88), t16 = 0;
+    int ours = cur >= OURS_LO && cur < OURS_HI;
+    for (int h = 0; h < 8; h++) if (IDX16[2 * h] == gt) { t16 = IDX16[2 * h + 1]; break; }
     if (on && (kind == 4 || kind == 6)) {
         int f8 = f8_of(f), d, flip;
         u32 t;
-        if (hid == 0 && (f & 1)) { t = TBL16; d = f < 8 ? (f - 1) >> 1 : (15 - f) >> 1; flip = f > 8; }
+        if (t16 && (f & 1)) { t = t16; d = f < 8 ? (f - 1) >> 1 : (15 - f) >> 1; flip = f > 8; }
         else { t = U32(o, 0x88); d = DIR5[f8]; flip = f8 > 4; }
         if (cur != *(const u32 *)(t + 4 * kind) + 16 * d) show(o, t, kind, d);
         if (flip) o[0xDF] |= 0x10; else o[0xDF] &= ~0x10;
