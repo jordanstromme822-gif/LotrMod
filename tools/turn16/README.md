@@ -71,7 +71,7 @@ Jordan: "Next do enemies".
   (0 walk, 1 stand, 2 attack, ...; 82 species share 70 walk/stand sets). For each walk and stand set it makes the 4
   in-between entries. Enemy palettes aren't read, so colours match by palette index (neighbouring indexes are one ramp).
   Output (~3.5 MB, game art, not in the repo): word 0 = address of SP[82][2] (ours per species walk / stand), then the sets.
-- The page publishes it gzipped as `wide/enemy16.dat`, fetches it on load and builds it into ROM 0x1080000 (0x09080000).
+- The page publishes it gzipped as `wide/enemy16.wasm` (artifacts serve no .dat; it is really gzip), fetches it on load and builds it into ROM 0x1080000 (0x09080000).
 - `enemies()` in turn16.c runs once a tick from the hero's update (1-player engine): for every awake enemy showing a walk
   or stand picture, the facing it shows steps one sixteenth a tick toward the game's (turns over 90 degrees snap), kept per
   enemy in EWRAM 0x0203FB00 (32 x {object, facing}; free, checked in play). With EWRAM 0x0203FFC3 bit 0 (page,

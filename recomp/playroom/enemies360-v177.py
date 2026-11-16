@@ -5,7 +5,7 @@
 
 - turn16.bin (tools/turn16) now also runs `enemies()` once a tick from the hero's update.
 - The enemy pictures (tools/turn16/genenemy.py -> enemy16.bin, about 3.5 MB, game art: not in the repo) are published
-  next to the page as wide/enemy16.dat (gzip). The page fetches and unpacks them when it loads; the game is built with them
+  next to the page as wide/enemy16.wasm (gzip). The page fetches and unpacks them when it loads; the game is built with them
   at ROM 0x1080000 (CPU 0x09080000), after the heroes' pictures. If they haven't arrived, that spot is zero and the hook
   leaves enemies alone.
 - EWRAM 0x0203FFC3 bit 0 = enemies chasing the hero walk straight at him (localStorage rotk-enemy-chase, default on).
@@ -20,7 +20,7 @@ assert k == 1, k
 old = "        const g = new Uint8Array(0x1000000 + H16.length); g.set(game.subarray(0, 0x1000000)); g.set(H16, 0x1000000); game = g; }\n"
 assert s.count(old) == 1
 s = s.replace(old,
-    "        // v177: enemies' in-between pictures (genenemy.py) at ROM 0x1080000, fetched when the page loads (wide/enemy16.dat).\n"
+    "        // v177: enemies' in-between pictures (genenemy.py) at ROM 0x1080000, fetched when the page loads (wide/enemy16.wasm).\n"
     "        const E16 = window.__enemy16 || null;\n"
     "        const g = new Uint8Array(Math.max(0x1000000 + H16.length, 0x1080000 + (E16 ? E16.length : 4))); g.set(game.subarray(0, 0x1000000)); g.set(H16, 0x1000000);\n"
     "        if (E16) g.set(E16, 0x1080000);\n"
@@ -32,7 +32,7 @@ s = s.replace(anchor,
     "  // Enemies in 16 facings (v177, Jordan 2026-11-16: \"Next do enemies\"): their in-between pictures, gzipped next to the page.\n"
     "  (async () => {\n"
     "    try {\n"
-    "      const r = await fetch(\"wide/enemy16.dat?v=177\"); if (!r.ok) throw new Error(\"enemy16 \" + r.status);\n"
+    "      const r = await fetch(\"wide/enemy16.wasm?v=177\"); if (!r.ok) throw new Error(\"enemy16 \" + r.status);\n"
     "      const b = new Uint8Array(await new Response(r.body.pipeThrough(new DecompressionStream(\"gzip\"))).arrayBuffer());\n"
     "      if (b.length > 0x10000 && b[3] === 0x09) window.__enemy16 = b;\n"
     "    } catch (e) { (window.__wideLog || (window.__wideLog = [])).push(\"enemy16: \" + e); }\n"
