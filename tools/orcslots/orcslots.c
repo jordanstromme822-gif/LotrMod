@@ -1269,12 +1269,108 @@ static void hide_grid_items(void)
     }
 }
 
+/* ---- v180 (Jordan, 2026-11-16: "Item menu doesn't load correctly when ... entering a forge or shrine ... moving an
+   item doesn't allow you to move the item in the inventory") ----
+   MVREQ (t + 1): a tap on stash box t during Move Item (substate 6, 1-player). The item under the source cursor and stash
+   box t swap places, like the game's own Move Item does for two grid cells, then the game's after-move substate 7 runs.
+   SWIN (t + 1): a tap on stash box t in a Forge or Shrine (state 20, 1-player): stash box t goes into cell 15, so the shop
+   can sell it. STXT: every text line the game draws while a shop is open (x, y, length, bytes), so the page can show the
+   shop's own words (item text, prices, "Are you sure...") in its HD shop, and the Backpack's own messages (level too low...). A clear of a box of tiles drops its lines. */
+#define MVREQ   (*(volatile u8 *)0x0203F604)
+#define SWIN    (*(volatile u8 *)0x0203F605)
+#define STXT    ((volatile u8 *)0x0203F990)          /* [0] lines, [1] changes, lines from +4: x, y, n, n bytes */
+#define STXT_END 0x170
+typedef int (*fn7)(int, int, int, int, int, int, int);
+static void cell_pic(int c, u32 w)                   /* a grid cell's picture object, again (Equip reads it too) */
+{
+    volatile u32 *o = (volatile u32 *)0x03001F20 + c;
+    if (*o) { volatile u32 *f = (volatile u32 *)(*o + 0xE8); *f = (*f | 2) & ~1u; *o = 0; }
+    if (!empty_w(w)) MKSPRITE(c);
+}
+static void mv_stash(int p, int src, int t)
+{
+    u32 *it = (u32 *)(HERO + p * HERO_SZ + 0x3C);
+    if (t < 0 || t > 4 || t == WIN[p] || src < 8 || src > 15) return;
+    u32 a = it[src], b = empty_w(STASH[p][t]) ? NOITEM : STASH[p][t];
+    if (src == 15 && !empty_w(a) && s_keep(a)) ((fn4)0x0802DB91)((int)a, 15, p, 1);
+    it[src] = b;
+    STASH[p][t] = empty_w(a) ? NOITEM : a;
+    if (src == 15 && !empty_w(b) && s_keep(b)) ((fn4)0x0802DB91)((int)b, 15, p, 0);
+    cell_pic(src, b);
+}
+static void stxt_del(int x0, int y0, int x1, int y1)
+{
+    volatile u8 *b = STXT;
+    int n = b[0], o = 4, w = 4, k = 0;
+    for (int i = 0; i < n && o < STXT_END; i++) {
+        int l = 3 + b[o + 2], x = b[o], y = b[o + 1];
+        if (x >= x0 && x < x1 && y >= y0 && y < y1) { o += l; continue; }
+        if (w != o) for (int j = 0; j < l; j++) b[w + j] = b[o + j];
+        w += l; o += l; k++;
+    }
+    if (k != n) { b[0] = k; b[1]++; }
+}
+static void stxt_add(int x, int y, const u8 *s, int n)
+{
+    volatile u8 *b = STXT;
+    u8 e[64];
+    int m = 0;
+    for (int i = 0; i < n && m < 64; i++) {          /* "@1": the game's word slots (0x03000F50 + 64 * c) */
+        if (s[i] == '@' && i + 1 < n) {
+            const u8 *v = (const u8 *)0x03000F50 + 64 * s[++i];
+            for (int j = 0; j < 63 && v[j] && m < 64; j++) e[m++] = v[j];
+        } else e[m++] = s[i];
+    }
+    s = e; n = m;
+    stxt_del(x, y, x + 1, y + 1);
+    while (n > 0 && (s[n - 1] == ' ' || s[n - 1] == '\n' || s[n - 1] == 0)) n--;
+    if (n <= 0) return;
+    for (;;) {                                       /* full: the oldest lines go */
+        int o = 4;
+        for (int i = 0; i < b[0]; i++) o += 3 + b[o + 2];
+        if (o + 3 + n <= STXT_END) {
+            b[o] = x; b[o + 1] = y; b[o + 2] = n;
+            for (int j = 0; j < n; j++) b[o + 3 + j] = s[j];
+            b[0]++; b[1]++;
+            return;
+        }
+        if (!b[0]) return;
+        stxt_del(b[4], b[5], b[4] + 1, b[5] + 1);
+    }
+}
+/* the game's one-line text drawer (inside DRAWTEXT, 0x0801D6F2): it moves *pp past the line it drew */
+int line_wrap(int a, int x, int y, int w, const u8 **pp, int f, int op)
+{
+    const u8 *s = *pp;
+    int r = ((fn7)0x0801CF75)(a, x, y, w, (int)pp, f, op);
+    if (GSTATE == 20 || GSTATE == 10) stxt_add(x, y, s, *pp - s);   /* shops, and the Backpack's messages */
+    else if (STXT[0]) { STXT[0] = 0; STXT[1]++; }
+    return r;
+}
+/* the game's clear of a box of text tiles (inside CLEARTEXT, 0x0801267C) */
+int clr_wrap(int base, int x, int y, int w, int h, int f)
+{
+    if (GSTATE == 20 || GSTATE == 10) stxt_del(x * 8, y * 8, (x + w) * 8, (y + h) * 8);
+    return ((fn6)0x0801268D)(base, x, y, w, h, f);
+}
+/* the shop's key read, once a frame while a Forge or Shrine is open (0x0801DF10) */
+int shop_keys(void)
+{
+    if (SWIN) { int t = SWIN - 1; SWIN = 0; if (!LINKED) s_window(LOCAL_P & 1, t); }
+    return ((fn4)0x08046DC5)(0, 0, 0, 0);
+}
+
 void frame_hook(void)
 {
     vu16 *bg0 = (vu16 *)0x0600F800;
     u8 *ui = UI;
     int sub = SUBSTATE, cur = ui ? ui[0x62] : 0, p = LOCAL_P;
     q_sync(p);
+    if (MVREQ) {                                     /* v180: Move Item onto a stash box */
+        int t = MVREQ - 1;
+        MVREQ = 0;
+        if (sub == 6 && ui && !LINKED && GSTATE == 10) { mv_stash(p & 1, cur, t); SOUND(3); MENU[4] = 7; }
+    }
     BG1CNT = (BG1CNT & ~0x1F00) | (0x1E << 8);       /* the game's own text layer, on both pages */
     if (sub != 0) PGREQ = 0;                         /* a turn is only for the Backpack with no menu open */
     int p2 = on_p2(cur) && sub != 4 && sub != 5 && sub != 6;   /* never during Carve Rune or Move Item */

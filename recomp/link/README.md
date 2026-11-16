@@ -136,3 +136,20 @@ slice/dispatch boundary). Game state is identical frame for frame (`hash=` in
 the `[speed]` line). Native 2-player fight: 12.4-12.6 -> 10.6-11.1 ms/frame
 (~12-14%); browser at 3x CPU throttle: +6-9% engine frames/s.
 Regenerate the link code with the patched `gba_recompile` after applying it.
+
+## v181 (2026-11-16): item menu fixes
+
+Jordan: "Item menu doesn't load correctly when - failing to equip item due to level restriction - entering a forge or
+shrine - moving an item doesn't allow you to move the item in the inventory". Page patch
+`recomp/playroom/item-menu-v181.py` (on the v180 page) plus new hooks in `tools/orcslots/orcslots.c` (engine rebuilt with
+`one/regen.sh`):
+- The HD Backpack stays up during the game's messages (substate 8) and shows the game's own words with an OK button.
+- Move Item (substate 6) shows the game's second cursor (UI 0x03001FE4) as the target and marks the item being moved;
+  taps walk that cursor. A tap on a stash box sets MVREQ (EWRAM 0x0203F604, box + 1): `frame_hook` swaps the item with
+  the stash box and ends the move (substate 7), 1-player only (2-player has no stash).
+- Forge / Shrine (state 20): the page draws an HD shop over the game's. `line_wrap` (bl inside DRAWTEXT, 0x0801D6F2) and
+  `clr_wrap` (inside CLEARTEXT, 0x0801267C) keep the text lines drawn in shops and the Backpack in EWRAM 0x0203F990
+  (count, change counter, then x, y, length, bytes; "@1" words filled in from 0x03000F50 + 64 c). `shop_keys` (the
+  shop's key read, 0x0801DF10) puts stash box SWIN - 1 (0x0203F605) into cell 15 so it can be sold. The shop cursor is
+  [0x03001C90] + 0x62 (0-7 = grid cells 8-15, 8-10 = goods); the page walks it with the d-pad (measured map:
+  Right 3/7 -> 8, 10 -> 0; Left 0/4 -> 10, 8 -> 3; Up/Down switch grid rows). Yes / No is the menu choice 0x030041BC.
