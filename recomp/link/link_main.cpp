@@ -291,6 +291,7 @@ void frame(const gbarecomp::ExtendedViewFrameInfo* f) {
 #if !defined(__EMSCRIPTEN__) && __has_include(<valgrind/callgrind.h>)
 #include <valgrind/callgrind.h>
 
+#endif
 // ---- virtual partner (P2 inside one game, 2026-11-13) ----
 namespace gba { extern std::uint16_t (*g_link_virtual_word)(std::uint16_t master, std::uint16_t slave); extern bool g_link_virtual1; }
 namespace gbarecomp { extern unsigned g_session_skip_mask; }
@@ -300,6 +301,8 @@ static std::uint16_t g_vp_keys = 0;               // P2 buttons (GBA bits, 1 = p
 static int g_vp_mode = 0;                         // 1 check (real slave sent, prediction compared), 2 virtual
 static unsigned g_vp_idx = 99, g_vp_frame = 0;
 static int g_link_one_req = 0;
+static int g_vp_k = -1;
+static unsigned g_vp_seq = 0;
 static std::uint16_t g_vp_prev = 0, g_vp_pk[6];
 static unsigned g_vp_recoff = 0;
 static std::uint16_t g_vp_snap_keys = 0, g_vp_snap_pos = 0, g_vp_khist[64];
@@ -321,44 +324,51 @@ static std::uint16_t vp_word(std::uint16_t m0, std::uint16_t real) {
         static std::uint16_t last_next = 0xFFFF; const std::uint16_t nx = vp_r16(0x030069C0);
         if (nx != last_next) { last_next = nx; g_vp_snap_keys = g_vp_khist[(g_vp_frame + 64 - g_vp_kdelay) & 63]; g_vp_snap_pos = vp_pos2(); }
     }
-    if (m == 0xC0DE && g_vp_prev != 0xC0DE) g_vp_idx = 0; else ++g_vp_idx;
-    g_vp_prev = m0;
-    static const std::uint16_t hs[5] = {0xBEEF, 0xC0DE, 0xC0DE, 0xBABE, 0xBABE};
+    // Handshake: the master repeats c0de until it hears c0de, then babe until babe, then beef; the client answers
+    // with the master's previous word (beef when idle). The 6-word message follows on the transfer after beef.
+    static std::uint16_t prev2 = 0;
     std::uint16_t p = real;
-    if (g_vp_idx < 5) p = hs[g_vp_idx];
-    else if (g_vp_idx < 11) {
-        const unsigned k = g_vp_idx - 5;
+    if (g_vp_k < 0 && g_vp_prev == 0xBEEF && prev2 == 0xBABE) g_vp_k = 0;
+    if (g_vp_k < 0) {
+        p = (g_vp_prev == 0xC0DE || g_vp_prev == 0xBABE) ? g_vp_prev : 0xBEEF;
+        g_vp_idx = 0;
+    } else {
+        const int k = g_vp_k;
+        g_vp_idx = 5 + k;
         if (k == 0) {
             // master packet in flight (word 0 known now); the rest from machine 0's send buffer
             std::uint16_t mp[6]; mp[0] = m; for (int j = 1; j < 6; ++j) mp[j] = vp_r16(0x03006D14 + 2 * j);
             for (int j = 0; j < 6; ++j) g_vp_pk[j] = 0;
-            if ((m & 0xff) == 0x13) {
-                g_vp_pk[0] = static_cast<std::uint16_t>(0x13 | (((m >> 8) - 1) & 0xff) << 8);
+            const unsigned ty = m & 0xff; unsigned pty = 0x13;
+            if (ty == 0x14 || ty == 0x15) {   // hero record exchange at a level start: P2's 0x70-byte record, 8 bytes a message
+                if (ty == 0x14) g_vp_recoff = 0;
+                pty = ty;
+                for (int j = 0; j < 4; ++j) g_vp_pk[2 + j] = vp_r16(0x030055C0 + g_vp_recoff + 2 * j);
+                g_vp_recoff += 8;
+            } else if (ty == 3) {              // host's seed message -> client answers type 1, no payload
+                pty = 1;
+            } else if (ty == 0x2d) {           // both games send it; byte 5 = sender's player number
+                pty = ty; for (int j = 2; j < 6; ++j) g_vp_pk[j] = mp[j];
+                g_vp_pk[2] = static_cast<std::uint16_t>((mp[2] & 0x00ff) | 0x0100);
+            } else if (ty == 6) {              // both games send it with the same payload
+                pty = ty; for (int j = 2; j < 6; ++j) g_vp_pk[j] = mp[j];
+            } else {                           // anything else (0x13 buttons, P1's menus 0x01/0x34): P2 just plays on
                 g_vp_pk[2] = static_cast<std::uint16_t>(0xFC00 | (g_vp_snap_keys & 0x3ff));
                 g_vp_pk[3] = g_vp_snap_pos;
-                g_vp_pk[1] = static_cast<std::uint16_t>(mp[1] + vp_bs(mp) - vp_bs(g_vp_pk));
-            } else {   // other messages: P2's version of the master's message
-                const unsigned ty = m & 0xff;
-                for (int j = 0; j < 6; ++j) g_vp_pk[j] = mp[j];
-                if (ty == 0x14) g_vp_recoff = 0;
-                if (ty == 0x14 || ty == 0x15) {   // hero record exchange at a level start: P2's 0x70-byte record, 8 bytes a message
-                    for (int j = 0; j < 4; ++j) g_vp_pk[2 + j] = vp_r16(0x030055C0 + g_vp_recoff + 2 * j);
-                    g_vp_recoff += 8;
-                } else if (ty == 3) {             // host's seed message -> client answers type 1, no payload
-                    for (int j = 2; j < 6; ++j) g_vp_pk[j] = 0;
-                    m = static_cast<std::uint16_t>((m & 0xff00) | 1);
-                } else if (ty == 0x2d) {          // byte 5 = sender's player number
-                    g_vp_pk[2] = static_cast<std::uint16_t>((mp[2] & 0x00ff) | 0x0100);
-                }
-                g_vp_pk[0] = static_cast<std::uint16_t>((m & 0xff) | (((m >> 8) - 1) & 0xff) << 8);
-                g_vp_pk[1] = static_cast<std::uint16_t>(mp[1] + vp_bs(mp) - vp_bs(g_vp_pk));
             }
+            if (g_vp_mode == 2) g_vp_seq = (g_vp_seq + 1) & 0xff;
+            else g_vp_seq = real >> 8;     // follow the real second game's own counter until the stand-in takes over
+            g_vp_pk[0] = static_cast<std::uint16_t>(pty | g_vp_seq << 8);
+            g_vp_pk[1] = static_cast<std::uint16_t>(mp[1] + vp_bs(mp) - vp_bs(g_vp_pk));
         }
         p = g_vp_pk[k];
+        if (++g_vp_k == 6) g_vp_k = -1;
     }
+    prev2 = g_vp_prev; g_vp_prev = m0;
+    { static const int rf = std::getenv("ROTK_VP_RAW") ? std::atoi(std::getenv("ROTK_VP_RAW")) : 0; if (rf && g_vp_frame >= (unsigned)rf && g_vp_frame < (unsigned)rf + 12) std::fprintf(stderr, "[raw] f%u idx%u %04x %04x pred %04x\n", g_vp_frame, g_vp_idx, m0, real, p); }
     if (g_vp_mode == 1) {
         if (p == real) ++g_vp_ok; else { ++g_vp_bad; ++g_vp_badw[std::min(g_vp_idx, 15u)];
-            static int shown = 0; if (g_vp_frame > 2250 && shown++ < 80) std::fprintf(stderr, "[vp] f%u idx%u master %04x real %04x pred %04x\n", g_vp_frame, g_vp_idx, m, real, p); }
+            static int shown = 0; if (g_vp_frame > 1700 && shown++ < 120) std::fprintf(stderr, "[vp] f%u idx%u master %04x real %04x pred %04x\n", g_vp_frame, g_vp_idx, m, real, p); }
         return real;
     }
     return g_vp_mode == 2 ? p : real;   // mode 3: only follow the stream (so the stand-in can take over at any frame)
@@ -372,12 +382,11 @@ static void vp_frame(gbarecomp::GbaMultiplayerSession& S, std::uint16_t p2keys, 
 // One game for both heroes: the second game stops and the stand-in answers for it (local P2 only, never online).
 static bool vp_take_over() {
     if (g_vp_mode == 2) return true;
-    if (g_vp_mode != 3 || (g_vp_idx >= 6 && g_vp_idx < 10) || g_vp_idx >= 99) return false;   // not inside a message
+    if (g_vp_mode != 3 || g_vp_k >= 0) return false;   // not inside a message
     g_vp_mode = 2; gba::g_link_virtual1 = true; gbarecomp::g_session_skip_mask = 2;
     return true;
 }
 
-#endif
 extern gba::GbaBus* g_session_hook_bus;
 extern std::uint64_t g_session_slice_lookahead;
 extern "C" int g_session_bridge_misses;
@@ -657,6 +666,8 @@ static int run_link(const gbarecomp::RunOptions& opts) {
     for (unsigned f = 0; f < frames; ++f) {
         while (ri < rows.size() && rows[ri][0] == f) { keys = {static_cast<std::uint16_t>(rows[ri][1]), static_cast<std::uint16_t>(rows[ri][2])}; ++ri; }
         if (auto_p[0] >= 0) keys = auto_keys(f);
+        // ROTK_P1PRESS="frame:keys(hex):frames;...": hold P1 buttons (menu tests)
+        if (const char* pp = std::getenv("ROTK_P1PRESS")) { for (const char* q = pp; *q;) { unsigned a0, kk, d; int n = 0; if (std::sscanf(q, "%u:%x:%u%n", &a0, &kk, &d, &n) < 3) break; if (f >= a0 && f < a0 + d) keys[0] = static_cast<std::uint16_t>(kk); q += n; if (*q == ';') ++q; } }
         if (const char* vm = std::getenv("ROTK_VP")) { if (!g_vp_mode) { g_vp_mode = vm[0] == 'v' ? 2 : 1; gba::g_link_virtual_word = vp_word; }
             vp_frame(S, keys[1], f); g_vp_kdelay = std::atoi(env("ROTK_VP_KD", "2"));
             static const unsigned vp_at = std::atoi(env("ROTK_VP_AT", "0"));
