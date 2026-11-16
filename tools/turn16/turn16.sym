@@ -1,9 +1,9 @@
-ATN 0809fdbc
-F16 0809fcbc
-SIN 0809fabc
-atan256 0809f8c0
+ATN 0809fe14
+F16 0809fd14
+SIN 0809fb14
+atan256 0809f918
 hero_upd 0809f000
 kt_stun 0809ff00
-show 0809f884
-xb16_anim 0809faac
-xb16_frames 0809f960
+show 0809f8dc
+xb16_anim 0809fb04
+xb16_frames 0809f9b8

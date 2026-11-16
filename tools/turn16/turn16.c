@@ -305,8 +305,27 @@ static void enemies(u8 *hero)
     }
 }
 
+/* v179 (one engine, P2 games): the page's stick changes for player 0 go through a small queue stamped with a game tick,
+   so both games of a local P2 game apply each change on the same tick (the two games are not always on the same tick when
+   the page writes). 8 entries of {u32 tick; u8 fa0; u8 angle; u16 0} at EWRAM 0x0203FC00; page count 0x0203FC41, applied
+   count 0x0203FC40. A 1-player game writes FA directly and leaves the queue empty. */
+#define FQ        ((volatile u8 *)0x0203FC00)
+static void fa_queue(void)
+{
+    u8 n = FQ[0x40];
+    while (n != FQ[0x41]) {
+        volatile u8 *e = FQ + 8 * (n & 7);
+        if ((s32)(TICKS - *(volatile u32 *)e) < 0) break;
+        FA[0] = e[4];
+        if (e[4] & 2) FA[1] = e[5];
+        n++;
+    }
+    FQ[0x40] = n;
+}
+
 int hero_upd(u8 *o)
 {
+    if (o[0x96] == 0) fa_queue();
     int r = UPDATE(o);
     turn(o);
     if (o[0x96] <= 1 && *(volatile u8 *)(HERO + HERO_SZ * o[0x96] + 0x19F) == 0) xb_turn(o[0x96]);
