@@ -290,7 +290,138 @@ void frame(const gbarecomp::ExtendedViewFrameInfo* f) {
 #include <algorithm>
 #if !defined(__EMSCRIPTEN__) && __has_include(<valgrind/callgrind.h>)
 #include <valgrind/callgrind.h>
+
 #endif
+// ---- virtual partner (P2 inside one game, 2026-11-13) ----
+namespace gba { extern std::uint16_t (*g_link_virtual_word)(std::uint16_t master, std::uint16_t slave); extern bool g_link_virtual1; }
+namespace gbarecomp { extern unsigned g_session_skip_mask; }
+static const std::uint8_t* g_vp_iw = nullptr;
+static const std::uint8_t* g_vp_ew = nullptr;     // machine 0 IWRAM
+static std::uint16_t g_vp_keys = 0;               // P2 buttons (GBA bits, 1 = pressed)
+static int g_vp_mode = 0;                         // 1 check (real slave sent, prediction compared), 2 virtual
+static unsigned g_vp_idx = 99, g_vp_frame = 0;
+static int g_link_one_req = 0;
+static int g_vp_k = -1;
+static unsigned g_vp_seq = 0;
+static std::uint16_t g_vp_prev = 0, g_vp_pk[6];
+static unsigned g_vp_recoff = 0;
+static std::uint16_t g_vp_snap_keys = 0, g_vp_snap_pos = 0, g_vp_khist[64];
+static unsigned g_vp_kdelay = 2;
+static std::uint16_t vp_pos2();
+static unsigned long long g_vp_ok = 0, g_vp_bad = 0, g_vp_badw[16];
+static std::uint16_t vp_r16(unsigned a) { return static_cast<std::uint16_t>(g_vp_iw[a & 0x7FFF] | (g_vp_iw[(a + 1) & 0x7FFF] << 8)); }
+static std::uint32_t vp_r32(unsigned a) { return vp_r16(a) | (static_cast<std::uint32_t>(vp_r16(a + 2)) << 16); }
+static unsigned vp_bs(const std::uint16_t* w) { unsigned s = 0; for (int k = 0; k < 6; ++k) if (k != 1) s += (w[k] & 0xff) + (w[k] >> 8); return s; }
+static std::uint16_t vp_pos2() {   // P2's hero position low bytes (obj+0xAE x, obj+0xB2 y), 0 with no hero
+    const std::uint32_t h = vp_r32(0x03003C00 + 0x1AC);
+    if (h >> 24 != 2 && h >> 24 != 3) return 0;
+    auto rd = [](std::uint32_t a) -> std::uint8_t { return a >> 24 == 3 ? g_vp_iw[a & 0x7FFF] : g_vp_ew[a & 0x3FFFF]; };
+    return static_cast<std::uint16_t>(rd(h + 0xAE) | (rd(h + 0xB2) << 8));
+}
+static std::uint16_t vp_word(std::uint16_t m0, std::uint16_t real) {
+    std::uint16_t m = m0;
+    {   // P2's packet is built when the master builds its next one: snapshot P2's buttons and position then
+        static std::uint16_t last_next = 0xFFFF; const std::uint16_t nx = vp_r16(0x030069C0);
+        if (nx != last_next) { last_next = nx; g_vp_snap_keys = g_vp_khist[(g_vp_frame + 64 - g_vp_kdelay) & 63]; g_vp_snap_pos = vp_pos2(); }
+    }
+    // Handshake: the master repeats c0de until it hears c0de, then babe until babe, then beef; the client answers
+    // with the master's previous word (beef when idle). The 6-word message follows on the transfer after beef.
+    static std::uint16_t prev2 = 0;
+    std::uint16_t p = real;
+    if (g_vp_k < 0 && g_vp_prev == 0xBEEF && prev2 == 0xBABE) g_vp_k = 0;
+    if (g_vp_k < 0) {
+        p = (g_vp_prev == 0xC0DE || g_vp_prev == 0xBABE) ? g_vp_prev : 0xBEEF;
+        g_vp_idx = 0;
+    } else {
+        const int k = g_vp_k;
+        g_vp_idx = 5 + k;
+        if (k == 0) {
+            // master packet in flight (word 0 known now); the rest from machine 0's send buffer
+            std::uint16_t mp[6]; mp[0] = m; for (int j = 1; j < 6; ++j) mp[j] = vp_r16(0x03006D14 + 2 * j);
+            for (int j = 0; j < 6; ++j) g_vp_pk[j] = 0;
+            const unsigned ty = m & 0xff; unsigned pty = 0x13;
+            if (ty == 0x14 || ty == 0x15) {   // hero record exchange at a level start: P2's 0x70-byte record, 8 bytes a message
+                if (ty == 0x14) g_vp_recoff = 0;
+                pty = ty;
+                for (int j = 0; j < 4; ++j) g_vp_pk[2 + j] = vp_r16(0x030055C0 + g_vp_recoff + 2 * j);
+                g_vp_recoff += 8;
+            } else if (ty == 3) {              // host's seed message -> client answers type 1, no payload
+                pty = 1;
+            } else if (ty == 0x2d) {           // both games send it; byte 5 = sender's player number
+                pty = ty; for (int j = 2; j < 6; ++j) g_vp_pk[j] = mp[j];
+                g_vp_pk[2] = static_cast<std::uint16_t>((mp[2] & 0x00ff) | 0x0100);
+            } else if (ty == 6) {              // both games send it with the same payload
+                pty = ty; for (int j = 2; j < 6; ++j) g_vp_pk[j] = mp[j];
+            } else {                           // anything else (0x13 buttons, P1's menus 0x01/0x34): P2 just plays on
+                g_vp_pk[2] = static_cast<std::uint16_t>(0xFC00 | (g_vp_snap_keys & 0x3ff));
+                g_vp_pk[3] = g_vp_snap_pos;
+            }
+            if (g_vp_mode == 2) g_vp_seq = (g_vp_seq + 1) & 0xff;
+            else g_vp_seq = real >> 8;     // follow the real second game's own counter until the stand-in takes over
+            g_vp_pk[0] = static_cast<std::uint16_t>(pty | g_vp_seq << 8);
+            g_vp_pk[1] = static_cast<std::uint16_t>(mp[1] + vp_bs(mp) - vp_bs(g_vp_pk));
+        }
+        p = g_vp_pk[k];
+        if (++g_vp_k == 6) g_vp_k = -1;
+    }
+    prev2 = g_vp_prev; g_vp_prev = m0;
+    { static const int rf = std::getenv("ROTK_VP_RAW") ? std::atoi(std::getenv("ROTK_VP_RAW")) : 0; if (rf && g_vp_frame >= (unsigned)rf && g_vp_frame < (unsigned)rf + 12) std::fprintf(stderr, "[raw] f%u idx%u %04x %04x pred %04x\n", g_vp_frame, g_vp_idx, m0, real, p); }
+    if (g_vp_mode == 1) {
+        if (p == real) ++g_vp_ok; else { ++g_vp_bad; ++g_vp_badw[std::min(g_vp_idx, 15u)];
+            static int shown = 0; if (g_vp_frame > 1700 && shown++ < 120) std::fprintf(stderr, "[vp] f%u idx%u master %04x real %04x pred %04x\n", g_vp_frame, g_vp_idx, m, real, p); }
+        return real;
+    }
+    return g_vp_mode == 2 ? p : real;   // mode 3: only follow the stream (so the stand-in can take over at any frame)
+}
+// Per frame, before run_frame: machine 0's memory, P2's buttons (history for the 2-frame build delay).
+static void vp_frame(gbarecomp::GbaMultiplayerSession& S, std::uint16_t p2keys, unsigned f) {
+    if (!g_vp_mode) { g_vp_mode = 3; gba::g_link_virtual_word = vp_word; }
+    g_vp_iw = S.machine(0).bus.iwram_ptr(); g_vp_ew = S.machine(0).bus.ewram_ptr();
+    g_vp_keys = p2keys; g_vp_frame = f; g_vp_khist[f & 63] = p2keys;
+}
+// One game for both heroes: the second game stops and the stand-in answers for it (local P2 only, never online).
+static bool vp_take_over() {
+    if (g_vp_mode == 2) return true;
+    if (g_vp_mode != 3 || g_vp_k >= 0) return false;   // not inside a message
+    g_vp_mode = 2; gba::g_link_virtual1 = true; gbarecomp::g_session_skip_mask = 2;
+    return true;
+}
+
+// A hero's 0x70-byte save record, built by the game's own builder (0x0803C6CC) inside game g for player pl
+// (-1 = the game's own player). In one-game play P2 has no game of its own, so P2's save comes from P1's game.
+// Runs through the interpreter between frames; game g's memory, registers and clock are all put back after.
+static int vp_record(gbarecomp::GbaMultiplayerSession& S, int g, int pl, std::uint8_t* out) {
+    auto& m = S.machine(g & 1);
+    std::uint8_t* iw = m.bus.iwram_ptr(); std::uint8_t* ew = m.bus.ewram_ptr();
+    std::vector<std::uint8_t> civ(iw, iw + 0x8000), cew(ew, ew + 0x40000);
+    gbarecomp::RuntimeArmContext saved; gbarecomp::runtime_capture_arm_context(saved);
+    gbarecomp::RuntimeTimingContext tsaved; gbarecomp::runtime_capture_timing_context(tsaved);
+    gba::GbaBus* sbus = gbarecomp::active_bus(); gba::GbaPpu* sppu = gbarecomp::active_ppu();
+    gbarecomp::runtime_restore_arm_context(m.execution); gbarecomp::runtime_restore_timing_context(m.timing);
+    gbarecomp::set_active_bus(&m.bus); gbarecomp::set_active_ppu(&m.ppu);
+    gbarecomp::runtime_session_execution(true);   // the clock only counts; no device or IRQ runs
+    std::uint32_t sp = g_cpu.R[13] & ~7u;
+    if (sp >> 24 != 3 || (sp & 0xFFFFFF) < 0x6000) sp = 0x03007C00;
+    const std::uint32_t dst = sp - 0x100, stop = 0x03007FF0u;
+    auto r32 = [&](std::uint32_t a) { a &= 0x7FFF; return iw[a] | iw[a + 1] << 8 | iw[a + 2] << 16 | std::uint32_t(iw[a + 3]) << 24; };
+    if (pl >= 0) iw[0x3F59] = static_cast<std::uint8_t>(pl);
+    g_cpu.R[0] = dst; g_cpu.R[1] = r32(0x03004174); g_cpu.R[13] = dst - 0x20; g_cpu.R[14] = stop | 1u;
+    g_cpu.cpsr |= CPSR_T_BIT | CPSR_I_BIT;
+    runtime_call_push_return(stop | 1u);   // a caller frame, so the interpreter runs the whole call
+    int ok = 0;
+    try { ok = runtime_bridge_interpret(0x0803C6CCu, true, stop, 4000000u); } catch (...) { ok = 0; }
+    if (ok && out) std::memcpy(out, iw + (dst & 0x7FFF), 0x70);
+    gbarecomp::runtime_session_execution(false);
+    if (std::getenv("ROTK_VP_RECDIFF")) {   // test: which memory the builder touched (besides its stack)
+        for (unsigned i = 0; i < 0x8000; ++i) if (iw[i] != civ[i] && (i < (dst & 0x7FFF) - 0x200 || i >= (dst & 0x7FFF) + 0x100)) std::fprintf(stderr, "[recdiff] iw %04x %02x->%02x\n", i, civ[i], iw[i]);
+        for (unsigned i = 0; i < 0x40000; ++i) if (ew[i] != cew[i]) std::fprintf(stderr, "[recdiff] ew %05x %02x->%02x\n", i, cew[i], ew[i]);
+    }
+    std::memcpy(iw, civ.data(), civ.size()); std::memcpy(ew, cew.data(), cew.size());
+    gbarecomp::runtime_restore_arm_context(saved); gbarecomp::runtime_restore_timing_context(tsaved);
+    gbarecomp::set_active_bus(sbus); gbarecomp::set_active_ppu(sppu);
+    return ok;
+}
+
 extern gba::GbaBus* g_session_hook_bus;
 extern std::uint64_t g_session_slice_lookahead;
 extern "C" int g_session_bridge_misses;
@@ -303,6 +434,7 @@ void runtime_set_frame_start_hook(std::function<void()>);
 void runtime_set_vblank_latch_hook(std::function<void()>);
 namespace gbarecomp {
 #if defined(GBR_WEB_SINGLE)
+
 [[noreturn]] void runtime_web_run_frames(std::function<bool()> frame);
 #endif
 }
@@ -324,6 +456,59 @@ static int g_link_net = 0;
 static unsigned g_link_show = 0;
 static std::vector<std::array<std::uint16_t, 2>> g_net_q;
 static std::size_t g_net_head = 0;
+// v180 (Jordan, 2026-11-16: "all updates to affect online and offline"): the page's own changes to game memory
+// (free-angle stick, HD Backpack, hooks...) travel with the buttons. Before each picture the engine compares both
+// games' RAM with how the last frame left it: whatever differs was written by the page. Those bytes are put back and
+// handed to the page (rotk_link_outbox), which sends them with its next frame's buttons; both pages then write them
+// (rotk_link_op) right before that frame runs, so the two pages stay byte-identical.
+struct NetOp { std::uint32_t a; std::uint8_t v, g, kind; };   // a: GBA address; g: bit 0 game 0, bit 1 game 1; kind 0 set, 1 or
+static std::vector<std::vector<NetOp>> g_net_ops;              // with g_net_q, one list per queued frame
+static std::vector<NetOp> g_net_pending, g_net_out;
+static std::vector<std::uint8_t> g_net_snap;                   // [game][iwram 0x8000, ewram 0x40000]
+static bool g_net_snap_ok = false;
+static std::uint8_t* net_mem(unsigned g, std::uint32_t a) {
+    if (!g_link) return nullptr;
+    auto& bus = g_link->machine(g & 1).bus;
+    if ((a >> 24) == 3) return bus.iwram_ptr() + (a & 0x7fff);
+    if ((a >> 24) == 2) return bus.ewram_ptr() + (a & 0x3ffff);
+    return nullptr;
+}
+static void net_apply(const std::vector<NetOp>& ops) {
+    for (const auto& o : ops) for (unsigned g = 0; g < 2; ++g) if (o.g & (1u << g)) {
+        if (std::uint8_t* m = net_mem(g, o.a)) { if (o.kind == 1) *m |= o.v; else *m = o.v; }
+    }
+}
+static void net_take_page_writes() {
+    if (!g_link || !g_net_snap_ok) return;
+    constexpr std::size_t IW = 0x8000, EW = 0x40000;
+    for (unsigned g = 0; g < 2; ++g) {
+        auto& bus = g_link->machine(g).bus;
+        std::uint8_t* regs[2] = {bus.iwram_ptr(), bus.ewram_ptr()};
+        const std::size_t len[2] = {IW, EW}; const std::uint32_t base[2] = {0x03000000u, 0x02000000u};
+        std::uint8_t* snap = g_net_snap.data() + g * (IW + EW);
+        for (int r = 0; r < 2; ++r) {
+            std::uint8_t* m = regs[r]; std::uint8_t* s = snap + (r ? IW : 0);
+            for (std::size_t o = 0; o < len[r]; o += 64) {
+                if (std::memcmp(m + o, s + o, 64) == 0) continue;
+                for (std::size_t b = o; b < o + 64; ++b) if (m[b] != s[b]) {
+                    if (g_net_out.size() < 65536) g_net_out.push_back({static_cast<std::uint32_t>(base[r] + b), m[b], static_cast<std::uint8_t>(1u << g), 0});
+                    m[b] = s[b];
+                }
+            }
+        }
+    }
+}
+static void net_snapshot() {
+    if (!g_link) return;
+    constexpr std::size_t IW = 0x8000, EW = 0x40000;
+    g_net_snap.resize(2 * (IW + EW));
+    for (unsigned g = 0; g < 2; ++g) {
+        auto& bus = g_link->machine(g).bus;
+        std::memcpy(g_net_snap.data() + g * (IW + EW), bus.iwram_ptr(), IW);
+        std::memcpy(g_net_snap.data() + g * (IW + EW) + IW, bus.ewram_ptr(), EW);
+    }
+    g_net_snap_ok = true;
+}
 // The multiplayer path screen only offers story levels; when the page asks for another level,
 // swap it in as the path screen hands its choice to the level loader (both games, same frame).
 static void link_force_level() {
@@ -447,13 +632,19 @@ static int run_link(const gbarecomp::RunOptions& opts) {
         std::array<std::uint16_t, 2> keys{static_cast<std::uint16_t>(~ev.keyinput & 0x3ff), static_cast<std::uint16_t>(g_link_p2_keys & 0x3ff)};
         // Fast start (page sets g_link_turbo while it drives the menus): several game frames per picture, no sound.
         int reps = 1 + (g_link_turbo > 0 ? (g_link_turbo < 8 ? g_link_turbo : 8) : 0);
-        if (g_link_net) reps = static_cast<int>(std::min<std::size_t>(g_net_q.size() - g_net_head, 6));
+        if (g_link_net) { reps = static_cast<int>(std::min<std::size_t>(g_net_q.size() - g_net_head, 6)); net_take_page_writes(); }
         for (int r = 0; r < reps; ++r) {
-            if (g_link_net) { keys = g_net_q[g_net_head++]; if (g_net_head == g_net_q.size()) { g_net_q.clear(); g_net_head = 0; } }
+            if (g_link_net) {
+                net_apply(g_net_ops[g_net_head]);
+                keys = g_net_q[g_net_head++];
+                if (g_net_head == g_net_q.size()) { g_net_q.clear(); g_net_ops.clear(); g_net_head = 0; }
+            }
+            else { vp_frame(S, keys[1], g_link_frames); if (g_link_one_req && vp_take_over()) g_link_one_req = 0; }
             try { S.run_frame(keys); link_force_level(); } catch (const std::exception& e) {
                 std::fprintf(stderr, "[rotk:link] stopped: %s\n", e.what()); return false;
             }
             ++g_link_frames;
+            if (g_link_net && r + 1 == reps) net_snapshot();
             if (r + 1 < reps) for (int b = 0; b < 16; ++b) { std::uint32_t rate = 0; if (!m0.bus.audio().drain_sample_block(audio_buf, 2048, rate)) break; }
         }
         if (m0.ppu.frame_count() != last_frame && m0.ppu.has_latched_framebuffer()) {
@@ -568,6 +759,24 @@ static int run_link(const gbarecomp::RunOptions& opts) {
     for (unsigned f = 0; f < frames; ++f) {
         while (ri < rows.size() && rows[ri][0] == f) { keys = {static_cast<std::uint16_t>(rows[ri][1]), static_cast<std::uint16_t>(rows[ri][2])}; ++ri; }
         if (auto_p[0] >= 0) keys = auto_keys(f);
+        // ROTK_P1PRESS="frame:keys(hex):frames;...": hold P1 buttons (menu tests)
+        if (const char* pp = std::getenv("ROTK_P1PRESS")) { for (const char* q = pp; *q;) { unsigned a0, kk, d; int n = 0; if (std::sscanf(q, "%u:%x:%u%n", &a0, &kk, &d, &n) < 3) break; if (f >= a0 && f < a0 + d) keys[0] = static_cast<std::uint16_t>(kk); q += n; if (*q == ';') ++q; } }
+        if (const char* vm = std::getenv("ROTK_VP")) { if (!g_vp_mode) { g_vp_mode = vm[0] == 'v' ? 2 : 1; gba::g_link_virtual_word = vp_word; }
+            vp_frame(S, keys[1], f); g_vp_kdelay = std::atoi(env("ROTK_VP_KD", "2"));
+            static const unsigned vp_at = std::atoi(env("ROTK_VP_AT", "0"));
+            if (f % 150 == 0) { auto pos = [&](int pl) { const std::uint32_t h = vp_r32(0x03003C00 + 0x1AC * pl); if (h >> 24 != 2) return std::string("-"); const std::uint8_t* e = g_vp_ew + (h & 0x3FFFF);
+                    char b[40]; std::snprintf(b, sizeof b, "%d,%d", e[0xAE] | e[0xAF] << 8, e[0xB2] | e[0xB3] << 8); return std::string(b); };
+                std::fprintf(stderr, "[vp] f%u P1 %s P2 %s sub %u state %u\n", f, pos(0).c_str(), pos(1).c_str(), g_vp_iw[0x41C0], g_vp_iw[0x41B0]); }
+            if (vp_at && f >= vp_at && g_vp_mode == 1) { g_vp_mode = 3; if (vp_take_over())
+                std::fprintf(stderr, "[vp] f%u second game switched off (ok %llu bad %llu so far)\n", f, g_vp_ok, g_vp_bad); else g_vp_mode = 1; } }
+        if (const char* rq = std::getenv("ROTK_VP_REC")) { static const unsigned rf = std::atoi(rq); if (f == rf) {
+            std::uint8_t a[0x70], b[0x70], c[0x70]; const int oa = vp_record(S, 0, 1, a), ob = vp_record(S, 1, -1, b), oc = vp_record(S, 0, -1, c);
+            std::fprintf(stderr, "[rec] f%u built %d %d %d; P2 from game 0 vs game 1:", f, oa, ob, oc); int nd = 0;
+            for (int i = 0; i < 0x70; ++i) if (a[i] != b[i]) { ++nd; std::fprintf(stderr, " %02x:%02x/%02x", i, a[i], b[i]); }
+            std::fprintf(stderr, " (%d differ)\n[rec] P1 own vs saved slot:", nd);
+            const std::uint8_t* iw0 = S.machine(0).bus.iwram_ptr(); const unsigned so = 0x5630 + iw0[0x41BC] * 0x70; nd = 0;
+            for (int i = 0; i < 0x70; ++i) if (c[i] != iw0[so + i]) ++nd;
+            std::fprintf(stderr, " %d differ\n[rec] a:", nd); for (int i = 0; i < 0x70; ++i) std::fprintf(stderr, "%02x", a[i]); std::fprintf(stderr, "\n"); } }
         S.run_frame(keys); link_force_level();
 #if !defined(__EMSCRIPTEN__) && __has_include(<valgrind/callgrind.h>)
         if (auto_p[0] >= 0 && phase == 3) {   // profile only frames [ROTK_PROF_FROM, +ROTK_PROF_N) after the level start
@@ -586,6 +795,8 @@ static int run_link(const gbarecomp::RunOptions& opts) {
             std::fflush(stdout);
             tw = now; tw_f = f;
         }
+        if (const char* md = std::getenv("ROTK_LINK_MEMDUMP")) { const unsigned a0 = std::atoi(env("ROTK_LINK_MEMDUMP_FROM", "2000")), n = std::atoi(env("ROTK_LINK_MEMDUMP_N", "8"));
+            if (f >= a0 && f < a0 + n) for (int i = 0; i < 2; ++i) { char p[512]; std::snprintf(p, sizeof p, "%s/m%d_f%05u.bin", md, i, f); if (FILE* o = std::fopen(p, "wb")) { std::fwrite(S.machine(i).bus.iwram_ptr(), 1, 0x8000, o); std::fwrite(S.machine(i).bus.ewram_ptr(), 1, 0x40000, o); std::fclose(o); } } }
         if (m0.ppu.has_latched_framebuffer()) {
             fb.assign(m0.ppu.latched_framebuffer(), m0.ppu.latched_framebuffer() + m0.ppu.render_bytes());
             if (smoother.apply(m0.ppu, fb.data(), fb.size())) ++mids;
@@ -597,6 +808,7 @@ static int run_link(const gbarecomp::RunOptions& opts) {
         for (unsigned i = 0; i < 2; ++i) for (int b = 0; b < 16; ++b) { std::uint32_t rate = 0; if (!S.machine(i).bus.audio().drain_sample_block(audio_buf, 2048, rate)) break; }
     }
     const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+    if (g_vp_mode) { std::fprintf(stderr, "[vp] ok %llu bad %llu by idx:", g_vp_ok, g_vp_bad); for (int k = 0; k < 16; ++k) if (g_vp_badw[k]) std::fprintf(stderr, " %d:%llu", k, g_vp_badw[k]); std::fprintf(stderr, "\n"); }
     std::printf("link frames=%u ms=%.0f fps=%.1f mids=%u size=%ux%u lvl0=%u lvl1=%u\n", frames, ms, frames * 1000.0 / ms, mids,
                 m0.ppu.render_width(), m0.ppu.render_height(), m0.bus.iwram_ptr()[0x41F8], S.machine(1).bus.iwram_ptr()[0x41F8]);
     for (unsigned i = 0; i < 2; ++i) if (const char* out = std::getenv(i ? "ROTK_LINK_OUT1" : "ROTK_LINK_OUT0")) {
@@ -613,7 +825,27 @@ const std::uint8_t* rotk_link_iwram(int i) { return g_link ? g_link->machine(i &
 const std::uint8_t* rotk_link_ewram(int i) { return g_link ? g_link->machine(i & 1).bus.ewram_ptr() : nullptr; }
 void rotk_link_level(unsigned level) { g_link_level = level & 0xff; }
 // Online: queue one frame's buttons (GBA bits, 1 = pressed) for both games; returns frames waiting.
-int rotk_link_push(unsigned k0, unsigned k1) { g_net_q.push_back({static_cast<std::uint16_t>(k0 & 0x3ff), static_cast<std::uint16_t>(k1 & 0x3ff)}); return static_cast<int>(g_net_q.size() - g_net_head); }
+int rotk_link_push(unsigned k0, unsigned k1) {
+    g_net_q.push_back({static_cast<std::uint16_t>(k0 & 0x3ff), static_cast<std::uint16_t>(k1 & 0x3ff)});
+    g_net_ops.push_back(std::move(g_net_pending)); g_net_pending.clear();
+    return static_cast<int>(g_net_q.size() - g_net_head);
+}
+// Online (v180): one memory write for the next frame pushed (both pages call it alike): games g (bit 0/1), GBA address
+// a, byte v, kind 0 = set, 1 = or.
+void rotk_link_op(unsigned g, unsigned a, unsigned v, unsigned kind) { g_net_pending.push_back({a, static_cast<std::uint8_t>(v), static_cast<std::uint8_t>(g & 3), static_cast<std::uint8_t>(kind & 1)}); }
+// Online (v180): the page's own writes since the last frame, taken back out of the games: up to max entries of
+// 8 bytes (u32 address, u8 value, u8 games) into out; returns how many.
+int rotk_link_outbox(std::uint8_t* out, int max) {
+    const int n = static_cast<int>(std::min<std::size_t>(g_net_out.size(), static_cast<std::size_t>(max > 0 ? max : 0)));
+    for (int i = 0; i < n; ++i) { const auto& o = g_net_out[i]; std::memcpy(out + 8 * i, &o.a, 4); out[8 * i + 4] = o.v; out[8 * i + 5] = o.g; out[8 * i + 6] = 0; out[8 * i + 7] = 0; }
+    g_net_out.erase(g_net_out.begin(), g_net_out.begin() + n);
+    return n;
+}
+// Page: P2 is in the level -> run both heroes in one game from now on (the stand-in takes over at a message boundary).
+void rotk_link_one() { g_link_one_req = 1; }
+int rotk_link_is_one() { return g_vp_mode == 2; }
+// One-game play: P2's save record (0x70 bytes, as in RAM) built from P1's game; 1 when built.
+int rotk_link_p2_record(std::uint8_t* out) { return g_link && g_vp_mode == 2 ? vp_record(*g_link, 0, 1, out) : 0; }
 int rotk_link_queued() { return static_cast<int>(g_net_q.size() - g_net_head); }
 // Online: hash of both games' work RAM, compared between the two pages now and then (out of step = different).
 unsigned rotk_link_hash() {
@@ -640,7 +872,7 @@ int rotk_link_save(int i, std::uint8_t* out) {
 }
 }
 int main(int argc, char** argv) {
-    gbarecomp::RunOptions opts;
+    static gbarecomp::RunOptions opts;   // static: on the web the main loop outlives main() (wasm EH would destroy a local)
     opts.builtin_game_name = "The Lord of the Rings: The Return of the King (USA, Europe) Modded";
     opts.builtin_rom_sha1 = "dd6d504c587ce487c983968f4f01748457b30ed8";
     opts.max_view_width = 320;
@@ -648,5 +880,6 @@ int main(int argc, char** argv) {
     opts.extended_view_frame = rotk_view::frame;
     opts.view_geometry = rotk_view::geometry;
     if (std::getenv("ROTK_LINK")) return run_link(opts);
+    { extern void rotk_solo_setup(); rotk_solo_setup(); }   // one engine: the solo game needs the native mixer too
     return gbarecomp::run_game(argc, argv, opts);
 }

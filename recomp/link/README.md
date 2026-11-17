@@ -136,3 +136,48 @@ slice/dispatch boundary). Game state is identical frame for frame (`hash=` in
 the `[speed]` line). Native 2-player fight: 12.4-12.6 -> 10.6-11.1 ms/frame
 (~12-14%); browser at 3x CPU throttle: +6-9% engine frames/s.
 Regenerate the link code with the patched `gba_recompile` after applying it.
+
+## v181 (2026-11-16): item menu fixes
+
+Jordan: "Item menu doesn't load correctly when - failing to equip item due to level restriction - entering a forge or
+shrine - moving an item doesn't allow you to move the item in the inventory". Page patch
+`recomp/playroom/item-menu-v181.py` (on the v180 page) plus new hooks in `tools/orcslots/orcslots.c` (engine rebuilt with
+`one/regen.sh`):
+- The HD Backpack stays up during the game's messages (substate 8) and shows the game's own words with an OK button.
+- Move Item (substate 6) shows the game's second cursor (UI 0x03001FE4) as the target and marks the item being moved;
+  taps walk that cursor. A tap on a stash box sets MVREQ (EWRAM 0x0203F604, box + 1): `frame_hook` swaps the item with
+  the stash box and ends the move (substate 7), 1-player only (2-player has no stash).
+- Forge / Shrine (state 20): the page draws an HD shop over the game's. `line_wrap` (bl inside DRAWTEXT, 0x0801D6F2) and
+  `clr_wrap` (inside CLEARTEXT, 0x0801267C) keep the text lines drawn in shops and the Backpack in EWRAM 0x0203F990
+  (count, change counter, then x, y, length, bytes; "@1" words filled in from 0x03000F50 + 64 c). `shop_keys` (the
+  shop's key read, 0x0801DF10) puts stash box SWIN - 1 (0x0203F605) into cell 15 so it can be sold. The shop cursor is
+  [0x03001C90] + 0x62 (0-7 = grid cells 8-15, 8-10 = goods); the page walks it with the d-pad (measured map:
+  Right 3/7 -> 8, 10 -> 0; Left 0/4 -> 10, 8 -> 3; Up/Down switch grid rows). Yes / No is the menu choice 0x030041BC.
+## P2 inside one game: stand-in partner (prototype, 2026-11-13)
+
+Jordan: nobody links any more, P2 just joins. In a level the two games only swap one 12-byte message per
+game tick (every 2 frames), after a fixed handshake (slave sends beef c0de c0de babe babe):
+
+- word 0: message type (0x13 = buttons) | sequence << 8. P2's sequence is always the master's minus 1.
+- word 1: check word = -(byte sum of the other words + shared session state). So P2's check word =
+  master check word + bytesum(master) - bytesum(P2). The master's packet in flight is at IWRAM 0x03006D14.
+- word 2: buttons, 0xFC00 | pressed bits (~KEYINPUT, built at 0x0803FEFC).
+- word 3: sender's hero position, low bytes of obj+0xAE (x) and obj+0xB2 (y); hero obj ptr at
+  0x03003C00 + 0x1AC * player.
+- other message types (events, e.g. type 6) carry the same payload on both games.
+
+`one-game-partner.patch` (gbarecomp) adds `gba::g_link_virtual_word` (a hook that supplies port 1's word at
+each transfer), `gba::g_link_virtual1` (port 1 follows port 0's clock) and `gbarecomp::g_session_skip_mask`
+(skip a machine's CPU and devices). link_main: `ROTK_VP=check` compares the stand-in's words with the real
+second game; `ROTK_VP_AT=<frame>` switches the second game off at that frame and the stand-in takes over.
+Headless Hornburg fight (spawn test): game keeps running, P2 keeps moving and fighting; 6.7-8.3 ->
+3.9-5.0 ms/frame (~40% less). Boot, menus and level start still need the real second game (type 0x14/0x15
+messages carry P2's own data), and P2's own Backpack menu runs in P2's game.
+
+## v182 (2026-11-17): item menu fixes + one-game P2 in one release
+
+Jordan: "I want everything merged, the most current version in the play room". Page = live v181 page +
+`recomp/playroom/p2-one-game-v180.py`, link engine `?v=182`. Engine = gen181 code (orcslots hooks) linked against the
+runtime with `one-game-partner.patch` applied (rtmix rebuilt: weblinkrt libs, runtime.cpp.o swapped back in with `emar r`).
+Tested headless: 1-player level message / Move Item / Shrine; P2 starts in one-game mode (`rotk_link_is_one` = 1) and the
+Moria Shrine opens in the HD shop.
