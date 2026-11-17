@@ -9,7 +9,7 @@ em++ -O2 -mtail-call -fwasm-exceptions link_main.o shim-one.o mixer_hook.o recom
   -sALLOW_MEMORY_GROWTH -sINITIAL_MEMORY=134217728 -sSTACK_SIZE=16777216 -sFORCE_FILESYSTEM \
   -sEXPORTED_RUNTIME_METHODS=FS,ENV,addRunDependency,removeRunDependency,HEAPU8,HEAP16,HEAP32,HEAPU16,HEAPU32 -sINVOKE_RUN=0 \
   -sINCOMING_MODULE_JS_API=wasmBinary,noInitialRun,onAbort,preRun,postRun,print,printErr,locateFile,instantiateWasm,onRuntimeInitialized,onExit,arguments,thisProgram,noExitRuntime,preInit,monitorRunDependencies,setStatus,canvas \
-  -sEXPORTED_FUNCTIONS=_rotk_main,_rotk_pause,_rotk_iwram,_rotk_ewram,_rotk_native_view,_rotk_oam,_rotk_tick_stats,_rotk_bg_tick,_rotk_cpu_speed,_rotk_get_cpu_speed,_rotk_skin,_rotk_skin_slot,_rotk_vram,_rotk_pal,_malloc,_free,_rotk_link_p2,_rotk_link_on,_rotk_link_frames,_rotk_link_iwram,_rotk_link_ewram,_rotk_link_save,_rotk_link_level,_rotk_link_turbo,_rotk_link_push,_rotk_link_queued,_rotk_link_hash,_rotk_link_op,_rotk_link_outbox,_rotk_dbg_pc \
+  -sEXPORTED_FUNCTIONS=_rotk_main,_rotk_pause,_rotk_iwram,_rotk_ewram,_rotk_native_view,_rotk_oam,_rotk_tick_stats,_rotk_bg_tick,_rotk_cpu_speed,_rotk_get_cpu_speed,_rotk_skin,_rotk_skin_slot,_rotk_vram,_rotk_pal,_malloc,_free,_rotk_link_p2,_rotk_link_on,_rotk_link_frames,_rotk_link_iwram,_rotk_link_ewram,_rotk_link_save,_rotk_link_level,_rotk_link_turbo,_rotk_link_push,_rotk_link_queued,_rotk_link_hash,_rotk_link_op,_rotk_link_outbox,_rotk_link_one,_rotk_link_is_one,_rotk_link_p2_record,_rotk_dbg_pc \
   -lidbfs.js -sENVIRONMENT=web -sEXIT_RUNTIME=1 -sMODULARIZE=1 -sEXPORT_NAME=createRotkLink -o rotk-link.js
 python3 -c "
 d=open('rotk-link.wasm','rb').read(); n=3; h=-(-len(d)//n)
