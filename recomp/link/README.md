@@ -173,3 +173,11 @@ second game; `ROTK_VP_AT=<frame>` switches the second game off at that frame and
 Headless Hornburg fight (spawn test): game keeps running, P2 keeps moving and fighting; 6.7-8.3 ->
 3.9-5.0 ms/frame (~40% less). Boot, menus and level start still need the real second game (type 0x14/0x15
 messages carry P2's own data), and P2's own Backpack menu runs in P2's game.
+
+## v182 (2026-11-17): item menu fixes + one-game P2 in one release
+
+Jordan: "I want everything merged, the most current version in the play room". Page = live v181 page +
+`recomp/playroom/p2-one-game-v180.py`, link engine `?v=182`. Engine = gen181 code (orcslots hooks) linked against the
+runtime with `one-game-partner.patch` applied (rtmix rebuilt: weblinkrt libs, runtime.cpp.o swapped back in with `emar r`).
+Tested headless: 1-player level message / Move Item / Shrine; P2 starts in one-game mode (`rotk_link_is_one` = 1) and the
+Moria Shrine opens in the HD shop.
