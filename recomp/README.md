@@ -477,3 +477,11 @@ screen pixel: about 3 million on a 3x phone in landscape, although the sharpened
 stretches it smoothly). Low also skips the living fire/trees/shadow pass. Setup chip "Graphics: High/Low" (localStorage
 `rotk-gfx`). When the picture rate stays under 40/s, the page first drops to Low, then to plain pixels as before.
 Bench (344x160 picture, ms per draw on swiftshader): old full size 746, High 218, Low 92, lighting off 17.
+
+## Fangorn night lights (2026-11-17)
+
+Jordan: "At night the lights in fangore forest go wild". The night light map (LIGHT_GLOW `em()`) treats bright, saturated,
+contrasting pixels as light sources. Fangorn's lime-green leaf highlights pass all three, so the forest lit itself up in
+green pools that popped as the camera moved. `recomp/playroom/foliage_light.py` stops green-dominant pixels (g well above
+r and b) from emitting; flames, lava and spells are red/yellow/blue/white and still glow. Shared by 1-player, P2 and online
+(they all draw through makeSharpHD). Before/after: screenshots/fangorn-night-fix.png in the project files.
