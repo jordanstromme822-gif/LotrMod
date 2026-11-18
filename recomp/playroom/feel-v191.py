@@ -13,6 +13,10 @@ s=s.replace(a,b)
 a="const FREE_HOOK = 0x0809F001, FREE_GAME = 0x080236B9"
 assert s.count(a)==1
 s=s.replace(a,"const FREE_HOOK = 0x09400001 /* v191: tools/feel hero_feel, which runs 0x0809F001 first */, FREE_GAME = 0x080236B9")
+# v193: the link engine (P2, online) only has the first 16 MB, so it keeps the turn16 hook (0x0809F001)
+a="if (cur === FREE_GAME) dv.setUint32(at, FREE_HOOK, true);"
+assert s.count(a)==1
+s=s.replace(a,"const hk = M._rotk_link_on ? 0x0809F001 : FREE_HOOK;   // v193: the link engine (P2, online) has only the first 16 MB, and the feel hook lives at 0x09400000\n        if (cur === FREE_GAME || (cur === FREE_HOOK && hk !== FREE_HOOK)) dv.setUint32(at, hk, true);")
 a="const HERO = new Set([0x080236b9, 0x0809f001]);"
 assert s.count(a)==1
 s=s.replace(a,"const HERO = new Set([0x080236b9, 0x0809f001, 0x09400001]);")
