@@ -124,6 +124,26 @@ def morph(A,B,C,t=0.5):
                 if len(nb)>=3: add[(x,y)]=max(set(nb),key=nb.count)
         out.update(add)
     return {p:c for p,c in out.items() if sum(((p[0]+dx,p[1]+dy) in out) for dx,dy in ((1,0),(-1,0),(0,1),(0,-1)))>=1}
+def morph1(A,B,C,t=0.5):
+    """v189 (Jordan: "the in between frames look like 2 people running not 1"): one body only. Every pixel of A moves
+    part of the way toward its match in B; B's own pixels are not added, so a limb that matches badly can't show twice."""
+    if not A or not B: return dict(A or B)
+    dA=nearest(A,B,C); out={}
+    for (x,y),c in A.items():
+        d=dA[(x,y)]
+        p=(x,y) if d is None else (round(x+t*d[0]),round(y+t*d[1]))
+        out.setdefault(p,c)
+    for _ in range(2):
+        add={}
+        xs=[x for x,y in out]; ys=[y for x,y in out]
+        for x in range(min(xs),max(xs)+1):
+            for y in range(min(ys),max(ys)+1):
+                if (x,y) in out: continue
+                nb=[out.get(q) for q in ((x-1,y),(x+1,y),(x,y-1),(x,y+1))]
+                nb=[c for c in nb if c]
+                if len(nb)>=3: add[(x,y)]=max(set(nb),key=nb.count)
+        out.update(add)
+    return out
 KINDS=(4,6)
 SHAPES=[(4,4,0,2),(4,2,1,2),(2,4,2,2),(2,2,0,1),(4,1,1,1),(1,4,2,1),(2,1,1,0),(1,2,2,0),(1,1,0,0)]
 def clean(px):
@@ -177,7 +197,7 @@ def hero_pics(h):
         R=[[render(f,decode(f)) for f in F[d]] for d in range(5)]
         for j in range(4):
             n=min(len(F[j]),len(F[j+1]))
-            sheet[(k,j)]=(F,R,[clean(morph(R[j][i],R[j+1][i],C)) for i in range(n)])
+            sheet[(k,j)]=(F,R,[clean(morph1(R[j][i],R[j+1][i],C)) for i in range(n)])
     return T,sheet
 def build_hero(out,BASE,h,T,sheet):
     def here(): return BASE+len(out)
@@ -224,7 +244,7 @@ if __name__=='__main__':
     for h in range(8):
         if h not in heroes: idx.append((0,0,0)); continue
         T,sheet=hero_pics(h)
-        pickle.dump({kj:v[2] for kj,v in sheet.items()},open(f'/tmp/rc/g16/sheet{h}.pkl','wb'))
+        pickle.dump({kj:v[2] for kj,v in sheet.items()},open(os.path.join(os.environ.get('G16DIR','/tmp/rc/g16'),f'sheet{h}.pkl'),'wb'))
         s,e=build_hero(out,BASE,h,T,sheet); idx.append((T,s,e)); print('hero',h,hex(T),hex(s),'bytes',e-s,flush=True)
     for h,(T,s,e) in enumerate(idx): out[8*h:8*h+8]=struct.pack('<II',T,s)
     open(sys.argv[2],'wb').write(out); print('total',len(out))

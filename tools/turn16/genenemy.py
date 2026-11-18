@@ -44,7 +44,7 @@ def build_set(out,p):
     align(); ent_at=len(out); out+=b'\0'*64; sheet=[]
     for j in range(4):
         n=min(len(F[j]),len(F[j+1]))
-        pics=[clean(morph(R[j][i],R[j+1][i],C)) for i in range(n)]
+        pics=[clean(morph1(R[j][i],R[j+1][i],C)) for i in range(n)]
         pics=[q if q else R[j][i] for i,q in enumerate(pics)]
         sheet.append(pics)
         tiles,hdr_src,_=struct.unpack_from('<III',ROM,p-0x8000000+16*j)
