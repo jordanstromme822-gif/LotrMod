@@ -37,9 +37,10 @@ static int frames_of(u32 entry) { return *(const u8 *)(*(const u32 *)(entry + 4)
 /* show anim kind k, drawn direction d of table t, keeping the walk step */
 static void show(u8 *o, u32 t, int k, int d)
 {
-    int fr = o[0x23];
+    int fr = o[0x23], tm = o[0x20];
     SETPIC(o, t, k, d);
-    if (fr && fr < frames_of(U32(o, 0x24))) SETFRAME(o, fr);
+    /* keep the walk step and its timer: a facing change must not restart the step, or the legs stop while he moves (v189) */
+    if (fr < frames_of(U32(o, 0x24))) { if (fr) SETFRAME(o, fr); if (k == 4 || k == 6) o[0x20] = tm; }
 }
 
 /* the game's facing (0-7) that goes with facing16 f: even = the same, odd = the neighbour the picture is mirrored like */
@@ -63,7 +64,8 @@ static void turn(u8 *o)
             S32(o, 0xB8) = -((spd * SIN[(a + 64) & 255]) >> 8);
             f = F16[a];
             /* keep the facing until the stick is a few steps into the next one, so it doesn't flicker on a border */
-            if (old >= 0 && f != old && (F16[(a + 3) & 255] == old || F16[(a - 3) & 255] == old)) f = old;
+            /* v189: 5/256 of a turn (was 3), so a stick held near a border (a 45 degree run) no longer flips every tick */
+            if (old >= 0 && f != old && (F16[(a + 5) & 255] == old || F16[(a - 5) & 255] == old)) f = old;
             held = 1;
         } else if (old >= 0 && f8_of(old) == o[0xF8]) {
             f = old;                       /* standing: keep the last facing unless the game turned him (attack, hit) */
