@@ -485,3 +485,15 @@ contrasting pixels as light sources. Fangorn's lime-green leaf highlights pass a
 green pools that popped as the camera moved. `recomp/playroom/foliage_light.py` stops green-dominant pixels (g well above
 r and b) from emitting; flames, lava and spells are red/yellow/blue/white and still glow. Shared by 1-player, P2 and online
 (they all draw through makeSharpHD). Before/after: screenshots/fangorn-night-fix.png in the project files.
+
+## Stash boxes in 2-player and online (2026-11-18, Play Room v194)
+
+Jordan: "All the items that are in the back pack currently those slots can't be accessed at forges". The 4 extra
+backpack boxes (stash L7..L11, HD cursor 30-34) were gated `!LINKED` in orcslots.c, so in P2 and online games the
+Forge/Shrine and Move Item could not reach them. `tools/orcslots/orcslots.c` now swaps the picked stash box into cell 15
+(`s_window`) in linked games too (nav, shop SWIN request, Move Item MVREQ), with `WIN[p]` clamped to 0-4. The swap runs
+inside the engine, so both online pages stay in lockstep. `recomp/playroom/stash-2p-v190.py` drops the page's
+`if (ctx.linked) return;` and points the link engine at `?v=190` (rebuilt with regen.sh from the v193 page ROM).
+Tested headless: 1-player all 12 boxes give the sell prompt at the Moria Shrine; one-game P2 boxes 30-34 swap in and
+a stash item sold. Note: the link engine holds only the first 16 MB of the ROM, so hook code past 0x1000000 crashes
+P2/online with wasm "unreachable".

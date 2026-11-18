@@ -1017,11 +1017,12 @@ int nav_c(int proposed)
     u8 *ui = UI;
     int old = ui[0x62], k = KEYS(LOCAL_P), n = proposed, ar = nas(LOCAL_P);
     if (HDMODE) {
-        int p = LOCAL_P & 1, vo = old == 15 && !LINKED ? VFIRST + WIN[p] : old;   /* cell 15 = the stash cell in it */
+        int p = LOCAL_P & 1;
+        if (WIN[p] > 4) WIN[p] = 0;
+        int vo = old == 15 ? VFIRST + WIN[p] : old;   /* cell 15 = the stash cell in it (v190: 2-player and online too) */
         if (CURREQ) { n = CURREQ - 1; CURREQ = 0; PGREQ = 0; if (n == 25 && ar < 2) n = vo; if (n == 24 && !ar) n = vo; }
         else n = hd_nav(vo, k, ar);
         if (n == 15 || (n >= 21 && n < 24) || n > VFIRST + 4 || (n >= 26 && n < VFIRST)) n = vo;
-        if (n >= VFIRST && LINKED) n = vo;
         if (n == vo || n < 0) return old;
         if (n >= VFIRST) {                           /* a stash cell: into cell 15, then the cursor goes there */
             s_window(p, n - VFIRST);
@@ -1356,7 +1357,7 @@ int clr_wrap(int base, int x, int y, int w, int h, int f)
 /* the shop's key read, once a frame while a Forge or Shrine is open (0x0801DF10) */
 int shop_keys(void)
 {
-    if (SWIN) { int t = SWIN - 1; SWIN = 0; if (!LINKED) s_window(LOCAL_P & 1, t); }
+    if (SWIN) { int t = SWIN - 1; SWIN = 0; if (WIN[LOCAL_P & 1] > 4) WIN[LOCAL_P & 1] = 0; s_window(LOCAL_P & 1, t); }   /* v190: 2-player too */
     return ((fn4)0x08046DC5)(0, 0, 0, 0);
 }
 
@@ -1369,7 +1370,8 @@ void frame_hook(void)
     if (MVREQ) {                                     /* v180: Move Item onto a stash box */
         int t = MVREQ - 1;
         MVREQ = 0;
-        if (sub == 6 && ui && !LINKED && GSTATE == 10) { mv_stash(p & 1, cur, t); SOUND(3); MENU[4] = 7; }
+        if (WIN[p & 1] > 4) WIN[p & 1] = 0;
+        if (sub == 6 && ui && GSTATE == 10) { mv_stash(p & 1, cur, t); SOUND(3); MENU[4] = 7; }   /* v190: 2-player too */
     }
     BG1CNT = (BG1CNT & ~0x1F00) | (0x1E << 8);       /* the game's own text layer, on both pages */
     if (sub != 0) PGREQ = 0;                         /* a turn is only for the Backpack with no menu open */
