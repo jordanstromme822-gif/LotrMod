@@ -37,10 +37,10 @@ static int frames_of(u32 entry) { return *(const u8 *)(*(const u32 *)(entry + 4)
 /* show anim kind k, drawn direction d of table t, keeping the walk step */
 static void show(u8 *o, u32 t, int k, int d)
 {
-    int fr = o[0x23], tm = o[0x20];
+    int fr = o[0x23];
     SETPIC(o, t, k, d);
     /* keep the walk step and its timer: a facing change must not restart the step, or the legs stop while he moves (v189) */
-    if (fr < frames_of(U32(o, 0x24))) { if (fr) SETFRAME(o, fr); if (k == 4 || k == 6) o[0x20] = tm; }
+    if (fr && fr < frames_of(U32(o, 0x24))) SETFRAME(o, fr);
 }
 
 /* the game's facing (0-7) that goes with facing16 f: even = the same, odd = the neighbour the picture is mirrored like */
