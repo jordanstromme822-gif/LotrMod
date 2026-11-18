@@ -7,7 +7,8 @@ const mime = f => f.endsWith('.html') ? 'text/html' : f.endsWith('.js') ? 'text/
   const ctx = await b.newContext({ viewport: { width: +(process.env.VW || 844), height: +(process.env.VH || 390) }, deviceScaleFactor: +(process.env.DPR || 1) });
   await ctx.route('https://site.test/**', async r => { const u = new URL(r.request().url()); let f = path.join(dir, decodeURIComponent(u.pathname)); if (u.pathname === '/') f = path.join(dir, 'index.html');
     try { await r.fulfill({ status: 200, body: fs.readFileSync(f), headers: { 'content-type': mime(f) } }); } catch (e) { await r.fulfill({ status: 404, body: '' }); } });
-  const p = await ctx.newPage(); if (process.env.CMP) await p.addInitScript(() => { window.__keepPicture = true; });
+  const p = await ctx.newPage(); if (process.env.PLAINT) await p.addInitScript(() => { window.__plainT = 1; });
+  if (process.env.CMP) await p.addInitScript(() => { window.__keepPicture = true; });
   if (process.env.PASSES) await p.addInitScript({ path: process.env.INJ || '/tmp/rc/perf/h/passes.js' });
   p.on('response', r => { if (r.status() === 404) console.log('404', r.url().slice(0,120)); });
   p.on('pageerror', e => console.log('pageerror', e.message));
@@ -27,6 +28,19 @@ const mime = f => f.endsWith('.html') ? 'text/html' : f.endsWith('.js') ? 'text/
   for (let i = 0; i < 4; i++) { await press('z'); await p.waitForTimeout(700); }
   const st = await p.evaluate(() => { const M = window.__wideM; return { link: !!(M._rotk_link_on && M._rotk_link_on()), p2: sessionStorage.getItem('rotk-p2'), st: M.HEAPU8[M._rotk_iwram() + 0x41B0], lv: M.HEAPU8[M._rotk_iwram() + 0x41F8], cw: GbrHost.canvas.width, ch: GbrHost.canvas.height, log: (window.__wideLog || []).slice(-5) }; });
   console.log('state', JSON.stringify(st));
+  if (process.env.EDGE) { for (const d of process.env.EDGE.split(',')) { await p.keyboard.down(d); for (let i = 0; i < +(process.env.EN || 40); i++) { await p.waitForTimeout(200); const r = await p.evaluate(() => { const M = window.__wideM, iw = M._rotk_iwram(), H8 = M.HEAPU8, r32 = o => H8[iw+o] | H8[iw+o+1]<<8 | H8[iw+o+2]<<16 | H8[iw+o+3]<<24; return [M._rotk_native_view(), r32(0x5880) >> 3, r32(0x5884) >> 3, H8[iw+0x5878]]; }); if (i % 5 === 0 || r[0]) console.log('edge', d, i, JSON.stringify(r)); } await p.keyboard.up(d); } }
+  if (process.env.ZOOMF) { await p.evaluate(() => { const H = GbrHost, f = H.nativeView; if (window.__plainT) { H.plain = true; H.fitDue = true; } H.nativeView = () => window.__fn ? 1 : f(); const d0 = H.draw.bind(H); window.__zl = []; H.draw = () => { const fr = H.frames; d0(); if (H.frames !== fr && H.zoom > 0 && H.zoom < 1) (window.__zs = window.__zs || []).push(H.canvas.toDataURL('image/jpeg', 0.8)); if (H.frames !== fr) window.__zl.push((H.zoom || 0).toFixed(2) + '@' + Math.round(performance.now() % 100000)); }; });
+    for (const v of [1, 0]) { await p.evaluate(v => { window.__fn = v; }, v); for (let i = 0; i < 12; i++) { const f0 = await p.evaluate(() => GbrHost.frames); await p.waitForFunction(f0 => GbrHost.frames > f0, f0); if (i === 11) console.log('zl', await p.evaluate(() => window.__zl.splice(0).join(' '))); console.log('zf', v, i, await p.evaluate(() => GbrHost.zoom.toFixed(2))); if (process.env.ZSHOT) await p.screenshot({ path: '/tmp/rc/perf/z/f' + v + '_' + i + '.png' }); } }
+  }
+  if (process.env.ZOOMF) { const zs = await p.evaluate(() => window.__zs || []); zs.forEach((u, i) => fs.writeFileSync('/tmp/rc/perf/z/mid' + i + '.jpg', Buffer.from(u.split(',')[1], 'base64'))); console.log('mids', zs.length); }
+  if (process.env.ZOOM) { const nat = async () => p.evaluate(() => window.__wideM._rotk_native_view());
+    console.log('native before', await nat());
+    await p.keyboard.down('v'); await p.waitForTimeout(100); await p.keyboard.up('v');
+    for (let i = 0; i < 8; i++) { await p.waitForTimeout(90); console.log('zoom', i, await nat(), await p.evaluate(() => GbrHost.zoom)); await p.screenshot({ path: '/tmp/rc/perf/z/in' + i + '.png' }); }
+    await p.waitForTimeout(1500);
+    await p.keyboard.down('v'); await p.waitForTimeout(100); await p.keyboard.up('v');
+    for (let i = 0; i < 8; i++) { await p.waitForTimeout(90); console.log('zoom', i, await nat(), await p.evaluate(() => GbrHost.zoom)); await p.screenshot({ path: '/tmp/rc/perf/z/out' + i + '.png' }); }
+  }
   let cdp; if (PROF) { cdp = await ctx.newCDPSession(p); await cdp.send('Profiler.enable'); await cdp.send('Profiler.setSamplingInterval', { interval: 200 }); await cdp.send('Profiler.start'); }
   // walk around in a box while measuring
   await p.evaluate(() => { window.__m = { f: GbrHost.frames, t: performance.now(), raf: 0, long: 0, last: performance.now(), dts: [] }; const tick = () => { const n = performance.now(), m = window.__m; m.raf++; const dt = n - m.last; m.dts.push(dt); if (dt > 25) m.long++; m.last = n; requestAnimationFrame(tick); }; requestAnimationFrame(tick); });
