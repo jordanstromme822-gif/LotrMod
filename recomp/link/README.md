@@ -181,3 +181,15 @@ Jordan: "I want everything merged, the most current version in the play room". P
 runtime with `one-game-partner.patch` applied (rtmix rebuilt: weblinkrt libs, runtime.cpp.o swapped back in with `emar r`).
 Tested headless: 1-player level message / Move Item / Shrine; P2 starts in one-game mode (`rotk_link_is_one` = 1) and the
 Moria Shrine opens in the HD shop.
+
+## v186: the game's old Backpack never shows
+
+`recomp/playroom/hd-always-v186.py` (page only, same engines as v185). Jordan, 2026-11-17: "Can we remove the old item
+menu from the game and just have it fail to the new one".
+- HD Backpack and HD Forge/Shrine always on (the localStorage `rotk-hdbp` switch is gone).
+- Every Backpack substate is drawn by the HD Backpack. Carve Rune (substate 4): the rune cursor is the game's second UI
+  cursor (`[0x03001FE4]+0x62`, 0-3 = the hero's 4 runes, 4 = back); the page shows I-IV + Back boxes and the game's own
+  words, taps walk the cursor with Left/Right and press A on the picked box. Any other substate: the game's words + OK/Back.
+- While the Backpack opens (cursor still 255) the HD page shows with nothing picked instead of hiding; the HD shop keeps its
+  last picture while its cursor is briefly unset.
+- Tested headless (1-player Carve Rune taps, level message, Move Item, Forge/Shrine, one-game P2 shop).
