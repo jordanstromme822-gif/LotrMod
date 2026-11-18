@@ -1,8 +1,10 @@
 /* Movement feel (Jordan, 2026-11-17: "stylized pixelated look with a modern feel ... movement, collision, weapons and
  * animations"; "Fix all").
  *
- * The hero's update (object + 0x14) is pointed by the Play Room page at hero_feel below (ROM 0x09400000, past the
- * enemy pictures; the page grows the built game for it). hero_feel runs the 16-facing hook 0x0809F001 first, then:
+ * The hero's update (object + 0x14) is pointed by the Play Room page at hero_feel below (ROM 0x8A000, CPU 0x0808A000:
+ * the German text bank freed by the English-only build, used by Frodo's first 16-facing pictures in v170-v175 and free
+ * since they moved past 16 MB in v176). v191-v192 had it at 0x09400000, past 16 MB, which the 2-player/online (link)
+ * engine doesn't have: it crashed 2-player games, so v193 kept it to 1-player; v194 moves it here for every game. hero_feel runs the 16-facing hook 0x0809F001 first, then:
  *   - weight: a walk starts at half speed and reaches full speed over 8 ticks (about 0.13 s). Stopping stays instant
  *     so nothing slides (Jordan disliked sliding).
  * Why a separate routine: 0x0809F000 is compiled into the engine (game-link.txt [[extra_func]]), so changing turn16.c
