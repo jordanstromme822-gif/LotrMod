@@ -241,6 +241,182 @@ def fort_gate(GA, GB, GC, src, pixels, rgb, dark_at, grass_at, first_id):
     return custom
 
 
+def write_map(R, a, GA, GB, GC, W, H, pixels_needed, rgb, custom, n_last, items, start, out_dir, base, extra_info=None):
+    """Pack a finished map (tile grids, walking grid, drawn tiles, object records, hero start in px)
+    into OUT_DIR/siege.bin + tables.bin + siege.json + preview.png, for level slot SLOT."""
+    from spawns import build_groups
+    # --- tiles: fit the game's tile memory --------------------------------
+    pixels = pixels_needed
+    mapA, errA = merge_tiles(GA, pixels, rgb, A_LIMIT, keep=set(custom))
+    for y in range(H):
+        for x in range(W):
+            t = GA[y][x]
+            if t[0] in mapA:
+                nt, fb = mapA[t[0]]; GA[y][x] = (nt, t[1] ^ fb)
+    mapB, errB = merge_tiles(GB, pixels, rgb, B_LIMIT)
+    for y in range(H):
+        for x in range(W):
+            t = GB[y][x]
+            if t[0] in mapB:
+                nt, fb = mapB[t[0]]; GB[y][x] = (nt, t[1] ^ fb)
+
+    listA = sorted(set(t[0] for row in GA for t in row))
+    listB = sorted(set(t[0] for row in GB for t in row) | {BLANK})
+    assert len(listA) <= 1024 and len(listB) <= 512, (len(listA), len(listB))
+    slotA = {t: i for i, t in enumerate(listA)}; slotB = {t: i for i, t in enumerate(listB)}
+
+    def metas(G, slot, first):
+        table = [first] if first else []; idx = {m: i for i, m in enumerate(table)}; cells = []
+        for cy in range(H // 4):
+            for cx in range(W // 4):
+                m = tuple(slot[G[cy * 4 + k // 4][cx * 4 + k % 4][0]] | G[cy * 4 + k // 4][cx * 4 + k % 4][1] for k in range(16))
+                if m not in idx: idx[m] = len(table); table.append(m)
+                cells.append(idx[m])
+        return table, cells
+    metaA, cellsA = metas(GA, slotA, None)
+    metaB, cellsB = metas(GB, slotB, tuple([slotB[BLANK]] * 16))
+    defs = [bytes([1] * 16)]; didx = {defs[0]: 0}; cellsC = []
+    for cy in range(H // 4):
+        for cx in range(W // 4):
+            d = bytes(GC[cy * 4 + k // 4][cx * 4 + k % 4] for k in range(16))
+            if d not in didx: didx[d] = len(defs); defs.append(d)
+            cellsC.append(didx[d])
+
+    # --- object records -------------------------------------------------------
+    blob46 = R.u32(OBJECTS + 12 * 46 + 4)
+    hdr = R.rom[blob46 - 0x08000000:][:0x30]
+    sub = struct.unpack('<H', hdr[0:2])[0]
+    parts = [struct.unpack('<H', R.rom[blob46 - 0x08000000 + sub + 0xC + 8 * i:][:2])[0] for i in range(2)]
+    part0 = R.decomp(blob46 + parts[0])
+    groups = build_groups([dict(b1=0, items=list(items))])
+    empty = b'\x00\x00\x00\x00'
+    p1 = bytearray(8) + groups
+    off_paths = len(p1); p1 += empty
+    off_scripts = len(p1); p1 += empty
+    off_tail = len(p1); p1 += b'\x00\x00\xff\xff'
+    struct.pack_into('<HHHH', p1, 0, off_paths, off_scripts, 1, off_tail)
+    # entry points: both at the hero start
+    blob = bytearray(hdr)
+    e0x, e0y = start
+    struct.pack_into('<HH', blob, 4, e0x, e0y)
+    struct.pack_into('<HH', blob, 12, e0x + 16, e0y)
+
+    # --- write everything as raw (type 0) data -----------------------------
+    out = bytearray()
+    def add(payload):
+        while len(out) % 4: out.append(0)
+        pos = len(out)
+        pl = bytes(payload) + b'\x00' * (-len(payload) % 4)
+        out.extend(struct.pack('<I', len(pl) << 8)); out.extend(pl)
+        return base + 0x08000000 + pos
+    def blobpart(b_):
+        pl = bytes(b_) + b'\x00' * (-len(b_) % 4)
+        return struct.pack('<I', len(pl) << 8) + pl
+    pA0 = add(struct.pack('<H', len(listA)) + struct.pack('<%dH' % len(listA), *listA))
+    pA1 = add(struct.pack('<H', len(listB)) + struct.pack('<%dH' % len(listB), *listB))
+    cw, ch = W // 4, H // 4
+    # Layer A metatiles past 1024 don't fit the game's buffer (0x02022D40, 0x8010 bytes).
+    # The layer B buffer right after it is mostly free, and the game indexes
+    # metatiles as base + 32 * n with no limit, so the extra ones ride inside the
+    # layer B data, placed where index n lands (B is loaded after A).
+    A_BUF, B_BUF = 0x02022D44, 0x0202AD54
+    fitA = metaA[:1024]; extra = metaA[1024:]
+    first_extra = 1025 + len(metaB) if extra else 0
+    remap = {i: (i if i < 1024 else first_extra + i - 1024) for i in range(len(metaA))}
+    cellsA = [remap[c] for c in cellsA]
+    pMapA = add(bytes([cw, 0, ch, 0]) + struct.pack('<%dH' % len(cellsA), *cellsA))
+    pMetaA = add(struct.pack('<I', len(fitA)) + b''.join(struct.pack('<16H', *m) for m in fitA))
+    pMapB = add(bytes([cw, 0, ch, 0]) + struct.pack('<%dH' % len(cellsB), *cellsB))
+    bdata = bytearray(b''.join(struct.pack('<16H', *m) for m in metaB))
+    for k, m in enumerate(extra):
+        off = A_BUF + 32 * (first_extra + k) - B_BUF
+        assert off >= len(bdata) or k > 0
+        if len(bdata) < off: bdata += bytes(off - len(bdata))
+        bdata[off:off + 32] = struct.pack('<16H', *m)
+    assert 4 + len(bdata) <= 0x8010, 'layer B buffer overflow'
+    pMetaB = add(struct.pack('<I', len(metaB)) + bytes(bdata))
+    pDefs = add(b''.join(defs))
+    pCol = add(struct.pack('<HH', len(defs), 0) + struct.pack('<%dH' % len(cellsC), *cellsC))
+    # object blob: header + sub table from Hornburg, parts stored raw
+    while len(out) % 4: out.append(0)
+    pBlob = base + 0x08000000 + len(out)
+    b0 = blobpart(part0); b1 = blobpart(p1)
+    o0 = len(blob); o1 = o0 + len(b0)
+    struct.pack_into('<H', blob, sub + 0xC, o0); struct.pack_into('<H', blob, sub + 0xC + 8, o1)
+    out.extend(blob + b0 + b1)
+
+    # tileset: the game's own two chunks (1024 + 389 tiles); the second one is stored again as a plain
+    # copy with the drawn tiles added at its end (numbers 1413 + k). Loader 0x080324C8: chunk k entry
+    # at tileset + 4 + 8k = (u16 storage, u16 count, u32 offset from the tileset start); it expects
+    # every chunk but the last to hold 1024 tiles. Decoder 0x08019EDC reads the storage kind from the
+    # entry: 0 = plain copy (CpuFastSet) of count * 32 bytes, no header. Chunk 0 is reached with a
+    # wrapped offset back into the game's tileset.
+    ts_old = a.tileset
+    th = R.rom[ts_old - 0x08000000:][:0x14]
+    f0, cnt0, off0 = struct.unpack('<HHI', th[4:12])
+    assert cnt0 == 1024
+    first = 1024 + n_last
+    assert sorted(custom) == list(range(first, first + len(custom)))
+    chunk1 = b''.join(R.tiles(ts_old, list(range(1024, first)))) + b''.join(custom[t] for t in sorted(custom))
+    while len(out) % 4: out.append(0)
+    pTS = base + 0x08000000 + len(out)
+    tsb = bytearray(th[:4])
+    tsb += struct.pack('<HHI', f0, cnt0, (ts_old + off0 - pTS) & 0xFFFFFFFF)
+    tsb += struct.pack('<HHI', 0, len(chunk1) // 32, len(tsb) + 8)
+    tsb += chunk1
+    assert len(chunk1) // 32 <= 1024
+    out.extend(tsb)
+
+    entry = a.e[:]
+    entry[14] = pTS
+    entry[0], entry[1], entry[2], entry[3] = pA0, pA1, pMapA, pMetaA
+    entry[6], entry[7] = pMapB, pMetaB
+    entry[10], entry[11] = pDefs, pCol
+    obj = list(struct.unpack('<3I', R.rom[OBJECTS - 0x08000000 + 12 * 46:][:12])); obj[1] = pBlob
+
+    os.makedirs(out_dir, exist_ok=True)
+    open(os.path.join(out_dir, 'siege.bin'), 'wb').write(out)
+    info = dict(slot=SLOT, base=base, size=len(out), width_cells=cw, height_cells=ch,
+                level_entry_at=LEVELS_ADDR(SLOT), level_entry=[hex(x) for x in entry],
+                object_entry_at=hex(OBJECTS + 12 * SLOT), object_entry=[hex(x) for x in obj],
+                tilesA=len(listA), tilesB=len(listB), metasA=len(metaA), metasA_in_B_buffer=len(extra), metasB=len(metaB), coldefs=len(defs),
+                merged_tilesA=len(mapA), merged_tilesB=len(mapB), merge_errorA=errA, merge_errorB=errB,
+                hero_start=[e0x, e0y], items=len(items), drawn_tiles=len(custom),
+                tileset=hex(entry[14]), **(extra_info or {}))
+    json.dump(info, open(os.path.join(out_dir, 'siege.json'), 'w'), indent=1)
+    patch = bytearray()
+    patch += struct.pack('<I', LEVELS_ADDR_INT(SLOT) - 0x08000000) + struct.pack('<19I', *entry)
+    patch += struct.pack('<I', OBJECTS + 12 * SLOT - 0x08000000) + struct.pack('<3I', *obj)
+    open(os.path.join(out_dir, 'tables.bin'), 'wb').write(patch)
+    # preview
+    try:
+        from PIL import Image
+        img = np.zeros((H * 8, W * 8, 3), np.uint8)
+        cache = {}
+        for G in (GA, GB):
+            for y in range(H):
+                for x in range(W):
+                    t = G[y][x]
+                    if t[0] == BLANK and G is GB: continue
+                    key = t
+                    if key not in cache:
+                        p_ = pix(pixels[t[0]])
+                        if t[1] & 0x400: p_ = p_[:, ::-1]
+                        if t[1] & 0x800: p_ = p_[::-1]
+                        cache[key] = (p_ != 0, rgb[(t[1] >> 12) * 16 + p_].astype(np.uint8))
+                    m_, c_ = cache[key]
+                    s_ = img[y * 8:y * 8 + 8, x * 8:x * 8 + 8]; s_[m_] = c_[m_]
+        Image.fromarray(img).save(os.path.join(out_dir, 'preview.png'))
+        walk = np.array([[0 if (v & 7) in (1, 2) else 1 for v in row] for row in GC], np.uint8)
+        ov = img.copy().astype(np.int32)
+        wm = np.kron(walk, np.ones((8, 8), np.uint8)).astype(bool)
+        ov[wm] = (ov[wm] * 0.55 + np.array([40, 200, 40]) * 0.45)
+        Image.fromarray(ov.astype(np.uint8)).save(os.path.join(out_dir, 'walkable.png'))
+    except ImportError:
+        pass
+    return info
+
+
 def build(rom_path, out_dir, base=0x01F00000, ext=37, seed=7):
     global W
     R = Rom(rom_path)
@@ -492,49 +668,7 @@ def build(rom_path, out_dir, base=0x01F00000, ext=37, seed=7):
 
     if os.environ.get('SIEGE_DUMP'):
         import pickle; pickle.dump((GA, GB, GC, src, E, H), open(os.environ['SIEGE_DUMP'], 'wb'))
-    # --- tiles: fit the game's tile memory --------------------------------
-    pixels = pixels_needed
-    mapA, errA = merge_tiles(GA, pixels, rgb, A_LIMIT, keep=set(custom))
-    for y in range(H):
-        for x in range(W):
-            t = GA[y][x]
-            if t[0] in mapA:
-                nt, fb = mapA[t[0]]; GA[y][x] = (nt, t[1] ^ fb)
-    mapB, errB = merge_tiles(GB, pixels, rgb, B_LIMIT)
-    for y in range(H):
-        for x in range(W):
-            t = GB[y][x]
-            if t[0] in mapB:
-                nt, fb = mapB[t[0]]; GB[y][x] = (nt, t[1] ^ fb)
-
-    listA = sorted(set(t[0] for row in GA for t in row))
-    listB = sorted(set(t[0] for row in GB for t in row) | {BLANK})
-    assert len(listA) <= 1024 and len(listB) <= 512, (len(listA), len(listB))
-    slotA = {t: i for i, t in enumerate(listA)}; slotB = {t: i for i, t in enumerate(listB)}
-
-    def metas(G, slot, first):
-        table = [first] if first else []; idx = {m: i for i, m in enumerate(table)}; cells = []
-        for cy in range(H // 4):
-            for cx in range(W // 4):
-                m = tuple(slot[G[cy * 4 + k // 4][cx * 4 + k % 4][0]] | G[cy * 4 + k // 4][cx * 4 + k % 4][1] for k in range(16))
-                if m not in idx: idx[m] = len(table); table.append(m)
-                cells.append(idx[m])
-        return table, cells
-    metaA, cellsA = metas(GA, slotA, None)
-    metaB, cellsB = metas(GB, slotB, tuple([slotB[BLANK]] * 16))
-    defs = [bytes([1] * 16)]; didx = {defs[0]: 0}; cellsC = []
-    for cy in range(H // 4):
-        for cx in range(W // 4):
-            d = bytes(GC[cy * 4 + k // 4][cx * 4 + k % 4] for k in range(16))
-            if d not in didx: didx[d] = len(defs); defs.append(d)
-            cellsC.append(didx[d])
-
     # --- spawn records: torches only, no enemies -------------------------
-    blob46 = R.u32(OBJECTS + 12 * 46 + 4)
-    hdr = R.rom[blob46 - 0x08000000:][:0x30]
-    sub = struct.unpack('<H', hdr[0:2])[0]
-    parts = [struct.unpack('<H', R.rom[blob46 - 0x08000000 + sub + 0xC + 8 * i:][:2])[0] for i in range(2)]
-    part0 = R.decomp(blob46 + parts[0])
     from spawns import parse_groups, build_groups
     torches = []
     for L, ox, oy, keep in ((46, 0, 0, lambda x, y: True),
@@ -554,134 +688,10 @@ def build(rom_path, out_dir, base=0x01F00000, ext=37, seed=7):
     # spirit shrine (vendor kind 2) and forge (kind 0) in the courtyard, records as in level 47
     vendors = [bytes([17, 0, 0, 0]) + struct.pack('<HH', (tx - FX0) * 8, (ty - FY0) * 8) + bytes([kind, 0xFF, 0xFF, 0xFF])
                for (tx, ty, kind) in FORT_VENDORS]
-    groups = build_groups([dict(b1=0, items=torches + vendors)])
-    empty = b'\x00\x00\x00\x00'
-    p1 = bytearray(8) + groups
-    off_paths = len(p1); p1 += empty
-    off_scripts = len(p1); p1 += empty
-    off_tail = len(p1); p1 += b'\x00\x00\xff\xff'
-    struct.pack_into('<HHHH', p1, 0, off_paths, off_scripts, 1, off_tail)
 
-    # entry points: both in the courtyard, just inside the north gate
-    blob = bytearray(hdr)
-    e0x, e0y = (FORT_START[0] - FX0) * 8, (FORT_START[1] - FY0) * 8
-    struct.pack_into('<HH', blob, 4, e0x, e0y)
-    struct.pack_into('<HH', blob, 12, e0x + 16, e0y)
-
-    # --- write everything as raw (type 0) data -----------------------------
-    out = bytearray()
-    def add(payload):
-        while len(out) % 4: out.append(0)
-        pos = len(out)
-        pl = bytes(payload) + b'\x00' * (-len(payload) % 4)
-        out.extend(struct.pack('<I', len(pl) << 8)); out.extend(pl)
-        return base + 0x08000000 + pos
-    def blobpart(b_):
-        pl = bytes(b_) + b'\x00' * (-len(b_) % 4)
-        return struct.pack('<I', len(pl) << 8) + pl
-    pA0 = add(struct.pack('<H', len(listA)) + struct.pack('<%dH' % len(listA), *listA))
-    pA1 = add(struct.pack('<H', len(listB)) + struct.pack('<%dH' % len(listB), *listB))
-    cw, ch = W // 4, H // 4
-    # Layer A metatiles past 1024 don't fit the game's buffer (0x02022D40, 0x8010 bytes).
-    # The layer B buffer right after it is mostly free, and the game indexes
-    # metatiles as base + 32 * n with no limit, so the extra ones ride inside the
-    # layer B data, placed where index n lands (B is loaded after A).
-    A_BUF, B_BUF = 0x02022D44, 0x0202AD54
-    fitA = metaA[:1024]; extra = metaA[1024:]
-    first_extra = 1025 + len(metaB) if extra else 0
-    remap = {i: (i if i < 1024 else first_extra + i - 1024) for i in range(len(metaA))}
-    cellsA = [remap[c] for c in cellsA]
-    pMapA = add(bytes([cw, 0, ch, 0]) + struct.pack('<%dH' % len(cellsA), *cellsA))
-    pMetaA = add(struct.pack('<I', len(fitA)) + b''.join(struct.pack('<16H', *m) for m in fitA))
-    pMapB = add(bytes([cw, 0, ch, 0]) + struct.pack('<%dH' % len(cellsB), *cellsB))
-    bdata = bytearray(b''.join(struct.pack('<16H', *m) for m in metaB))
-    for k, m in enumerate(extra):
-        off = A_BUF + 32 * (first_extra + k) - B_BUF
-        assert off >= len(bdata) or k > 0
-        if len(bdata) < off: bdata += bytes(off - len(bdata))
-        bdata[off:off + 32] = struct.pack('<16H', *m)
-    assert 4 + len(bdata) <= 0x8010, 'layer B buffer overflow'
-    pMetaB = add(struct.pack('<I', len(metaB)) + bytes(bdata))
-    pDefs = add(b''.join(defs))
-    pCol = add(struct.pack('<HH', len(defs), 0) + struct.pack('<%dH' % len(cellsC), *cellsC))
-    # object blob: header + sub table from Hornburg, parts stored raw
-    while len(out) % 4: out.append(0)
-    pBlob = base + 0x08000000 + len(out)
-    b0 = blobpart(part0); b1 = blobpart(p1)
-    o0 = len(blob); o1 = o0 + len(b0)
-    struct.pack_into('<H', blob, sub + 0xC, o0); struct.pack_into('<H', blob, sub + 0xC + 8, o1)
-    out.extend(blob + b0 + b1)
-
-    # tileset: the game's own two chunks (1024 + 389 tiles); the second one is stored again as a plain
-    # copy with the drawn tiles added at its end (numbers 1413 + k). Loader 0x080324C8: chunk k entry
-    # at tileset + 4 + 8k = (u16 storage, u16 count, u32 offset from the tileset start); it expects
-    # every chunk but the last to hold 1024 tiles. Decoder 0x08019EDC reads the storage kind from the
-    # entry: 0 = plain copy (CpuFastSet) of count * 32 bytes, no header. Chunk 0 is reached with a
-    # wrapped offset back into the game's tileset.
-    ts_old = a.tileset
-    th = R.rom[ts_old - 0x08000000:][:0x14]
-    f0, cnt0, off0 = struct.unpack('<HHI', th[4:12])
-    assert cnt0 == 1024
-    first = 1024 + n_last
-    assert sorted(custom) == list(range(first, first + len(custom)))
-    chunk1 = b''.join(R.tiles(ts_old, list(range(1024, first)))) + b''.join(custom[t] for t in sorted(custom))
-    while len(out) % 4: out.append(0)
-    pTS = base + 0x08000000 + len(out)
-    tsb = bytearray(th[:4])
-    tsb += struct.pack('<HHI', f0, cnt0, (ts_old + off0 - pTS) & 0xFFFFFFFF)
-    tsb += struct.pack('<HHI', 0, len(chunk1) // 32, len(tsb) + 8)
-    tsb += chunk1
-    assert len(chunk1) // 32 <= 1024
-    out.extend(tsb)
-
-    entry = a.e[:]
-    entry[14] = pTS
-    entry[0], entry[1], entry[2], entry[3] = pA0, pA1, pMapA, pMetaA
-    entry[6], entry[7] = pMapB, pMetaB
-    entry[10], entry[11] = pDefs, pCol
-    obj = list(struct.unpack('<3I', R.rom[OBJECTS - 0x08000000 + 12 * 46:][:12])); obj[1] = pBlob
-
-    os.makedirs(out_dir, exist_ok=True)
-    open(os.path.join(out_dir, 'siege.bin'), 'wb').write(out)
-    info = dict(slot=SLOT, base=base, size=len(out), width_cells=cw, height_cells=ch, ext_cells=ext,
-                level_entry_at=LEVELS_ADDR(SLOT), level_entry=[hex(x) for x in entry],
-                object_entry_at=hex(OBJECTS + 12 * SLOT), object_entry=[hex(x) for x in obj],
-                tilesA=len(listA), tilesB=len(listB), metasA=len(metaA), metasA_in_B_buffer=len(extra), metasB=len(metaB), coldefs=len(defs),
-                merged_tilesA=len(mapA), merged_tilesB=len(mapB), merge_errorA=errA, merge_errorB=errB,
-                torches=len(torches), hero_start=[e0x, e0y], vendors=len(vendors), drawn_tiles=len(custom),
-                tileset=hex(entry[14]))
-    json.dump(info, open(os.path.join(out_dir, 'siege.json'), 'w'), indent=1)
-    patch = bytearray()
-    patch += struct.pack('<I', LEVELS_ADDR_INT(SLOT) - 0x08000000) + struct.pack('<19I', *entry)
-    patch += struct.pack('<I', OBJECTS + 12 * SLOT - 0x08000000) + struct.pack('<3I', *obj)
-    open(os.path.join(out_dir, 'tables.bin'), 'wb').write(patch)
-    # preview
-    try:
-        from PIL import Image
-        img = np.zeros((H * 8, W * 8, 3), np.uint8)
-        cache = {}
-        for G in (GA, GB):
-            for y in range(H):
-                for x in range(W):
-                    t = G[y][x]
-                    if t[0] == BLANK and G is GB: continue
-                    key = t
-                    if key not in cache:
-                        p_ = pix(pixels[t[0]])
-                        if t[1] & 0x400: p_ = p_[:, ::-1]
-                        if t[1] & 0x800: p_ = p_[::-1]
-                        cache[key] = (p_ != 0, rgb[(t[1] >> 12) * 16 + p_].astype(np.uint8))
-                    m_, c_ = cache[key]
-                    s_ = img[y * 8:y * 8 + 8, x * 8:x * 8 + 8]; s_[m_] = c_[m_]
-        Image.fromarray(img).save(os.path.join(out_dir, 'preview.png'))
-        walk = np.array([[0 if (v & 7) in (1, 2) else 1 for v in row] for row in GC], np.uint8)
-        ov = img.copy().astype(np.int32)
-        wm = np.kron(walk, np.ones((8, 8), np.uint8)).astype(bool)
-        ov[wm] = (ov[wm] * 0.55 + np.array([40, 200, 40]) * 0.45)
-        Image.fromarray(ov.astype(np.uint8)).save(os.path.join(out_dir, 'walkable.png'))
-    except ImportError:
-        pass
-    return info
+    start = ((FORT_START[0] - FX0) * 8, (FORT_START[1] - FY0) * 8)
+    return write_map(R, a, GA, GB, GC, W, H, pixels_needed, rgb, custom, n_last, torches + vendors, start,
+                     out_dir, base, dict(ext_cells=ext, torches=len(torches), vendors=len(vendors)))
 
 
 def LEVELS_ADDR_INT(L):
