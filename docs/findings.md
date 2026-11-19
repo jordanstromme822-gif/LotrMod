@@ -371,3 +371,17 @@ Built by `tools/siege/build.py ROM OUT --base 0x1500000`, put in the page by `re
 - Hornburg Valley (47) sits at (1296, 480) px from Hornburg (46). The Siege map is 66 cells wide, 37 cells of new
   ground added north, in unused level slot 45. Layer A needed 1259 tiles, merged by look-alike to 1020.
 - Warp = level to 0x030041F8, 5 to 0x030041F4, 0x81 to 0x030041F0 (the Levels button), works in 1-player and P2.
+
+### Siege fort and drawn tiles (2026-11-19, v201)
+
+- The Siege map is now cropped to a smaller fort (tools/siege/build.py, FORT_* constants): map starts at
+  joined-map tile x=104 (right of the big tower) and 40 rows above the old top, 160 x 200 tiles.
+- North gateway drawn in tools/siege/build.py `draw_gate` (own art, painted in Python), each 8x8 tile
+  mapped to the best of the level's palette banks 14/11/15/10/8. Shrubs cleared below, merlons removed above.
+- Tile loader 0x080324C8: chunk k entry is at tileset + 4 + 8k = (u16 storage, u16 count, u32 offset from the
+  tileset start). Every chunk but the last must hold 1024 tiles (the loader adds counts but steps the base by
+  1024). Decoder 0x08019EDC takes the storage kind from the entry (not the data): 0 = plain CpuFastSet copy of
+  count * 32 bytes, 6 = the game's packed format. New tiles: copy the header, keep chunk 0 via a wrapped
+  offset, store chunk 1 again as plain data with the new tiles appended (numbers 1413 + k for Hornburg).
+- Vendors: object type 17, byte 8 = kind (0 forge, 2 spirit shrine); they show and work in slot 45 although
+  Hornburg (46) has none.

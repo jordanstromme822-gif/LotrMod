@@ -28,6 +28,16 @@ MAX_CELLS = 5126          # EWRAM map buffers hold 0x2810 bytes each
 BLANK = 47                # tileset tile that is all transparent
 A_LIMIT, B_LIMIT = 1020, 500
 
+# The fort (tile coordinates of the full joined map with the default --ext 37, E = 148 rows on top)
+FORT_X0 = 104             # map starts here: everything left of the bastion (big tower) goes
+FORT_TOP = -40            # rows of dark ground kept above the joined maps' top (relative to E)
+GATE_X0, GATE_X1 = 156, 164   # north gateway: stone jambs at 156 and 163, opening 157..162
+GATE_FACE = (212, 225)        # wall face rows
+GATE_BUSH = (225, 233)        # dark shrubs under the wall
+GATE_MERLON = (190, 203)      # merlons and the black edge above the walkway
+FORT_START = (159, 240)       # hero start (tiles), just inside the gate
+FORT_VENDORS = [(118, 252, 2), (140, 262, 0)]   # (x, y, kind): 2 = spirit shrine, 0 = forge
+
 
 def u16s(b, n=None):
     n = len(b) // 2 if n is None else n
@@ -70,7 +80,7 @@ def pix(tb):
     return v.reshape(8, 8)
 
 
-def merge_tiles(grid, pixels, rgb, limit):
+def merge_tiles(grid, pixels, rgb, limit, keep=()):
     """Swap the least visible tiles for their closest look-alike until at most
     `limit` remain. Returns {old: (new, flipbits)} and the mean colour error."""
     from collections import Counter, defaultdict
@@ -95,6 +105,8 @@ def merge_tiles(grid, pixels, rgb, limit):
     tot = np.array([sum(uses[t].values()) for t in tiles], float)
     cost /= tot[:, None, None]
     for i in range(n): cost[i, i, :] = 1e9
+    for i, t in enumerate(tiles):
+        if t in keep: cost[i, :, :] = 1e9      # drawn tiles (fort gate) always stay
     # never swap a textured tile for a (nearly) solid black one: dark ground turned into black bars
     lum = rgb.sum(1) / 3.0
     blk = np.array([float(np.mean([(lum[uses[t].most_common(1)[0][0] * 16 + v] if v else 0) < 12
@@ -118,7 +130,119 @@ def merge_tiles(grid, pixels, rgb, limit):
     return out, float(np.mean(errs)) if errs else 0.0
 
 
+def render(GA, GB, pixels, rgb, x0, y0, w, h):
+    img = np.zeros((h * 8, w * 8, 3), np.int32)
+    for G in (GA, GB):
+        for y in range(h):
+            for x in range(w):
+                t = G[y0 + y][x0 + x]
+                if t[0] == BLANK and G is GB: continue
+                p_ = pix(pixels[t[0]])
+                if t[1] & 0x400: p_ = p_[:, ::-1]
+                if t[1] & 0x800: p_ = p_[::-1]
+                c_ = rgb[(t[1] >> 12) * 16 + p_]
+                m_ = p_ != 0 if G is GB else np.ones((8, 8), bool)
+                s_ = img[y * 8:y * 8 + 8, x * 8:x * 8 + 8]; s_[m_] = c_[m_]
+    return img
+
+
+def draw_gate(img):
+    """Paint an arched gateway with both wooden doors swung open onto the wall face picture
+    (64 x 104 px RGB). Original art, drawn here; colours are mapped to the level palette later."""
+    h, w = img.shape[:2]
+    cx, top, r_in, r_out = 32, 30, 24, 31
+    yy, xx = np.mgrid[0:h, 0:w]
+    inside = ((xx >= 8) & (xx < 56) & (yy >= top)) | (((xx - cx + .5) ** 2 + (yy - top) ** 2 < r_in ** 2) & (yy < top))
+    ring = (((xx - cx + .5) ** 2 + (yy - top) ** 2 < r_out ** 2) & (yy < top + 1) & ~inside) | \
+           (((xx < 8) | (xx >= 56)) & (yy >= top) & ~inside)
+    ring &= yy >= 2
+    # stone surround: big light blocks with dark joints
+    stone = np.array([176, 176, 176]); joint = np.array([56, 56, 56]); mid = np.array([128, 128, 128])
+    ang = np.degrees(np.arctan2(yy - top, xx - cx + .5))
+    for y in range(h):
+        for x in range(w):
+            if not ring[y, x]: continue
+            if y < top:
+                rr = np.hypot(x - cx + .5, y - top)
+                c = joint if (abs(rr - r_out) < 1 or int((ang[y, x] + 180) / 15) != int((ang[y, x] + 180 + 1.2) / 15)) else \
+                    (mid if rr > r_out - 2.5 else stone)
+            else:
+                c = joint if ((y - top) % 12 == 0 or x in (0, 63) or (x in (7, 56))) else (mid if x in (1, 62) else stone)
+            img[y, x] = c
+    # dark passage, a little lighter towards the far end (ground outside)
+    for y in range(h):
+        for x in range(w):
+            if inside[y, x]:
+                f = min(1.0, max(0.0, (y - 6) / (h - 6)))
+                img[y, x] = (8 + 18 * f, 8 + 22 * f, 8 + 14 * f)
+    # open doors, seen edge-on against the jambs (planks, iron bands, studs)
+    wood = [(112, 88, 48), (88, 72, 40), (136, 120, 40), (80, 72, 40)]
+    for side in (0, 1):
+        for y in range(top - 6, h):
+            for i in range(11):
+                x = 8 + i if side == 0 else 55 - i
+                # door top follows the arch a bit lower than the stone
+                if (x - cx + .5) ** 2 + (y - top) ** 2 >= (r_in - 2) ** 2 and y < top: continue
+                d = i if side == 0 else i
+                col = wood[(d // 3) % 2] if d < 9 else (40, 32, 24)
+                if d % 3 == 2: col = (64, 48, 40)
+                if (y - top) % 26 in (12, 13): col = (32, 32, 32)          # iron bands
+                if (y - top) % 26 == 12 and d % 3 == 1: col = (176, 168, 56)  # studs
+                img[y, x] = col
+    # threshold stone at the bottom of the opening
+    img[h - 3:h, 8:56] = (56, 56, 56)
+    return img
+
+
+def quantize_tile(px, rgb, banks):
+    """Best palette bank and 4bpp tile bytes for an 8 x 8 RGB block (colour 0 = see-through, unused)."""
+    best = None
+    for b in banks:
+        pal = rgb[b * 16 + 1:b * 16 + 16].astype(np.int32)
+        d = ((px.reshape(-1, 1, 3) - pal[None]) ** 2).sum(2)
+        idx = d.argmin(1); err = d.min(1).sum()
+        if best is None or err < best[0]: best = (err, b, idx + 1)
+    v = best[2]
+    return best[1], bytes(int(v[2 * i]) | int(v[2 * i + 1]) << 4 for i in range(32))
+
+
+def fort_gate(GA, GB, GC, src, pixels, rgb, dark_at, grass_at, first_id):
+    """Cut the north gateway: drawn arch and doors on the face, shrubs cleared below, merlons
+    removed above, walking open through. Returns {tile number: 32 bytes} for the drawn tiles."""
+    x0, x1 = GATE_X0, GATE_X1
+    f0, f1 = GATE_FACE
+    blankB = (BLANK, 0)
+    before = render(GA, GB, pixels, rgb, x0, f0, x1 - x0, f1 - f0)
+    after = draw_gate(before.copy())
+    custom, seen = {}, {}
+    for ty in range(f1 - f0):
+        for tx in range(x1 - x0):
+            a_ = after[ty * 8:ty * 8 + 8, tx * 8:tx * 8 + 8]
+            if np.array_equal(a_, before[ty * 8:ty * 8 + 8, tx * 8:tx * 8 + 8]): continue
+            bank, tb = quantize_tile(a_, rgb, (14, 11, 15, 10, 8))
+            if (bank, tb) not in seen:
+                seen[(bank, tb)] = first_id + len(custom); custom[seen[(bank, tb)]] = tb
+                pixels[seen[(bank, tb)]] = tb
+            GA[f0 + ty][x0 + tx] = (seen[(bank, tb)], bank << 12); GB[f0 + ty][x0 + tx] = blankB
+    # walking: through the opening (inner six columns), shrubs cleared to grass below
+    for y in range(GATE_BUSH[0], GATE_BUSH[1]):
+        for x in range(x0 + 1, x1 - 1):
+            ta, tb_, _ = grass_at(x, y)
+            GA[y][x] = ta; GB[y][x] = tb_; src[y][x] = 'grass'
+    for y in range(GATE_MERLON[0], GATE_BUSH[1]):
+        for x in range(x0 + 1, x1 - 1):
+            if y < GATE_MERLON[1] - 4:      # above the merlons: plain dark ground outside
+                GA[y][x] = dark_at(x, y); GB[y][x] = blankB; src[y][x] = 'dark'
+            elif y < GATE_MERLON[1]:        # merlon row: walkway pictures from further down (same pattern)
+                GA[y][x] = GA[y + 8][x]; GB[y][x] = blankB
+            if GC[y][x] & 7 in (1, 2) or y >= f0: GC[y][x] = 0
+    for y in range(GATE_MERLON[0] - 6, GATE_MERLON[0]):
+        for x in range(x0 + 1, x1 - 1): GC[y][x] = 0
+    return custom
+
+
 def build(rom_path, out_dir, base=0x01F00000, ext=37, seed=7):
+    global W
     R = Rom(rom_path)
     a, b = Level(R, 46), Level(R, 47)
     assert a.tileset == b.tileset and a.e[15] == b.e[15]
@@ -347,15 +471,30 @@ def build(rom_path, out_dir, base=0x01F00000, ext=37, seed=7):
         X, Y = x + DX, y + DY + E
         if src[Y][X] == '47' and GC[Y][X] & 7 in (1, 2): GC[Y][X] = 0
 
+    # --- the fort (Jordan 2026-11-19): a smaller Helm's Deep in the bottom-left corner ----------
+    # North wall (right of the bastion) gets a drawn gateway with open wooden doors; the breach in
+    # the slanted wall is the east gate. Then the map is cropped to the fort and the ground north
+    # and east of it.
+    ts_hdr = R.rom[a.tileset - 0x08000000:][:0x14]
+    n_last = struct.unpack('<H', ts_hdr[0xE:0x10])[0]          # tiles in the game's second chunk
+    custom = fort_gate(GA, GB, GC, src, pixels_needed, rgb, dark_at, grass_at, 1024 + n_last)
+    FX0, FY0 = FORT_X0, E + FORT_TOP
+    GA = [r[FX0:] for r in GA[FY0:]]; GB = [r[FX0:] for r in GB[FY0:]]
+    GC = [r[FX0:] for r in GC[FY0:]]; src = [r[FX0:] for r in src[FY0:]]
+    W = W - FX0; H = H - FY0
+    assert W % 4 == 0 and H % 4 == 0
+
     # map edges are walls
     for y in range(H):
         GC[y][0] = GC[y][W - 1] = 1
     for x in range(W):
         GC[0][x] = GC[H - 1][x] = 1
 
+    if os.environ.get('SIEGE_DUMP'):
+        import pickle; pickle.dump((GA, GB, GC, src, E, H), open(os.environ['SIEGE_DUMP'], 'wb'))
     # --- tiles: fit the game's tile memory --------------------------------
     pixels = pixels_needed
-    mapA, errA = merge_tiles(GA, pixels, rgb, A_LIMIT)
+    mapA, errA = merge_tiles(GA, pixels, rgb, A_LIMIT, keep=set(custom))
     for y in range(H):
         for x in range(W):
             t = GA[y][x]
@@ -409,8 +548,13 @@ def build(rom_path, out_dir, base=0x01F00000, ext=37, seed=7):
                 if it[0] != 19: continue
                 x, y = struct.unpack('<HH', it[4:8]); X, Y = x + ox, y + oy
                 if not keep(X, Y): continue
-                torches.append(it[:4] + struct.pack('<HH', X, Y + E * 8) + it[8:])
-    groups = build_groups([dict(b1=0, items=torches)])
+                X, Y = X - FX0 * 8, Y + E * 8 - FY0 * 8
+                if not (0 <= X < W * 8 and 0 <= Y < H * 8): continue
+                torches.append(it[:4] + struct.pack('<HH', X, Y) + it[8:])
+    # spirit shrine (vendor kind 2) and forge (kind 0) in the courtyard, records as in level 47
+    vendors = [bytes([17, 0, 0, 0]) + struct.pack('<HH', (tx - FX0) * 8, (ty - FY0) * 8) + bytes([kind, 0xFF, 0xFF, 0xFF])
+               for (tx, ty, kind) in FORT_VENDORS]
+    groups = build_groups([dict(b1=0, items=torches + vendors)])
     empty = b'\x00\x00\x00\x00'
     p1 = bytearray(8) + groups
     off_paths = len(p1); p1 += empty
@@ -418,11 +562,11 @@ def build(rom_path, out_dir, base=0x01F00000, ext=37, seed=7):
     off_tail = len(p1); p1 += b'\x00\x00\xff\xff'
     struct.pack_into('<HHHH', p1, 0, off_paths, off_scripts, 1, off_tail)
 
-    # entry points: Hornburg's, moved down with the map
-    e0x, e0y = struct.unpack('<HH', hdr[4:8]); e1x, e1y = struct.unpack('<HH', hdr[12:16])
+    # entry points: both in the courtyard, just inside the north gate
     blob = bytearray(hdr)
-    struct.pack_into('<HH', blob, 4, e0x, e0y + E * 8)
-    struct.pack_into('<HH', blob, 12, e1x, e1y + E * 8)
+    e0x, e0y = (FORT_START[0] - FX0) * 8, (FORT_START[1] - FY0) * 8
+    struct.pack_into('<HH', blob, 4, e0x, e0y)
+    struct.pack_into('<HH', blob, 12, e0x + 16, e0y)
 
     # --- write everything as raw (type 0) data -----------------------------
     out = bytearray()
@@ -468,7 +612,30 @@ def build(rom_path, out_dir, base=0x01F00000, ext=37, seed=7):
     struct.pack_into('<H', blob, sub + 0xC, o0); struct.pack_into('<H', blob, sub + 0xC + 8, o1)
     out.extend(blob + b0 + b1)
 
+    # tileset: the game's own two chunks (1024 + 389 tiles); the second one is stored again as a plain
+    # copy with the drawn tiles added at its end (numbers 1413 + k). Loader 0x080324C8: chunk k entry
+    # at tileset + 4 + 8k = (u16 storage, u16 count, u32 offset from the tileset start); it expects
+    # every chunk but the last to hold 1024 tiles. Decoder 0x08019EDC reads the storage kind from the
+    # entry: 0 = plain copy (CpuFastSet) of count * 32 bytes, no header. Chunk 0 is reached with a
+    # wrapped offset back into the game's tileset.
+    ts_old = a.tileset
+    th = R.rom[ts_old - 0x08000000:][:0x14]
+    f0, cnt0, off0 = struct.unpack('<HHI', th[4:12])
+    assert cnt0 == 1024
+    first = 1024 + n_last
+    assert sorted(custom) == list(range(first, first + len(custom)))
+    chunk1 = b''.join(R.tiles(ts_old, list(range(1024, first)))) + b''.join(custom[t] for t in sorted(custom))
+    while len(out) % 4: out.append(0)
+    pTS = base + 0x08000000 + len(out)
+    tsb = bytearray(th[:4])
+    tsb += struct.pack('<HHI', f0, cnt0, (ts_old + off0 - pTS) & 0xFFFFFFFF)
+    tsb += struct.pack('<HHI', 0, len(chunk1) // 32, len(tsb) + 8)
+    tsb += chunk1
+    assert len(chunk1) // 32 <= 1024
+    out.extend(tsb)
+
     entry = a.e[:]
+    entry[14] = pTS
     entry[0], entry[1], entry[2], entry[3] = pA0, pA1, pMapA, pMetaA
     entry[6], entry[7] = pMapB, pMetaB
     entry[10], entry[11] = pDefs, pCol
@@ -481,7 +648,8 @@ def build(rom_path, out_dir, base=0x01F00000, ext=37, seed=7):
                 object_entry_at=hex(OBJECTS + 12 * SLOT), object_entry=[hex(x) for x in obj],
                 tilesA=len(listA), tilesB=len(listB), metasA=len(metaA), metasA_in_B_buffer=len(extra), metasB=len(metaB), coldefs=len(defs),
                 merged_tilesA=len(mapA), merged_tilesB=len(mapB), merge_errorA=errA, merge_errorB=errB,
-                torches=len(torches), hero_start=[e0x, e0y + E * 8])
+                torches=len(torches), hero_start=[e0x, e0y], vendors=len(vendors), drawn_tiles=len(custom),
+                tileset=hex(entry[14]))
     json.dump(info, open(os.path.join(out_dir, 'siege.json'), 'w'), indent=1)
     patch = bytearray()
     patch += struct.pack('<I', LEVELS_ADDR_INT(SLOT) - 0x08000000) + struct.pack('<19I', *entry)
