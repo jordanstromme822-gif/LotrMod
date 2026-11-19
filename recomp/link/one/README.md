@@ -25,3 +25,11 @@ generation ROM, game-link.toml + orcslots/linkfuncs.py + turn16funcs.py, generat
 
 1-player: link_main main() calls rotk_solo_setup() (mixer_hook.cpp) so the game's IWRAM mixer runs natively, then run_game.
 Page patches: recomp/playroom/one-engine-v179.py, then p2-features-v179.py.
+
+## v199 (2026-11-19): movement feel compiled in
+regen.sh also runs ../feelfuncs.py, which adds tools/feel hero_feel (ROM 0x8A000, CPU 0x0808A000) as [[extra_func]].
+The generation ROM must be the page ROM of a page with recomp/playroom/feel-v199.py applied (feel.bin at 0x8A000); dump
+it from the running page (/data/game.gba, first 16 MB). Page engine key ?v=199. Without the compiled entry the link engine
+stops with "unreachable" as soon as a hero runs the wrapper (v194). Build box rebuilt from scratch on 2026-11-19 with the
+steps above (newest emsdk; rtmix = runtime.cpp.o rebuilt without -fwasm-exceptions + `emar r`). Built files:
+/mnt/project-files/engine-build/feel-v199/.

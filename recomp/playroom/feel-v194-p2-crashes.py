@@ -1,5 +1,5 @@
-# NOT LIVE: this build crashed one-game 2-player games ("unreachable" at start). The link engine cannot run new ROM code
-# at a new address; feel stays 1-player only (live v193 rule) until the link engine is regenerated with it as [[extra_func]].
+# Superseded by feel-v198.py (which runs this script first). On its own this build crashed one-game 2-player games
+# ("unreachable" at start) because the link engine of v190 did not have the feel wrapper compiled; v198 regenerated it (v199).
 # Play Room v194: move the feel wrapper (tools/feel/feel.bin) from ROM 0x1400000 (past 16 MB; the 2-player/online
 # link engine crashed on it) to 0x8A000 (freed German bank) and use it in every engine.
 # Usage: python3 feel-v194.py in.html(v193) out.html tools/feel/feel.bin
