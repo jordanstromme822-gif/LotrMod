@@ -95,6 +95,11 @@ def merge_tiles(grid, pixels, rgb, limit):
     tot = np.array([sum(uses[t].values()) for t in tiles], float)
     cost /= tot[:, None, None]
     for i in range(n): cost[i, i, :] = 1e9
+    # never swap a textured tile for a (nearly) solid black one: dark ground turned into black bars
+    lum = rgb.sum(1) / 3.0
+    blk = np.array([float(np.mean([(lum[uses[t].most_common(1)[0][0] * 16 + v] if v else 0) < 12
+                                   for v in X[k].flatten()])) for k, t in enumerate(tiles)])
+    cost[np.ix_(blk < 0.95, blk >= 0.95)] = 1e9
     best = cost.min(2); bflip = cost.argmin(2)
     import heapq
     removed, kept, out, errs = set(), set(), {}, []
@@ -129,6 +134,21 @@ def build(rom_path, out_dir, base=0x01F00000, ext=37, seed=7):
 
     LA, LB, CA = a.tilegrid(0), a.tilegrid(1), a.colgrid()
     MA, MB, MC = b.tilegrid(0), b.tilegrid(1), b.colgrid()
+    # Hornburg's two wall staircases have collapsed top steps (blocked). The Valley's staircase is the same
+    # art, intact: copy its pictures and walking over both (Jordan 2026-11-19: "redraw them and fix them").
+    # (Hornburg x0..x1, y0..y1) <- Valley at (x + vx, y + vy); offsets found by matching the intact steps.
+    # The rest of each staircase takes the Valley's walking where the pictures already match, so the
+    # steps line up with no blocked row where the copied top meets Hornburg's own steps.
+    for (x0, x1, y0, y1), (bx0, bx1, by0, by1), vx, vy in (((40, 49, 49, 60), (36, 66, 44, 82), -22, -36),
+                                                           ((180, 189, 73, 84), (170, 192, 62, 100), -DX, -DY)):
+        for y in range(by0, by1):
+            for x in range(bx0, bx1):
+                yy, xx = y + vy, x + vx
+                if not (0 <= yy < len(MA) and 0 <= xx < len(MA[0])): continue
+                if x0 <= x < x1 and y0 <= y < y1:
+                    LA[y][x], LB[y][x], CA[y][x] = MA[yy][xx], MB[yy][xx], MC[yy][xx]
+                elif LA[y][x] == MA[yy][xx] and LB[y][x] == MB[yy][xx] and LA[y][x][0] != BLANK:
+                    CA[y][x] = MC[yy][xx]
     GA = [[None] * W for _ in range(H)]; GB = [[None] * W for _ in range(H)]
     GC = [[1] * W for _ in range(H)]
     src = [[''] * W for _ in range(H)]     # where each tile came from, for fixups
@@ -155,6 +175,12 @@ def build(rom_path, out_dir, base=0x01F00000, ext=37, seed=7):
         p = pix(pixels_needed[t[0]]) if t[0] in pixels_needed else None
         return 0 if p is None else float(np.mean([lumP[(t[1] >> 12) * 16 + v] if v else 0 for v in p.flatten()]))
 
+    def black(t, th=0.95):
+        if not t or t[0] == BLANK: return False
+        p = pix(pixels_needed[t[0]]) if t[0] in pixels_needed else None
+        if p is None: return False
+        return float(np.mean([(lumP[(t[1] >> 12) * 16 + v] if v else 0) < 12 for v in p.flatten()])) >= th
+
     need = set()
     for g in (LA, MA):
         for row in g:
@@ -178,6 +204,7 @@ def build(rom_path, out_dir, base=0x01F00000, ext=37, seed=7):
             if any(LB[cy * 4 + k // 4][cx * 4 + k % 4][0] != BLANK for k in range(16)): continue
             if any(CA[cy * 4 + k // 4][cx * 4 + k % 4] != 1 for k in range(16)): continue
             if max(tlum(t) for t in blk) > 70: continue
+            if any(black(t) for t in blk): continue   # solid black tiles (272/273) read as holes
             # all eight neighbours must also be outside (keeps wall edges and torch light out)
             ok = True
             for dy in (-1, 0, 1):
@@ -217,6 +244,9 @@ def build(rom_path, out_dir, base=0x01F00000, ext=37, seed=7):
             t = GA[y][x]
             if src[y][x] in ('46', '47') and (t[0] == BLANK or (src[y][x] == '46' and 136 <= x < 144 and y < E + 12)):
                 put(x, y, dark_at(x, y), blankB, 0, 'dark')
+            elif src[y][x] in ('46', '47') and GB[y][x][0] == BLANK and black(t):
+                # all-black sky pieces left between the merlons: dark ground, walking unchanged
+                put(x, y, dark_at(x, y), blankB, GC[y][x], src[y][x])
 
     # 3) bottom left (below Hornburg, left of the Valley): grass, forest edge at the bottom
     grass_cells = []
