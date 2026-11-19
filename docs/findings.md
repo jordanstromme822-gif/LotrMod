@@ -351,3 +351,23 @@ Measured on the original ROM in mGBA (Hornburg Valley, level 47) with `tools/eng
   bits 0-8 x, 9-17 y (signed), 18-19 size, 20-21 shape, 22-31 first tile. Sprite tiles are allocated per picture.
 - ROM 0x9F000-0x9FFFF is the 16-facing hook (tools/turn16), 0x94400 its crossbow pictures. Since v176 the hero pictures are
   past 16 MB (ROM 0x1000000, gen16all.py, all 8 heroes); 0x8A000-0x943FF (Frodo's old block) is free again in the page's build.
+
+## Siege map: Helm's Deep in one map (2026-11-19, v197)
+
+Built by `tools/siege/build.py ROM OUT --base 0x1500000`, put in the page by `recomp/playroom/siege-v197.py`.
+
+- Level table 0x08069A58, 0x4C bytes per level: +0x00/+0x04 tile lists A0/A1 (ascending tileset indices loaded into
+  consecutive VRAM slots by 0x080324C8(tileset, list, var)), +0x08/+0x0C layer A map/metatiles (BG3, max 1024 tiles),
+  +0x18/+0x1C layer B map/metatiles (BG2, max 512 tiles), +0x28 collision defs (16 bytes = 4x4 subcells of 8 px),
+  +0x2C collision cell map (u16 count header, low 12 bits per cell = def), +0x38 tileset, +0x3C palette.
+- Every blob goes through the decompressor 0x08019D54: header type in bits 4-7, size in bits 8+; type 0 is a raw copy
+  (size a multiple of 4), so new data can be stored uncompressed anywhere in the 32 MB ROM.
+- Maps: [w, 0, h, 0] then u16 cells of 32 px; metatile = 4x4 u16 tile entries. EWRAM buffers are fixed:
+  maps/collision 0x2810 bytes each (max 5126 cells), metatiles 0x8010 bytes each (1024 per layer).
+  Layer A metatiles past 1024 still work if placed in the layer B buffer at the address index n lands on (B loads after A).
+- Collision: low 3 bits 1 or 2 = blocked, 0/3/7 walkable; bit 3 = raised. Read by 0x08034770.
+- Spawns: object table 0x0806C0F0, 12 bytes per level, +4 = blob (entry points, then parts; part1 holds the record
+  groups: [0] type, [4] x, [6] y; 19 torch, 3 exit, 25/26/22/14/8 enemies/ladders). Siege keeps only torches.
+- Hornburg Valley (47) sits at (1296, 480) px from Hornburg (46). The Siege map is 66 cells wide, 37 cells of new
+  ground added north, in unused level slot 45. Layer A needed 1259 tiles, merged by look-alike to 1020.
+- Warp = level to 0x030041F8, 5 to 0x030041F4, 0x81 to 0x030041F0 (the Levels button), works in 1-player and P2.
