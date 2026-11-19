@@ -150,6 +150,11 @@ def build(rom_path, out_dir, base=0x01F00000, ext=37, seed=7):
         p = pix(pixels_needed[t[0]]) if t[0] in pixels_needed else None
         return 0 if p is None else max(lumP[(t[1] >> 12) * 16 + v] if v else 0 for v in p.flatten())
 
+    def mlum(t):
+        if not t or t[0] == BLANK: return 0
+        p = pix(pixels_needed[t[0]]) if t[0] in pixels_needed else None
+        return 0 if p is None else float(np.mean([lumP[(t[1] >> 12) * 16 + v] if v else 0 for v in p.flatten()]))
+
     need = set()
     for g in (LA, MA):
         for row in g:
@@ -220,10 +225,10 @@ def build(rom_path, out_dir, base=0x01F00000, ext=37, seed=7):
             blk = [(LA[cy * 4 + k // 4][cx * 4 + k % 4], LB[cy * 4 + k // 4][cx * 4 + k % 4],
                     CA[cy * 4 + k // 4][cx * 4 + k % 4]) for k in range(16)]
             if any(t[1][0] != BLANK or t[2] in (1, 2) for t in blk): continue
-            grass_cells.append((np.mean([tlum(t[0]) for t in blk]), blk))
-    # plain light grass only: mixing in the dark patches makes a checkerboard
+            grass_cells.append((np.mean([mlum(t[0]) for t in blk]), blk))
+    # plain light grass only (mean brightness, not the brightest pixel): dark patches make a checkerboard
     lums = sorted(g[0] for g in grass_cells); top = lums[-1]
-    grass_cells = [g[1] for g in grass_cells if g[0] > top - 4] or [g[1] for g in grass_cells]
+    grass_cells = [g[1] for g in grass_cells if g[0] > top - 3] or [g[1] for g in grass_cells]
     grass_choice = {}
     def grass_at(x, y):
         k = (x // 4, y // 4)
