@@ -78,3 +78,20 @@ Jordan: "Next do enemies".
   rotk-enemy-chase, default on) an enemy walking within 22.5 degrees of the hero has its velocity turned straight at him
   (same speed) and faces that exact way.
 - Page: `recomp/playroom/enemies360-v177.py in.html out.html turn16.bin` on live v176.
+
+## v209 (2026-11-20): 32 facings for every hero and enemy
+
+Jordan: "give all characters and enemies 360° points of motion instead of 16 like you did to the traps".
+
+- `gen32.py <original ROM> turn32.bin [workers]` makes three in-between pictures per gap (1/4, 1/2, 3/4 of the way between
+  two drawn directions; 1/2 is the old picture, 3/4 is the next direction warped back) for all 8 heroes' walk + stand and all
+  70 enemy walk / stand sets: 11.6 MB of the game's own art (not in the repo). Layout: heroes index at 0x09000000
+  (8 x {game table, ours 1/4, 1/2, 3/4}), enemy SP[82][2] pointer at 0x09000080, pictures in 0x09000000-0x09500000 then
+  0x09610000-0x0A000000. File = 'T32\0', count, {file offset, length, bytes} chunks; published gzipped as
+  `wide/turn32.wasm` (4.1 MB), replacing hero16 (embedded) and enemy16.
+- `turn16.c`: facings 0-31 (`F32` table). Hero picture swings 2 facings a tick toward the stick (over 135 degrees snaps),
+  hysteresis 3/256; attacks go the nearest of the game's 8 ways. Enemies swing 2 a tick (over 90 degrees snaps); chase
+  unchanged. The dead v171 crossbow code is gone (the Bolt Trap turns in the page since v208).
+- The engine compiles the hook, so it was regenerated (`recomp/link/one/regen.sh`, engine ?v=209). Note: the runtime also
+  needs `recomp/link/one-game-partner.patch` (missing from the one/README patch list).
+- Page: `recomp/playroom/turn32-v209.py in.html out.html turn16.bin`.
