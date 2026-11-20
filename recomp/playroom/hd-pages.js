@@ -231,6 +231,15 @@
     '#hdHud .it span.z b{color:#ff8a78}' +
     '#hdHud .orb{flex:0 0 auto;width:calc(var(--h)*.66);height:calc(var(--h)*.66);border-radius:50%;overflow:hidden;background:#120e0a;box-shadow:0 0 0 2px #2a1d0c,0 0 0 calc(var(--h)*.05) #c99a46,0 0 calc(var(--h)*.22) rgba(255,190,80,.35)}' +
     '#hdHud .orb canvas{width:100%;height:100%;display:block;image-rendering:auto}' +
+    // v228 (Jordan: "Shield should be animated over hp jar as a light blue force field"): Gandalf's Shield over the Hit Points bar
+    '#hdHud .bb.h{transition:box-shadow .3s}#hdHud .bb.h.sh{box-shadow:0 0 0 1px #000,0 0 0 2.5px #9fdcff,0 0 0 3.5px #1c3a5a,0 0 calc(var(--h)*.12 + var(--h)*.18*var(--sf)) rgba(120,200,255,calc(.35 + .5*var(--sf))),inset 0 2px 5px rgba(0,0,0,.8)}' +
+    '#hdHud .bb s.sf{position:absolute;left:0;top:0;bottom:0;width:0;text-decoration:none;pointer-events:none;transition:width .2s;background:linear-gradient(rgba(220,245,255,.75),rgba(120,200,255,.55) 45%,rgba(60,140,240,.6));mix-blend-mode:screen}' +
+    '#hdHud .bb s.sf::before{content:"";position:absolute;inset:0;background:repeating-linear-gradient(115deg,rgba(255,255,255,0) 0 calc(var(--h)*.1),rgba(230,250,255,.55) calc(var(--h)*.13),rgba(255,255,255,0) calc(var(--h)*.16) calc(var(--h)*.34));background-size:calc(var(--h)*1.36) 100%;animation:hdField 1.1s linear infinite}' +
+    '#hdHud .bb s.sf::after{content:"";position:absolute;inset:-1px;border-radius:inherit;box-shadow:inset 0 0 calc(var(--h)*.08) rgba(200,240,255,.9);animation:hdPulse 1.6s ease-in-out infinite}' +
+    '#hdHud.tall .bb.sh span em{display:none}' +
+    '@keyframes hdField{to{background-position:calc(var(--h)*1.36) 0}}@keyframes hdPulse{50%{opacity:.35}}' +
+    '#hdHud .bb span b{font:inherit;color:#bfe8ff;margin-left:.2em;text-shadow:0 0 4px rgba(120,200,255,.9),0 1px 2px #000}' +
+    '#hdHud .fl i{position:absolute;left:22%;right:22%;bottom:9%;border-radius:0 0 30% 30%;background:linear-gradient(rgba(200,240,255,.85),rgba(70,150,255,.75));box-shadow:0 0 8px rgba(120,200,255,.9);animation:hdPulse 1.6s ease-in-out infinite;pointer-events:none}' +
     '#hdHud.tall .two{flex-direction:column;gap:calc(var(--h)*.07)}#hdHud.tall .bb{flex:0 0 auto;height:calc(var(--h)*.24)}#hdHud.tall .bb span{font-size:calc(var(--h)*.16)}' +
     '#hdHud .fl{position:absolute;bottom:0;display:grid;place-items:center;border-radius:calc(var(--h)*.12) calc(var(--h)*.12) 0 0;background:radial-gradient(circle at 50% 40%,#2a2118,#0b0907 75%);box-shadow:0 0 0 1.5px #8a6a30,0 -2px 8px rgba(0,0,0,.6)}' +
     '#hdHud .fl[hidden]{display:none}#hdHud .fl svg{width:92%;height:auto;max-height:80%}';
@@ -434,7 +443,7 @@
   let hud = null, hudKey = "", hudItemsKey = "", orbT = 0;
   const hudBuild = () => {
     hud = document.createElement("div"); hud.id = "hdHud"; hud.className = "hdx"; hud.hidden = true;
-    hud.innerHTML = '<div class="hl"><b>1</b><i>LV</i></div><div class="bars"><div class="two"><div class="bb h"><i></i><span></span></div><div class="bb s"><i></i><span></span></div></div><div class="xb"><i></i></div></div>' +
+    hud.innerHTML = '<div class="hl"><b>1</b><i>LV</i></div><div class="bars"><div class="two"><div class="bb h"><i></i><s class="sf"></s><span></span></div><div class="bb s"><i></i><span></span></div></div><div class="xb"><i></i></div></div>' +
       '<div class="it"></div><div class="orb"><canvas width="88" height="88"></canvas></div><div class="fl" hidden></div>';
     document.body.appendChild(hud);
   };
@@ -460,7 +469,11 @@
       const R = window.__romFull, need = R && lvl <= 0x31 ? u32(R, 0x628D0 + 4 * lvl) : 0, xp = u32(H, P + 0x178);
       const lv = hud.firstChild, bb = hud.querySelectorAll(".bb"), xb = hud.querySelector(".xb i");
       lv.firstChild.textContent = String(lvl + 1);
-      bb[0].firstChild.style.width = Math.min(100, hp * 100 / hpm).toFixed(1) + "%"; bb[0].lastChild.innerHTML = hp + "<em>/ " + hpm + "</em>";
+      // Gandalf's Shield (gandalf-shield.js: window.__gsShown = { S, max, frac } for the local hero)
+      const gs = window.__gsShown, S = gs && gs.S > 0 ? gs.S : 0, sf = S ? Math.max(0.05, Math.min(1, gs.frac)) : 0;
+      bb[0].classList.toggle("sh", S > 0); bb[0].style.setProperty("--sf", sf.toFixed(2));
+      bb[0].children[1].style.width = (sf * 100).toFixed(1) + "%";
+      bb[0].firstChild.style.width = Math.min(100, hp * 100 / hpm).toFixed(1) + "%"; bb[0].lastChild.innerHTML = hp + "<em>/ " + hpm + "</em>" + (S ? "<b>&#9672; " + S + "</b>" : "");
       bb[1].firstChild.style.width = Math.min(100, sp * 100 / spm).toFixed(1) + "%"; bb[1].lastChild.innerHTML = sp + "<em>/ " + spm + "</em>";
       xb.style.width = (need ? Math.min(100, xp * 100 / need) : 100).toFixed(1) + "%";
       // Ent Water and Kingsfoil (P+0x1A9 bit 0, P+0x1AA low / high nibble), as the old corner icons had them
@@ -468,11 +481,10 @@
       if (ik !== hudItemsKey) {
         hudItemsKey = ik;
         const one = (name, svg, n) => '<span title="' + name + '"' + (n ? "" : ' class="z"') + ">" + svg + "<b>" + n + "</b></span>";
-        const flk = hud.querySelector(".fl");
-        hud.querySelector(".it").innerHTML = (flk && !flk.hidden ? "" : one("Ent Water", FLASK(ent ? ["#7cc8e8", "#3a9a5a"] : GREY), ent)) +
+        hud.querySelector(".it").innerHTML = one("Ent Water", FLASK(ent ? ["#7cc8e8", "#3a9a5a"] : GREY), ent) +
           one("Fresh Kingsfoil", LEAF(fresh ? ["#5fc444", "#2a6a1e"] : GREY), fresh) + one("Dried Kingsfoil", LEAF(dried ? ["#b8943e", "#6a5020"] : GREY), dried);
       }
-      // the game's Ent Water flask stands taller than the HUD on a phone held upright: an HD flask goes over it there
+      // the game's XP vial (Gandalf's Shield fills it light blue) stands taller than the HUD on a phone held upright: an HD flask goes over it there
       const gv = window.__gbaView, f0 = frame(), fl = hud.querySelector(".fl");
       let lamp = null;
       if (gv && f0 && gv.w === f0.w && gv.h === f0.h && gv.sw > 0 && gv.sh > 0) {
@@ -486,11 +498,12 @@
         hud.style.paddingLeft = "";
         if (lamp) {
           const pad = 4, L = Math.max(0, lamp[0] - pad), W = lamp[2] + pad * 2;
-          fl.style.left = L + "px"; fl.style.width = W + "px"; fl.style.height = (r.height - lamp[1] + pad) + "px"; fl.innerHTML = FLASK(ent ? ["#7cc8e8", "#3a9a5a"] : GREY);
+          fl.style.left = L + "px"; fl.style.width = W + "px"; fl.style.height = (r.height - lamp[1] + pad) + "px"; fl.innerHTML = FLASK(["#2a3a2a", "#1a241a"]) + "<i></i>";
           if (L < h) hud.style.paddingLeft = Math.round(L + W + h * 0.12) + "px";   // the level badge goes after it
         }
         hudItemsKey = "";
       }
+      { const vi = !fl.hidden && fl.querySelector("i"); if (vi) { vi.style.height = (sf * 72).toFixed(1) + "%"; vi.style.display = sf ? "" : "none"; } }
       // the game's skill orb, cut out of its own HUD (bottom right of the 240-wide strip) and drawn bigger
       const now = performance.now();
       if (now - orbT > 120) {
