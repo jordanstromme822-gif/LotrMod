@@ -522,6 +522,24 @@ Tested headless (Moria Shrine; Forge = the same vendor with +0x60 set to 0): 1-p
 joystick and by taps at phone size; P2 (two linked games) buy goes into both games and the shop reopens. The game's own
 sale in a P2 game only changes the local game (as before v203).
 
+### Sell All (2026-11-20, Play Room v209)
+
+Jordan: "change the leave button in the forge menu to sell all, have it sell all inventory at the same time, make sure
+it prompts you to ask if you are sure first when you select it and show the amount you will receive".
+`recomp/playroom/shop-v209.py` swaps the v203 shop block for `shop-v209.js` (only that block: the v206 stat refund
+code follows it). The button under the backpack is now Sell All; B still leaves the shop.
+- The game's sell price for affixed gear doesn't follow the base formula, so the page asks the game: for each filled
+  box of the 12 it walks the game's cursor there (stash boxes via SWIN), presses A, reads "That is worth N gems"
+  (text 309) from the shop's text, and presses B (= No). Prices are kept per item word, and also picked up whenever the
+  player asks about a box, so a second Sell All counts at once. B while counting stops it.
+- Then the left page lists every item with its price, the total ("You will receive N gems") and "Are you sure you want
+  to sell all N items?" Yes / No (A / B, joystick, or taps).
+- Yes empties the boxes (hero words 8..15 = 0xFFFFFFFF; stash words ewram 0x0203F840 + 20p; the stash window box is
+  hero word 15 and its stash copy is cleared too), adds the gems (u16 cap), mirrors IWRAM with `__mirrorIw` and the
+  stash bytes into the other link game, then closes and reopens the shop behind the picture like a purchase.
+Tested headless: 1-player Shrine and Forge (6 items incl. 2 stash boxes, 364 gems = the game's own prices), cancel
+while counting, phone taps; P2 (two linked games): both games emptied, same gems.
+
 ## Take attribute points back any time (2026-11-20, Play Room v206)
 
 Jordan: "stats placed should allow me to unplace them whenever I want". The game's Stats page (state 0x0E) already
