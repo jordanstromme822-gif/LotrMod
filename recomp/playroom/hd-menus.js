@@ -34,17 +34,26 @@
     sound: '<path d="M4 9h4l5-4v14l-5-4H4z"/><path d="M16.5 8.5a5 5 0 0 1 0 7M19 6a8.5 8.5 0 0 1 0 12"/>',
     heart: '<path d="M12 20s-7.5-4.6-7.5-10.2A4.3 4.3 0 0 1 12 7.2a4.3 4.3 0 0 1 7.5 2.6C19.5 15.4 12 20 12 20z"/><path d="M12 10.5v5M9.5 13h5"/>',
     bolt: '<path d="M13 2.5L5 13.5h6l-1 8 8-11h-6z"/>',
+    gate: '<path d="M5 21V10a7 7 0 0 1 14 0v11"/><path d="M12 3v18M8.5 8.5l7 7M15.5 8.5l-7 7"/><path d="M3 21h18"/>',
+    hill: '<path d="M2 20l7-10 4 5 3-3 6 8z"/><path d="M8 10.5l1-3.5 1 3.5M7 7h4"/>',
+    tower: '<path d="M7 21V7h10v14M5 7V4h2v1.5h2V4h2v1.5h2V4h2v1.5h2V4h2v3z"/><path d="M10 21v-4a2 2 0 0 1 4 0v4M3 21h18"/>',
+    tree: '<path d="M12 21v-8M12 13l-4-3M12 15l4-3"/><path d="M12 3c4 0 7 2.5 7 6 0 2.5-2 4.5-5 4.5h-4C7 13.5 5 11.5 5 9c0-3.5 3-6 7-6z"/><path d="M8 21h8"/>',
     shield: '<path d="M12 2.5l8 3v6c0 5-3.5 8.5-8 10-4.5-1.5-8-5-8-10v-6z"/><path d="M12 6v12M8 10h8"/>',
   };
   const MENUS = {
-    5: { head: "", items: [["New Game", "swords"], ["Load Game", "folder"], ["Multiplayer", "group"], ["Options", "gear"], ["GCN Link", "cube"], ["Bonus Maps", "scroll"]] },
+    5: { head: "", items: [["New Game", "swords"], ["Load Game", "folder"], ["Multiplayer", "group"], ["Options", "gear"], ["Bonus Maps", "scroll", 5]], skip: 4 },
+    // Bonus Maps' path picker: map cursor 0x030041B8 (sub 0), then its level list (sub 1) and difficulty (sub 2), both at 0x030041B4
+    24: { head: "Choose Your Path", items: [] },
+    // Multiplayer's own GBA link screen (the page has its own P2 and online games)
+    23: { head: "", items: [] },
     9: { head: "", items: [] },
     // Options: the cursor skips 2, each setting's value is at IWRAM 0x03002080 + its cursor (volumes 0-10, 0 = Off;
     // Auto Healing and Fast Discard 0 Off / 1 On; Difficulty 0 Normal, 1 Hard, 2 Grueling). Left / Right change them.
     6: { head: "Options", items: [["Music Volume", "music", 0, "vol"], ["SFX Volume", "sound", 1, "vol"], ["Auto Healing", "heart", 3, "on"], ["Fast Discard", "bolt", 4, "on"], ["Difficulty", "shield", 5, "diff"], ["Credits", "scroll", 6]] },
     16: { head: "Game Paused", items: [["Save Game", "disk"], ["Options", "gear"], ["Artifacts", "gem"], ["Quit Game", "exit"]], goal: true },
   };
-  const MENU_SUB = { 5: [0, 1, 2], 16: [0], 9: [0], 6: [0] };
+  const MENU_SUB = { 5: [0, 1, 2, 3], 16: [0, 1], 9: [0, 1, 3, 4], 6: [0], 24: [0, 1, 2], 23: [0] };
+  const MAPS = [["Moria", "Dwarf Halls", "gate"], ["Weathertop", "Amon S\u00fbl", "hill"], ["Helm's Deep", "Hornburg", "tower"], ["Fangorn Forest", "Entwood", "tree"]];
   const OPT = 0x2080, DIFF = ["Normal", "Hard", "Grueling"];
   const HERO = [["Frodo", "#3d5f9a"], ["Legolas", "#3f6a2a"], ["Aragorn", "#5a3a20"], ["Gandalf", "#4a4844"], ["\u00c9owyn", "#7a2a2a"], ["Gimli", "#9a2a1e"], ["Sam", "#5a4a22"], ["Sm\u00e9agol", "#4d5a3a"]];
   const TREE = '<svg class="tr" viewBox="0 0 120 130" aria-hidden="true"><g fill="currentColor"><path d="M60 4l1.6 4.2 4.4.3-3.4 2.8 1.1 4.3L60 13.2l-3.7 2.4 1.1-4.3-3.4-2.8 4.4-.3z"/><circle cx="38" cy="16" r="1.8"/><circle cx="82" cy="16" r="1.8"/><circle cx="24" cy="28" r="1.5"/><circle cx="96" cy="28" r="1.5"/></g><g fill="none" stroke="currentColor" stroke-linecap="round"><path stroke-width="5" d="M60 124V52"/><path stroke-width="3" d="M60 84C48 76 40 66 36 52M60 84c12-8 20-18 24-32M60 70C52 62 48 50 48 38M60 70c8-8 12-20 12-32M60 60V30"/><path stroke-width="2" d="M36 52c-8-4-14-10-16-18M36 52c-4-8-4-14-2-20M84 52c8-4 14-10 16-18M84 52c4-8 4-14 2-20M48 38c-6-4-8-10-8-16M48 38c0-8 2-12 6-16M72 38c6-4 8-10 8-16M72 38c0-8-2-12-6-16M60 30c-3-4-4-6-4-10M60 30c3-4 4-6 4-10M60 96c-10 0-22-2-30-8M60 96c10 0 22-2 30-8"/><path stroke-width="2.4" d="M60 120c-6 4-14 6-24 6M60 120c6 4 14 6 24 6M60 116c-2 4-6 8-12 10M60 116c2 4 6 8 12 10"/></g></svg>';
@@ -122,7 +131,8 @@
     vign.addColorStop(0, "rgba(0,0,0,0)"); vign.addColorStop(1, "rgba(0,0,0,0.55)"); x.fillStyle = vign; x.fillRect(0, 0, W, H);
   }
 
-  let el = null, bg = null, lastKey = "", busy = 0, shownAt = 0;
+  let lastOn = 0; const QUIT_YES = 0;
+  let el = null, bg = null, lastKey = "", busy = 0, shownAt = 0, skipHold = 0, lastCur = -1;
   // the level goal, caught line by line as the game draws it into its line buffer
   let goalLines = [], goalSt = 0, goalT = 0;
   // a slow device can run two game frames between reads and miss the first line: a goal that doesn't start with a
@@ -212,6 +222,23 @@
       '#hdMenu .mid.slots{inset:calc(var(--top,0px) + var(--fs)*0.2) calc(max(5%,var(--fs)*2.2) + var(--fs)*3) calc(var(--fs)*0.4);justify-content:flex-start}' +
       '#hdMenu.tall .mid.slots{inset:calc(var(--top,0px) + var(--fs)*0.2) calc(max(5%,var(--fs)*2.2) + var(--fs)*0.4) calc(var(--fs)*0.4)}#hdMenu.tall.sl .ban{display:none}' +
       '#hdMenu.tall.sl .mid{left:calc(var(--fs)*1.1);right:calc(var(--fs)*1.1)}' +
+      '#hdMenu .ask{display:flex;align-items:center;gap:calc(var(--fs)*0.7);flex:0 0 auto;padding:calc(var(--fs)*0.3) calc(var(--fs)*1);border:1.5px solid #c99a46;border-radius:999px;background:linear-gradient(#1c1a1f,#0d0c10);color:#f6ead0;font:600 calc(var(--fs)*0.9)/1.1 var(--display,Georgia,serif);white-space:nowrap}' +
+      '#hdMenu.tall .ask{flex-wrap:wrap;justify-content:center;white-space:normal;text-align:center;border-radius:calc(var(--fs)*1);row-gap:calc(var(--fs)*0.4)}#hdMenu.tall .ask span{flex:0 0 100%}' +
+      '#hdMenu .yn{padding:calc(var(--fs)*0.2) calc(var(--fs)*0.8);border:1.5px solid #8a6a30;border-radius:999px;color:#e6c27a;cursor:pointer;font-weight:700}' +
+      '#hdMenu .yn.sel{border-color:#ffe08a;color:#2b1d10;background:linear-gradient(#fff0b8,#d8a240);box-shadow:0 0 calc(var(--fs)*0.6) rgba(255,190,80,0.8)}' +
+      '#hdMenu .card .hp{display:inline-flex;align-items:center;gap:.3em;margin:.15em 0}#hdMenu .card .hp .nm{font-size:calc(var(--t1)*1.05);margin:0}#hdMenu .card .hp u{flex:0 0 auto}#hdMenu .card .hp u{text-decoration:none;font:700 calc(var(--t1)*1.1)/1 var(--display,Georgia,serif);color:#8a5a1a;cursor:pointer;padding:0 .25em}' +
+      '#hdMenu .goal.q{text-align:center;max-width:calc(var(--fs)*18);font-size:calc(var(--fs)*1)}' +
+      '#hdMenu .maps{display:grid;grid-template-columns:repeat(4,1fr);gap:calc(var(--fs)*0.6);width:100%;max-width:calc(var(--fs)*30)}' +
+      '#hdMenu .mapc{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:calc(var(--fs)*0.2);padding:calc(var(--fs)*0.5) calc(var(--fs)*0.3);min-width:0;cursor:pointer;text-align:center;color:#2b1d10;' +
+        'font:italic 500 calc(var(--fs)*0.75)/1.15 "Iowan Old Style","Palatino Linotype",Palatino,Georgia,serif;background:radial-gradient(ellipse at 40% 40%,#fbf1d4,#ecd9a8 60%,#cfae72);border:2px solid #a87a32;border-radius:4px;box-shadow:inset 0 0 calc(var(--fs)*1.2) rgba(120,80,30,0.5),0 2px 6px rgba(0,0,0,0.6);transition:transform .12s}' +
+      '#hdMenu .mapc svg{width:calc(var(--fs)*2.4);height:calc(var(--fs)*2.4);fill:none;stroke:#6b4518;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round}' +
+      '#hdMenu .mapc .nm{font:700 calc(var(--fs)*0.85)/1.1 var(--display,Georgia,serif);font-style:normal}' +
+      '#hdMenu .mapc.sel{border-color:#ffe08a;transform:scale(1.05);box-shadow:inset 0 0 calc(var(--fs)*1.2) rgba(120,80,30,0.4),0 0 0 2px #f6c45a,0 0 calc(var(--fs)*1.1) rgba(255,190,80,0.9)}' +
+      '#hdMenu .goal.pth{display:grid;grid-template-columns:1fr 1fr;gap:calc(var(--fs)*1);max-width:calc(var(--fs)*30)}' +
+      '#hdMenu .pth div{display:flex;flex-wrap:wrap;align-items:center;gap:calc(var(--fs)*0.35)}#hdMenu .pth i{flex:0 0 100%;font:700 calc(var(--fs)*0.85)/1.2 var(--display,Georgia,serif);color:#6b4518;font-style:normal}' +
+      '#hdMenu .pk{padding:calc(var(--fs)*0.15) calc(var(--fs)*0.6);border:1.5px solid #a87a32;border-radius:999px;cursor:pointer;font-weight:600}' +
+      '#hdMenu .pk.sel{background:linear-gradient(#3b2c14,#1a1209);color:#ffe08a;border-color:#ffe08a;box-shadow:0 0 calc(var(--fs)*0.5) rgba(255,190,80,0.8)}#hdMenu .pk.dim{opacity:.55}' +
+      '#hdMenu.tall .maps{grid-template-columns:repeat(2,1fr)}#hdMenu.tall .goal.pth{grid-template-columns:1fr}' +
       '#hdMenu .mid.slots .hd{font-size:min(calc(var(--fs)*1.5),calc(var(--mw)*0.11))}' +
             '</style><canvas class="bg"></canvas><div class="ban l">' + TREE + '</div><div class="ban r">' + TREE + '</div><div class="mid"></div>';
     // inside the game stage, under its own buttons (P2, Levels, Page 1 of 2 stay on top, z 28) and the touch pad (z 25)
@@ -219,6 +246,8 @@
     bg = el.querySelector("canvas.bg");
     el.addEventListener("pointerdown", (e) => { e.preventDefault(); e.stopPropagation(); });
     el.addEventListener("click", async (e) => {
+      const w = e.target.closest("[data-walk]");
+      if (w) { if (!busy) { busy = 1; try { await walk(w.dataset); } finally { busy = 0; } } return; }
       if (e.target.closest(".back")) { if (!busy) { busy = 1; try { await tap(0); } finally { busy = 0; } } return; }
       const cd = e.target.closest(".card"), ac = e.target.closest(".act");
       if ((cd || ac) && !busy) { busy = 1; try { await slotTap(cd ? +cd.dataset.i : -1); } finally { busy = 0; } return; }
@@ -226,6 +255,7 @@
       const v = view(); if (!v) return;
       const want = +b.dataset.i, st0 = v.H[v.iw + ST], m = MENUS[st0]; if (!m) return;
       const order = m.items.map((it, i) => it[2] === undefined ? i : it[2]), kind = (m.items[order.indexOf(want)] || [])[3];
+      skipHold = performance.now() + 1500;
       const pip = e.target.closest("[data-v]"), arrow = e.target.closest("[data-d]");
       busy = 1;
       try {
@@ -234,7 +264,7 @@
           const now = view(); if (!now || now.H[now.iw + ST] !== st0) break;
           const cur = now.H[now.iw + CUR];
           if (cur === want) { there = true; break; }
-          await tap(order.indexOf(cur) < order.indexOf(want) ? 5 : 4);
+          await tap(cur < want ? 5 : 4);
         }
         if (!there) return;
         if (!kind) { await tap(8); return; }
@@ -249,6 +279,17 @@
       } finally { busy = 0; }
     });
   }
+  // data-sub: get the game's sub-screen there first (A forward, B back); data-walk "addr,target,incKey,decKey":
+  // step a cursor byte to target; data-press: then press that button
+  async function walk(d) {
+    const v0 = view(); if (!v0) return; const st0 = v0.H[v0.iw + ST];
+    if (d.sub !== undefined) for (let n = 0; n < 4; n++) { const v = view(); if (!v || v.H[v.iw + ST] !== st0) return; const sb = v.H[v.iw + SUB]; if (sb === +d.sub) break; await tap(sb < +d.sub ? 8 : 0); await new Promise((r) => setTimeout(r, 150)); }
+    if (d.walk) {
+      const [a, t, inc, dec] = d.walk.split(",").map((x) => parseInt(x, 16));
+      for (let n = 0; n < 12; n++) { const v = view(); if (!v || v.H[v.iw + ST] !== st0) return; const c = v.H[v.iw + a]; if (c === t) break; await tap(c < t ? inc : dec); }
+    }
+    if (d.press !== undefined) await tap(+d.press);
+  }
   // a card: walk the slot cursor there (Left/Right across, Up/Down between rows), then A; the action bar is just A
   async function slotTap(want) {
     for (let n = 0; n < 6 && want >= 0; n++) {
@@ -260,18 +301,25 @@
     }
     await tap(8);
   }
-  const slotHtml = (H, iw, cur, saving) => {
+  const slotHtml = (H, iw, cur, saving, sub) => {
+    const q = H[iw + CUR];
     let cards = "";
     for (let k = 0; k < 4; k++) {
       const o = iw + 0x5630 + 0x70 * k;
       let used = false; for (let i = 0; i < 0x68; i++) { const b = H[o + i]; if (b !== 0 && b !== 0xff) { used = true; break; } }
       const hero = HERO[(H[o + 0x65] >> 4) & 7], lv = H[o + 0x5C] + 1, scr = H[o + 0x68];
       let place = ["", ""]; try { place = window.__lvName ? window.__lvName(scr) : place; } catch (e) {}
-      cards += '<div class="card' + (k === cur ? " sel" : "") + (used ? "" : " empty") + '" data-i="' + k + '">' + TREE +
-        (used ? '<div class="tx"><span class="nm" style="color:' + hero[1] + '">' + esc(hero[0]) + "</span><br>" + esc([place[0], place[1]].filter(Boolean).join(" \u00b7 ")) + '<br><span class="lv">Level ' + lv + "</span></div>"
+      const pick = sub === 4 && k === cur;   // a new game in this slot: the game asks for its hero (Left / Right)
+      cards += '<div class="card' + (k === cur ? " sel" : "") + (used || pick ? "" : " empty") + '" data-i="' + k + '">' + TREE +
+        (pick ? '<div class="tx"><span class="lv">New Game</span><br><span class="hp"><u data-walk="" data-press="6">\u2039</u><span class="nm" style="color:' + HERO[q & 7][1] + '">' + esc(HERO[q & 7][0]) + '</span><u data-walk="" data-press="7">\u203a</u></span><br>Choose your hero</div>' :
+         used ? '<div class="tx"><span class="nm" style="color:' + hero[1] + '">' + esc(hero[0]) + "</span><br>" + esc([place[0], place[1]].filter(Boolean).join(" \u00b7 ")) + '<br><span class="lv">Level ' + lv + "</span></div>"
               : '<div class="tx"><span class="nm" style="color:#8a7050">Empty</span></div>') + "</div>";
     }
-    return '<div class="orn"></div><div class="hd">' + (saving ? "Save Game" : "Load Game") + '</div><div class="book">' + cards + '</div><div class="act"><i>A</i>' + (saving ? "Save" : "Load") + "</div>";
+    const foot = sub === 1 ? '<div class="ask"><span>Overwrite this saved game?</span><b class="yn' + (q === 1 ? " sel" : "") + '" data-walk="41B8,1,6,7" data-press="8">Yes</b><b class="yn' + (q !== 1 ? " sel" : "") + '" data-walk="41B8,0,6,7" data-press="8">No</b></div>'
+      : sub === 3 ? '<div class="ask"><span>Game saved successfully</span><b class="yn sel" data-walk="" data-press="8">OK</b></div>'
+      : sub === 4 ? '<div class="act" data-walk="" data-press="8"><i>A</i>Start</div>'
+      : '<div class="act"><i>A</i>' + (saving ? "Save" : "Load") + "</div>";
+    return '<div class="orn"></div><div class="hd">' + (saving ? "Save Game" : H[iw + 0x41B4] === 4 ? "Bonus Maps" : "Load Game") + '</div><div class="book">' + cards + "</div>" + foot;
   };
   // a setting's value on the right of its bar: ‹ value ›, volumes as ten pips
   const optHtml = (kind, v) => {
@@ -280,12 +328,33 @@
     else mid = "<em>" + (kind === "on" ? (v ? "On" : "Off") : DIFF[v] || "?") + "</em>";
     return '<span class="val"><u data-d="-1">\u2039</u>' + mid + '<u data-d="1">\u203a</u></span>';
   };
+  // Quit's question, Choose Your Path, and the GBA link's waiting screen
+  const yn = (txt, q, yes) => '<div class="orn"></div><div class="hd">' + txt[0] + '</div><div class="orn"></div><div class="goal q">' + txt[1] + "</div>" +
+    '<div class="bar' + (q === yes ? " sel" : "") + '" data-walk="41BC,' + yes + ',5,4" data-press="8"><svg viewBox="0 0 24 24">' + ICON.exit + "</svg><b>Yes</b><span></span></div>" +
+    '<div class="bar' + (q !== yes ? " sel" : "") + '" data-walk="41BC,' + (1 - yes) + ',5,4" data-press="8"><svg viewBox="0 0 24 24">' + ICON.swords + "</svg><b>No</b><span></span></div>";
+  const pathHtml = (H, iw, sub, cur) => {
+    const c2 = H[iw + 0x41B4], mp = MAPS[cur & 3];
+    let cards = "";
+    MAPS.forEach(([n, l, ic], k) => { cards += '<div class="mapc' + (k === cur ? " sel" : "") + '" data-walk="41B8,' + k + ',7,6" data-sub="0" data-press="8"><svg viewBox="0 0 24 24">' + ICON[ic] + '</svg><span class="nm">' + esc(n) + "</span>" + (l ? "<em>" + esc(l) + "</em>" : "") + "</div>"; });
+    const row = (t, k, s2) => '<b class="pk' + (sub === s2 && c2 === k ? " sel" : "") + (sub < s2 ? " dim" : "") + '" data-walk="41B4,' + k + ',5,4" data-sub="' + s2 + '" data-press="8">' + esc(t) + "</b>";
+    return '<div class="orn"></div><div class="hd">Choose Your Path</div><div class="maps">' + cards + '</div><div class="goal pth"><div><i>' + esc(mp[0]) + "</i>" + row(mp[1] || mp[0], 0, 1) + "</div><div><i>Difficulty</i>" + ["Normal", "Hard", "Grueling"].map((t, k) => row(t, k, 2)).join("") + "</div></div>" +
+      '<div class="act back"><i>B</i>Back</div>';
+  };
+  const waitHtml = (t) => '<div class="orn"></div><div class="hd">Multiplayer</div><div class="orn"></div><div class="goal q">' + t + '</div><div class="act back"><i>B</i>Cancel</div>';
   const tick = () => {
     const hide = () => { if (el && !el.hidden) { el.hidden = true; lastKey = ""; } window.__hdMenuOn = false; };
     try {
       const v = view(); if (!v || window.__hdMenuOff) return hide();   // __hdMenuOff: tests compare with the game's own screen
-      const { H, iw } = v, st = H[iw + ST], m = MENUS[st];
-      if (!m || !MENU_SUB[st].includes(H[iw + SUB])) return hide();
+      const { H, iw } = v, st = H[iw + ST], m = MENUS[st], sub = H[iw + SUB];
+      if (!m || !MENU_SUB[st].includes(sub)) {
+        // between two menu screens the game passes through a few frames of other states: keep the picture up for those
+        if (st !== 1 && el && !el.hidden && performance.now() - lastOn < 700) return;
+        return hide();
+      }
+      lastOn = performance.now();
+      // GCN Link is gone from the title menu: if the cursor lands on it (keys, pads), step past it the same way
+      if (st === 5 && sub !== 3 && H[iw + CUR] === 4 && !busy && performance.now() > skipHold) { busy = 1; tap(lastCur === 5 ? 4 : 5).finally(() => { busy = 0; }); }
+      if (st === 5) lastCur = H[iw + CUR];
       const cv = document.getElementById("mpCanvas"); if (!cv) return hide();
       const r = cv.getBoundingClientRect(); if (!r.width || !r.height) return hide();
       if (!el) build();
@@ -294,9 +363,9 @@
       const saving = st === 9 && (H[iw + 0x41B4] === 1 || H[iw + 0x41B4] === 3), slotKey = st === 9 ? Array.from(H.subarray(iw + 0x5630, iw + 0x5630 + 0x1C0)).join(",") + "|" + H[iw + 0x41BC] + "|" + saving : "";
       // the stage's own buttons (P2 / Levels on the pause menu, Page 1 of 2 on the save slots) keep a strip at the top
       const top = (st === 16 || st === 9) ? 48 : 0, tall = r.height > r.width * 0.9;
-      const fs = Math.max(9, Math.min((r.height - top) / (m.goal ? 17.5 : st === 6 ? 20.5 : 14), r.width / (st !== 6 ? 22 : tall ? 21 : 28)));
+      const fs = Math.max(9, Math.min((r.height - top) / (m.goal ? 17.5 : st === 6 ? 20.5 : st === 24 ? (tall ? 29 : 19) : 15.5), r.width / (st === 24 ? (tall ? 20 : 30) : st !== 6 ? 22 : tall ? 21 : 28)));
       const optKey = st === 6 ? Array.from(H.subarray(iw + OPT, iw + OPT + 7)).join(",") : "";
-      const key = [st, cur, goal + slotKey + optKey + top, r.left, r.top, r.width, r.height].join("|");
+      const key = [st, cur, sub + "/" + H[iw + 0x41B4] + "/" + H[iw + 0x41BC] + "/" + goal + slotKey + optKey + top, r.left, r.top, r.width, r.height].join("|");
       window.__hdMenuOn = true;
       if (key === lastKey && !el.hidden) return;
       const sizeChanged = !lastKey || lastKey.split("|").slice(3).join() !== key.split("|").slice(3).join();
@@ -309,19 +378,22 @@
         if (bg.width !== W || bg.height !== Hh) { bg.width = W; bg.height = Hh; paint(bg); }
       }
       const mid = el.querySelector(".mid");
-      mid.classList.toggle("slots", st === 9);
-      el.classList.toggle("sl", st === 9 || st === 6); el.classList.toggle("tall", tall);   // tall: phone held upright, the cards take the banners' room
+      mid.classList.toggle("slots", st === 9); mid.classList.toggle("path", st === 24);
+      el.classList.toggle("sl", st === 9 || st === 6 || st === 24); el.classList.toggle("tall", tall);   // tall: phone held upright, the cards take the banners' room
       if (st === 9) {
-        mid.innerHTML = slotHtml(H, iw, H[iw + 0x41BC] & 3, saving);
+        mid.innerHTML = slotHtml(H, iw, H[iw + 0x41BC] & 3, saving, sub);
         const c0 = mid.querySelector(".card"), cr = c0 && c0.getBoundingClientRect();   // card text follows the card's size
         if (cr && cr.height) {
           const ch = cr.height, cw = cr.width, bk = mid.querySelector(".book");
           bk.style.setProperty("--ch", ch.toFixed(0) + "px");
-          bk.style.setProperty("--t1", Math.min(ch * 0.22, cw * 0.16, fs * 1.3).toFixed(1) + "px");
-          bk.style.setProperty("--t2", Math.min(ch * 0.14, cw * 0.12, fs * 0.95).toFixed(1) + "px");
-          bk.style.setProperty("--t3", Math.min(ch * 0.17, cw * 0.14, fs * 1.05).toFixed(1) + "px");
+          bk.style.setProperty("--t1", Math.min(ch * 0.19, cw * 0.15, fs * 1.3).toFixed(1) + "px");
+          bk.style.setProperty("--t2", Math.min(ch * 0.12, cw * 0.11, fs * 0.95).toFixed(1) + "px");
+          bk.style.setProperty("--t3", Math.min(ch * 0.145, cw * 0.13, fs * 1.05).toFixed(1) + "px");
         }
       }
+      else if (st === 16 && sub === 1) mid.innerHTML = yn(["Quit Game", "Are you sure you wish to quit?"], H[iw + 0x41BC], QUIT_YES);
+      else if (st === 24) mid.innerHTML = pathHtml(H, iw, sub, cur);
+      else if (st === 23 || (st === 5 && sub === 3)) mid.innerHTML = waitHtml(st === 23 ? "This link isn't used here." : "Waiting for the other player\u2026");
       else mid.innerHTML = (m.head ? '<div class="orn"></div><div class="hd">' + esc(m.head) + '</div><div class="orn"></div>' : '<div class="orn"></div>') +
         m.items.map(([t, ic, c, kind], i) => { c = c === undefined ? i : c;
           return '<div class="bar' + (kind || st === 6 ? " opt" : "") + (c === cur ? " sel" : "") + '" data-i="' + c + '"><svg viewBox="0 0 24 24">' + ICON[ic] + "</svg><b>" + esc(t) + "</b>" + (kind ? optHtml(kind, H[iw + OPT + c]) : "<span></span>") + "</div>"; }).join("") +
@@ -330,7 +402,7 @@
       if (el.hidden) { el.hidden = false; shownAt = performance.now(); }
     } catch (e) { hide(); (window.__wideLog || (window.__wideLog = [])).push("hdMenu: " + (e && e.message || e)); }
   };
-  setInterval(tick, 60);
+  setInterval(tick, 30);
   // the touch controls: Start glows gold like the menu bars (Jordan's example pictures)
   const css = document.createElement("style");
   css.textContent = "#pad .b-st{background:linear-gradient(180deg,#7a5418 0%,#3d2a0d 52%,#6e4c17 100%);border-color:#f6dc94;color:#ffe6a0;" +

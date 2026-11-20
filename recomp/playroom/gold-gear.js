@@ -69,6 +69,16 @@
       if (r === undefined) { r = level(it) > level(w) || score(it) > score(w); if (memo.size > 4000) memo.clear(); memo.set(key, r); }
       return r;
     };
-    better.level = level; better.score = score; better.slot = slot;
+    // v218 (Jordan: "gear that a character can't wear should still show its red over top like it normally did"):
+    // true for gear this hero can't put on, either another hero's gear or a Min. Level above the hero's level
+    const cant = (it, heroId, lvl) => {
+      it >>>= 0;
+      if (!R() || !gear(it)) return false;
+      const { c, i } = split(it), f = flags(c, i);
+      if (f & 0x10000) return false;
+      if (heroId < 6 && !(f & (1 << (26 + heroId)))) return true;
+      return !!lvl && level(it) > lvl;
+    };
+    better.level = level; better.score = score; better.slot = slot; better.cant = cant;
     return better;
   })();
