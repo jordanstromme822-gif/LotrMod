@@ -1,4 +1,6 @@
-/* Smooth 360-degree walking test (Jordan, 2026-11-11: "re draw the gaps in between the animation frames").
+/* Smooth 360-degree walking (Jordan, 2026-11-11: "re draw the gaps in between the animation frames"; v209, 2026-11-20:
+ * "give all characters and enemies 360 points of motion instead of 16 like you did to the traps" -> 32 facings, 11.25
+ * degrees apart on the ground, three in-between pictures per gap made by gen32.py).
  *
  * With the Play Room's free-angle joystick on, the page writes the stick's screen angle into EWRAM and points the
  * hero's update (object + 0x14, the game's 0x080236B9) at hero_upd below. After the game's own update has worked
@@ -17,10 +19,10 @@
 typedef unsigned char u8; typedef signed char s8; typedef unsigned short u16; typedef unsigned int u32; typedef int s32;
 #include "tables.h"
 
-#define FA        ((volatile u8 *)0x0203FFC0)   /* [4 * player]: +0 bit0 on, bit1 stick held; +1 angle; +2 facing16 | 0x80 */
-#define IDX16     ((const u32 *)0x09000000)     /* hero16.bin (gen16all.py): 8 x {game's table, ours}; kinds 4 and 6 have 4 in-between facings */
+#define FA        ((volatile u8 *)0x0203FFC0)   /* [4 * player]: +0 bit0 on, bit1 stick held; +1 angle; +2 facing32 | 0x80 */
+#define IDX32     ((const u32 *)0x09000000)     /* gen32.py: 8 x {game's table, ours 1/4, ours 1/2, ours 3/4}; kinds 4 and 6: 4 gaps each */
 #define OURS_LO   0x09000000u                   /* pictures live past the 16 MB game, ROM 0x1000000 on (the page grows the file) */
-#define OURS_HI   0x09200000u
+#define OURS_HI   0x0A000000u
 #define HERO      0x03003C00u
 #define HERO_SZ   0x1ACu
 #define DIR5      ((const s8 *)0x08050418)      /* facing 0-7 -> drawn direction 0-4 */
@@ -43,11 +45,17 @@ static void show(u8 *o, u32 t, int k, int d)
     if (fr && fr < frames_of(U32(o, 0x24))) SETFRAME(o, fr);
 }
 
-/* the game's facing (0-7) that goes with facing16 f: even = the same, odd = the neighbour the picture is mirrored like */
-static int f8_of(int f)
+/* the game's facing (0-7) nearest facing32 f (attacks and skills go that way) */
+static int f8_of(int f) { return ((f + 2) >> 2) & 7; }
+
+/* step facing r toward t: 2 a tick (1 for the last step), a turn of more than lim / 32 snaps */
+static int turn_to(int r, int t, int lim)
 {
-    if (!(f & 1)) return f >> 1;
-    return f < 8 ? (f - 1) >> 1 : ((f + 1) >> 1) & 7;
+    int d = (t - r) & 31, n = d < 16 ? d : 32 - d;
+    if (!d) return r;
+    if (n > lim) return t;
+    n = n > 2 ? 2 : n;
+    return (r + (d < 16 ? n : -n)) & 31;
 }
 
 static void turn(u8 *o)
@@ -55,113 +63,53 @@ static void turn(u8 *o)
     u32 p = o[0x96];
     if (p > 1) return;
     volatile u8 *fa = FA + 4 * p;
-    int on = fa[0] & 1, kind = (s8)o[0x95], f = -1, held = 0;
-    int old = (fa[2] & 0x80) ? fa[2] & 15 : -1;
+    int on = fa[0] & 1, kind = (s8)o[0x95], f = -1, held = 0, want = 0;
+    int old = (fa[2] & 0x80) ? fa[2] & 31 : -1;
     if (on) {
         if ((fa[0] & 2) && kind == 6 && (S32(o, 0xB4) || S32(o, 0xB8))) {
             int a = fa[1], spd = S32(o, 0xE4) >> 6;
             S32(o, 0xB4) = (spd * SIN[a]) >> 8;
             S32(o, 0xB8) = -((spd * SIN[(a + 64) & 255]) >> 8);
-            f = F16[a];
+            want = F32[a];
             /* keep the facing until the stick is a few steps into the next one, so it doesn't flicker on a border */
-            /* v189: 5/256 of a turn (was 3), so a stick held near a border (a 45 degree run) no longer flips every tick */
-            if (old >= 0 && f != old && (F16[(a + 5) & 255] == old || F16[(a - 5) & 255] == old)) f = old;
+            if (old >= 0 && want != old && (F32[(a + 3) & 255] == old || F32[(a - 3) & 255] == old)) want = old;
+            /* the picture swings round toward the stick (2 facings a tick) instead of snapping; a reversal still snaps */
+            f = old >= 0 ? turn_to(old, want, 12) : want;
             held = 1;
         } else if (old >= 0 && f8_of(old) == o[0xF8]) {
             f = old;                       /* standing: keep the last facing unless the game turned him (attack, hit) */
         } else {
-            f = o[0xF8] << 1;
+            f = o[0xF8] << 2;
         }
         fa[2] = 0x80 | f;
     } else {
         fa[2] = 0;
     }
-    u32 cur = U32(o, 0x24), gt = U32(o, 0x88), t16 = 0;
+    u32 cur = U32(o, 0x24), gt = U32(o, 0x88);
+    const u32 *ix = 0;
     int ours = cur >= OURS_LO && cur < OURS_HI;
-    for (int h = 0; h < 8; h++) if (IDX16[2 * h] == gt) { t16 = IDX16[2 * h + 1]; break; }
+    for (int h = 0; h < 8; h++) if (IDX32[4 * h] == gt) { ix = IDX32 + 4 * h; break; }
     if (on && (kind == 4 || kind == 6)) {
-        int f8 = f8_of(f), d, flip;
+        int d, flip;
         u32 t;
-        if (t16 && (f & 1)) { t = t16; d = f < 8 ? (f - 1) >> 1 : (15 - f) >> 1; flip = f > 8; }
-        else { t = U32(o, 0x88); d = DIR5[f8]; flip = f8 > 4; }
+        if (ix && (f & 3)) {
+            int m = f < 16 ? f : 32 - f;
+            t = ix[m & 3]; d = m >> 2; flip = f > 16;
+        } else {
+            int f8 = f8_of(f);
+            t = gt; d = DIR5[f8]; flip = f8 > 4;
+        }
         if (cur != *(const u32 *)(t + 4 * kind) + 16 * d) show(o, t, kind, d);
         if (flip) o[0xDF] |= 0x10; else o[0xDF] &= ~0x10;
-        if (held) o[0xF8] = f8;            /* attacks and skills go the way he faces */
+        if (held) o[0xF8] = f8_of(want);   /* attacks and skills go the way the stick points */
     } else if (ours) {
         int f8 = o[0xF8];
-        show(o, U32(o, 0x88), kind, DIR5[f8]);
+        show(o, gt, kind, DIR5[f8]);
         if (f8 > 4) o[0xDF] |= 0x10; else o[0xDF] &= ~0x10;
     }
 }
 
-/* ---- crossbow traps in 16 facings ---- */
-#define XB_UPD    0x08082231u                   /* crossbow.c xb_update (object + 0x14 of a live crossbow) */
-#define XB_ANIM8  0x08084408u                   /* crossbow.c xb_anim: the 8-way set */
-#define XB_TILES  0x08094400u                   /* xb16.bin: frames 0-7 = facings 0, 2, .. 14; 8-15 = facings 1, 3, .. 15 */
-#define XBL       ((u8 *volatile *)0x0203F360)  /* [player * 3 + k] * 2 words: object, then timer / shots / cd */
-#define XN        ((volatile u8 *)0x0203F390)
 #define ENEMIES   (*(u8 *volatile *)0x03002420)
-#define SETANIMSET(o, s) ((fn4)0x08001AC5)((int)(o), (int)(s), 0, 0)
-#define ANGLE(dx, dy)    ((fn4)0x080329B5)(dx, dy, 0, 0)
-
-#define REC(n) 0x01, 0x00, 0x10, 0x10, (n) * 0x80 & 0xFF, (n) * 0x80 >> 8, 0x80, 0x00, \
-               0xF3, 0x0D, 0xF8, 0x06, 0x01, 0x00, 0xF8, 0xEB, 0x07, 0x00
-#define OFS(n) (0x20 + (n) * 0x12) & 0xFF, (0x20 + (n) * 0x12) >> 8
-__attribute__((aligned(4))) const u8 xb16_frames[] = {            /* crossbow.c's header and records, 16 frames */
-    0x20, 0x10, 0x00, 0x00, 0x00, 0x00, 0x10, 0x00, 0x00, 0x01, 0x00, 0x01,
-    OFS(0), OFS(1), OFS(2), OFS(3), OFS(4), OFS(5), OFS(6), OFS(7),
-    OFS(8), OFS(9), OFS(10), OFS(11), OFS(12), OFS(13), OFS(14), OFS(15),
-    REC(0), REC(1), REC(2), REC(3), REC(4), REC(5), REC(6), REC(7),
-    REC(8), REC(9), REC(10), REC(11), REC(12), REC(13), REC(14), REC(15)
-};
-const u32 xb16_anim[4] = { XB_TILES, (u32)xb16_frames, 0, 1 };
-
-static int frame_of(int f) { return (f & 1) ? 8 + (f >> 1) : f >> 1; }
-static int facing_of(int fr) { return fr < 8 ? fr << 1 : ((fr - 8) << 1) | 1; }
-
-/* the foe crossbow.c's nearest() would shoot: awake, not under Ring's Persuasion, within a screen */
-static u8 *xb_target(u8 *o)
-{
-    int ox = S32(o, 0xAC) >> 16, oy = S32(o, 0xB0) >> 16, bd = 0x7FFFFFFF;
-    u8 *best = 0;
-    for (u8 *e = ENEMIES; e; e = *(u8 **)e) {
-        u32 f = U32(e, 0xE8);
-        if ((f & 0x801000) != 0x1000 || !(f & 0x10040400)) continue;
-        u8 st = e[0x62];
-        if (st == 0x11 || st == 0x15 || st == 4 || (e[0x69] & 0x40)) continue;
-        int dx = (S32(e, 0xAC) >> 16) - ox, dy = (S32(e, 0xB0) >> 16) - oy;
-        if (dx < -120 || dx > 120 || dy < -80 || dy > 80) continue;
-        int d = dx * dx + dy * dy;
-        if (d < bd) { bd = d; best = e; }
-    }
-    return best;
-}
-
-static void xb_turn(u32 p)
-{
-    int n = XN[p];
-    if (n > 3) return;
-    for (int k = 0; k < n; k++) {
-        u8 *o = XBL[(p * 3 + k) * 2];
-        if ((u32)o < 0x02000000u || (u32)o >= 0x02040000u || U32(o, 0x14) != XB_UPD || o[0x62] == 4) continue;
-        int fr = o[0x23];
-        if (U32(o, 0x24) == XB_ANIM8) {          /* new crossbow: same picture from the 16-way set */
-            SETANIMSET(o, xb16_anim);
-            SETFRAME(o, fr & 7);
-            o[0x20] = 0xFF;
-        }
-        if (U32(o, 0x24) != (u32)xb16_anim) continue;
-        u8 *t = xb_target(o);
-        if (!t) continue;
-        int a = ANGLE(S32(t, 0xAC) - S32(o, 0xAC), S32(t, 0xB0) - S32(o, 0xB0)) & 31;
-        int want = ((a + 1) >> 1) & 15;   /* 32 angles -> 16 facings */
-        int cur = facing_of(o[0x23] & 15);
-        if (cur == want) continue;
-        int step = ((want - cur) & 15) < 8 ? 1 : -1;   /* the short way round, one facing a tick */
-        SETFRAME(o, frame_of((cur + step) & 15));
-        o[0x20] = 0xFF;
-    }
-}
 
 /* ---- Knife Toss stun (Jordan, 2026-11-11: "Frodo's stuns from knife throw don't show an animation") ----
    knife.c stunned with 0x08008A6C, which is a different status (state 0x12): the foe walked on and the stars it
@@ -211,17 +159,18 @@ static void stun_notes(void)
 }
 
 
-/* ---- enemies in 16 facings (v177, Jordan 2026-11-16: "Next do enemies") ----
+/* ---- enemies in 32 facings (v177 16, v209 32) ----
    Enemy species s (object + 0x61) shows anim sets from 0x08056820 + 24 s (0 walk, 1 stand) through 0x08001AC4(object,
-   set + 16 * DIR5[facing]). enemy16.bin (genenemy.py, past 16 MB at 0x09080000) holds 4 in-between entries per walk and
-   stand set; its first word points at SP[82][2] = ours for (species, walk / stand), 0 = none.
+   set + 16 * DIR5[facing]). gen32.py's data (past 16 MB) holds 12 in-between entries per walk and stand set (entry
+   3 * gap + sub, sub 0-2 = 1/4, 1/2, 3/4 of the way to the next drawn direction); the word at 0x09000080 points at
+   SP[82][2] = ours for (species, walk / stand), 0 = none.
    Each tick, for every awake enemy showing a walk or stand picture:
-   - turning: the facing it shows (0-15, kept per enemy in ESIDE) steps one sixteenth a tick toward the game's facing,
-     so it swings through the in-between pictures instead of snapping (more than 90 degrees still snaps);
+   - turning: the facing it shows (0-31, kept per enemy in ESIDE) swings toward the game's facing, 2 a tick (1 for the
+     last step), so it turns through the in-between pictures instead of snapping (more than 90 degrees still snaps);
    - chasing (FA[3] bit 0, set by the page): walking within 22.5 degrees of the hero, its velocity turns to point straight
      at him (same speed), and it faces that exact way. */
 #define ET        0x08056820u
-#define ENX       (*(const u32 *)0x09080000)
+#define ENX       (*(const u32 *)0x09000080)
 #define ESIDE     ((volatile u32 *)0x0203FB00)   /* 32 x {object, shown facing | 0x100}: free EWRAM (checked in play) */
 #define ESIDE_N   32
 #define TICKS     (*(volatile u32 *)0x030041A4)
@@ -257,10 +206,12 @@ static volatile u32 *eside(u8 *e)
     return free;
 }
 
+static const u8 GAP3[12] = { 1, 2, 3, 5, 6, 7, 9, 10, 11, 13, 14, 15 };   /* our entry -> facing 1-15 on the right side */
+
 static void enemies(u8 *hero)
 {
     u32 sp = ENX;
-    if (sp < 0x09080000u || sp >= 0x09400000u) return;
+    if (sp < 0x09000000u || sp >= 0x0A000000u) return;
     int hx = S32(hero, 0xAC) >> 16, hy = S32(hero, 0xB0) >> 16, chase = FA[3] & 1;
     for (u8 *e = ENEMIES; e; e = *(u8 **)e) {
         u32 f = U32(e, 0xE8);
@@ -272,13 +223,13 @@ static void enemies(u8 *hero)
         for (k = 0; k < 2; k++) {
             p = *(const u32 *)(ET + 24 * s + 4 * k); a = ((const u32 *)sp)[2 * s + k];
             if (!a) continue;
-            if (cur >= p && cur < p + 0x50) { int d = (cur - p) >> 4; r = flip ? (16 - 2 * d) & 15 : 2 * d; break; }
-            if (cur >= a && cur < a + 0x40) { int j = (cur - a) >> 4; r = flip ? 15 - 2 * j : 2 * j + 1; break; }
+            if (cur >= p && cur < p + 0x50) { int d = (cur - p) >> 4; r = flip ? (32 - 4 * d) & 31 : 4 * d; break; }
+            if (cur >= a && cur < a + 0xC0) { int m = GAP3[(cur - a) >> 4]; r = flip ? 32 - m : m; break; }
         }
         if (k == 2) continue;
         volatile u32 *sd = eside(e);
-        if (sd[1] & 0x100) r = sd[1] & 15;              /* what we showed last tick (the game may have snapped it) */
-        int t = e[0xF8] << 1;
+        if (sd[1] & 0x100) r = sd[1] & 31;              /* what we showed last tick (the game may have snapped it) */
+        int t = e[0xF8] << 2;
         if (chase && k == 0 && (S32(e, 0xB4) || S32(e, 0xB8))) {
             int vx = S32(e, 0xB4), vy = S32(e, 0xB8);
             int at = atan256((hx - (S32(e, 0xAC) >> 16)) * 64, -((hy - (S32(e, 0xB0) >> 16)) * 64));
@@ -287,17 +238,14 @@ static void enemies(u8 *hero)
                 int c = SIN[(dl + 64) & 255], sn = SIN[dl & 255], x = vx >> 4, y = -vy >> 4;
                 S32(e, 0xB4) = ((x * c) >> 10) + ((y * sn) >> 10);
                 S32(e, 0xB8) = -(((y * c) >> 10) - ((x * sn) >> 10));
-                t = F16[at];
+                t = F32[at];
             }
         }
-        if (r != t) {                                   /* one sixteenth a tick; a turn of more than 90 degrees snaps */
-            int d = (t - r) & 15;
-            if (d > 4 && d < 12) r = t; else r = (r + (d < 8 ? 1 : 15)) & 15;
-        }
+        r = turn_to(r, t, 8);
         sd[1] = 0x100 | r;
         u32 want; int wf;
-        if (r & 1) { want = a + 16 * (r < 8 ? (r - 1) >> 1 : (15 - r) >> 1); wf = r > 8; }
-        else { int f8 = r >> 1; want = p + 16 * DIR5[f8]; wf = f8 > 4; }
+        if (r & 3) { int m = r < 16 ? r : 32 - r; want = a + 16 * (3 * (m >> 2) + (m & 3) - 1); wf = r > 16; }
+        else { int f8 = r >> 2; want = p + 16 * DIR5[f8]; wf = f8 > 4; }
         if (want != cur) {
             int fr = e[0x23];
             SETSET(e, want);
@@ -330,7 +278,6 @@ int hero_upd(u8 *o)
     if (o[0x96] == 0) fa_queue();
     int r = UPDATE(o);
     turn(o);
-    if (o[0x96] <= 1 && *(volatile u8 *)(HERO + HERO_SZ * o[0x96] + 0x19F) == 0) xb_turn(o[0x96]);
     if (o[0x96] == 0) { stun_notes(); enemies(o); }
     return r;
 }

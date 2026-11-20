@@ -8,7 +8,7 @@ Box layout these scripts expect (/tmp/rc/b2, rebuilt per session):
   ../../smooth-v87-steady-poses.patch (`git apply -p4`), ../engine-speed-v116.patch, ../multiplayer-slice-speed.patch,
   ../../gbarecomp-cpu-speed.patch (`patch -p1 -F3`), ../../gbarecomp-obj-ext.patch, ../../gbarecomp-oam-ext.patch,
   `tools/skin/apply_skin_ppu.py src/gba/gba_ppu.cpp`, the host_window_web.cpp half of ../../gbarecomp-skin.patch,
-  ../link-speed.patch, ../link-alu-yield.patch. Native `gba_recompile` from that tree.
+  ../link-speed.patch, ../link-alu-yield.patch, ../one-game-partner.patch. Native `gba_recompile` from that tree.
 - cobios_gen: `gba_recompile --bios bios.bin --config ../cobios.toml --out cobios_gen` (bios = pc-app gba_bios_open.bin).
 - weblinkrt: emscripten runtime libs, CMAKE_CXX_FLAGS="-mtail-call -include compat.h -fwasm-exceptions",
   GBARECOMP_WEB_HOST=ON, GBARECOMP_GENERATED_BIOS_DIR=cobios_gen, GBARECOMP_NATIVE_RAM_CODE_VIEWS=ON.
