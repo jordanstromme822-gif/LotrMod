@@ -12,3 +12,17 @@ ish slight glow."
   0x080852D0) and turn16's compiled check (0x08082231 / 0x08084408) stopped matching. Crossbows have been 8-way
   since then and the v171 warm ground glow was off. v202 brings the glow back; 16-facing turning needs turn16 rebuilt
   with the new addresses and the engine regenerated.
+
+## v203 (2026-11-20): bronze ballista + Frodo bends to set it
+
+Jordan: "Add in an animation of him bending over to set the trap during the trap setting delay. Make trap look
+nicer" (reference: an ornate bronze ballista on a pedestal with splayed feet, glowing leaf engravings, white
+arrowhead).
+
+- `xbart.py` replaces `xbbig.py`'s upscale: a small 3D model drawn in 16 facings straight into palette 3 (bronze
+  5-8, gold 13, white 9, steel 10-12, outline 4). Pedestal with a gold leaf and four splayed legs stays still; the head
+  (stock with gold inlay, steel lock, recurve bow, string, bolt with a white head) turns. `xbbig.json` now has, per
+  frame, the bolt tip and the string as string end, nock, string end (the page glows both halves of the V).
+- Page patch `recomp/playroom/bolt-trap-crouch-v203.py` (after v202): Frodo's cast animation (0x08059514..54, frame
+  3 = a low bend in every direction) is held on frame 3 through the set-up time (frame timer +0x20 = set-up left - 8
+  ticks), then the rest of the cast plays as the trap arms. He stays in the cast state, so he doesn't walk off.
