@@ -460,6 +460,14 @@ the page closed. `playroom/daynight_v171.py <page> <out>`: it now only advances 
 state 1) with the page in view, a new player starts in full day, and the count is kept in localStorage (`rotk-playT`)
 so a reload carries on. Two online players each count their own play time, so their skies can drift slightly apart.
 
+**No day and night underground (v221, 2026-11-20, Jordan: "Moria doesn't need day night cycles because it's under
+ground along with any cave map").** `playroom/underground-v221.py <page> <out>`. Moria (Dwarf halls 49, 81-84) and the
+Caves group were already fixed looks. Ice Caves (48) was in Snow & ice and turned to night; it now keeps the Caves look.
+Rooms with no sky (Orc Tower 4/5, the ship's Below 15, Orthanc 53/57, Steward's Tomb 67) keep their own day look with
+no clock. Coming back from a menu or loading screen into a cave or Moria, the look now snaps instead of easing down
+from the bright menu look over a second or two (which looked like dusk falling). Tested headless on 48, 67, 82, 4
+(fixed) and 92 (still turns to night).
+
 **Items on the ground sparkle (2026-11-12, Jordan: "make items on the ground sparkle a little bit to better see
 them").** `playroom/item_sparkle.py <page> <out>`: each frame the page walks the game's entity list (ground items: update
 0x0802F131, state +0x63 == 3, x/y +0xAE/+0xB2, type +0x60; same camera maths as Gandalf's aura) and hands up to 16
