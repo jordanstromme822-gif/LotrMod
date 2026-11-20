@@ -26,3 +26,10 @@ arrowhead).
 - Page patch `recomp/playroom/bolt-trap-crouch-v203.py` (after v202): Frodo's cast animation (0x08059514..54, frame
   3 = a low bend in every direction) is held on frame 3 through the set-up time (frame timer +0x20 = set-up left - 8
   ticks), then the rest of the cast plays as the trap arms. He stays in the cast state, so he doesn't walk off.
+
+## v208: 32 facings (Jordan, 2026-11-20: "Give the trap turn 32 steps of animation")
+`FACINGS=32 python3 xbart.py` writes xb32.bin (32 x 512 bytes, ROM 0x95000-0x99000) and xb32.json. Frame order: the 8
+main ways (facings 0, 4, .. 28), then 2, 6, .. 30, then the odd ones, so frames 0-7 are what crossbow.c fire() picks.
+recomp/playroom/bolt-trap-fx-v208.py adds a 32-record frame list at ROM 0x99000, points xb_anim at it, and turns each
+crossbow one facing a game tick toward its target from the page (frame +0x23). It also gives Elven Arrows 3-bolt bursts
+and Fire Arrows a burning tip and an explosion on hit.
