@@ -6,8 +6,11 @@
 //     at +0x8A): the page points player + 4 at a stand-in object in unused EWRAM (FAKE, 0x90 bytes per player) instead of
 //     the game's bubble, so there is no bubble picture and nothing for the game to time out. When a hit is bigger than
 //     the shield, the game lets the whole hit through; the page gives back the part the shield had left.
-//   Lightning Blade (was Sword of Power): +3 damage / level for 10 s (ROM table), every strike that lands while it is up
-//     refills the shield 5 / level (30 at most). Ready again 20 s after it is cast: while it waits, player + 0x1C (the
+//   Every sword strike that lands refills the shield 5 / Lightning Blade level (30 at most), Lightning Blade up or not
+//     (Jordan v205: "It should no longer need lightning blade to be activated for it to generate the shield").
+//   Lightning Blade (was Sword of Power): +3 damage / level for 10 s (ROM table). Casting it stuns every foe within
+//     STUN_R px of Gandalf for STUN_T ticks (the game's own stun: state 0x1A, timer + 0x50, + 0x64 |= 2, as 0x08011730 does;
+//     the page holds it while it lasts). Ready again 20 s after it is cast: while it waits, player + 0x1C (the
 //     hero's skill table) points at a copy whose Lightning Blade costs 0xFFFF, so the game refuses it and takes no Spirit.
 //   Seen: the sword glows white (FX layer), Gandalf's aura turns a softer light blue as the shield fills
 //     (window.__shieldFrac), and the green XP vial at the bottom left fills light blue with the shield.
@@ -15,7 +18,7 @@
 // its own player; the engine sends page writes with the buttons, so both pages see the same shield).
 (() => {
   const FAKE = 0x0203FC50, TAB_A = 0x0806EE38, TAB_B = 0x09600000;   // TAB_B: copy of Gandalf's table, set by buildGame
-  const CD_TICKS = 600, BASE_DRAIN = 4;
+  const CD_TICKS = 600, BASE_DRAIN = 4, STUN_R = 80, STUN_T = 120;
   const st = [{}, {}];
   let lastView = null;
   const ctx = () => {
@@ -45,6 +48,16 @@
     while (ewPtr(p) && n++ < 400) { out.push(p); p = c.r32(p + 4); }
     return out;
   };
+  const stunnable = (c, t) => {   // tools/turn16/turn16.c stunnable(): a live foe that can be stunned now
+    const e8 = c.r32(t + 0xE8), sx = c.r8(t + 0x62);
+    if ((e8 & 0x801040) !== 0x1000 || !(e8 & 0x10040400) || c.s16(t + 0x5A) <= 0) return false;
+    return !(sx === 0x11 || sx === 0x15 || sx === 4 || sx === 0x1B || sx === 0x13 || c.r8(t + 0x63) === 0x2F);
+  };
+  const stunHold = (c, t, left) => {
+    if (c.r8(t + 0x62) !== 0x1A) { c.wN(t + 0x62, 0x1A, 1); c.wN(t + 0x64, c.r8(t + 0x64) | 2, 1); }
+    if (c.r32(t + 0x50) < left) c.wN(t + 0x50, left, 4);
+  };
+  let stunFx = [];
   const tick = () => {
     const c = ctx(); if (!c) return;
     if (c.online && !window.__mp.sync) return;   // an online engine that can't send page writes: leave the game alone
@@ -63,8 +76,27 @@
       const dt = s.t === undefined ? 0 : Math.max(0, Math.min(30, (now - s.t) | 0)); s.t = now;
       // ---- Lightning Blade: up while the hero object's +0x99 bit 0 is set (the cast handler 0x08044C91 sets it) ----
       const lbOn = (c.r8(hero + 0x99) & 1) !== 0 && lbL > 0;
-      if (lbOn && !s.lbOn) s.cdEnd = (now + CD_TICKS) | 0;
+      const hx = c.s16(hero + 0xAE), hy = c.s16(hero + 0xB2);
+      const stun = s.stun || (s.stun = new Map());
+      if (lbOn && !s.lbOn) {   // just cast: stun every foe near Gandalf
+        s.cdEnd = (now + CD_TICKS) | 0;
+        for (const o of objs(c, hero)) {
+          if (o === hero || !stunnable(c, o)) continue;
+          const dx = c.s16(o + 0xAE) - hx, dy = c.s16(o + 0xB2) - hy;
+          if (dx * dx + dy * dy > STUN_R * STUN_R) continue;
+          stun.set(o, (now + STUN_T) | 0); stunHold(c, o, STUN_T);
+        }
+        if (p === (c.online ? c.me : 0)) window.__lbCast = { x: hx, y: hy, t: performance.now() };
+      }
       s.lbOn = lbOn;
+      const fx = [];
+      for (const [o, end] of stun) {
+        const left = (end - now) | 0;
+        if (left <= 0 || !ewPtr(o) || c.s16(o + 0x5A) <= 0 || !(c.r8(o + 0x62) === 0x1A || stunnable(c, o))) { stun.delete(o); continue; }
+        stunHold(c, o, left);
+        fx.push([c.s16(o + 0xAE), c.s16(o + 0xB2)]);
+      }
+      if (p === (c.online ? c.me : 0)) stunFx = fx;
       const tab = c.r32(P + 0x1C), cool = s.cdEnd !== undefined && ((s.cdEnd - now) | 0) > 0;
       const want = cool ? TAB_B : TAB_A;
       if ((tab === TAB_A || tab === TAB_B) && tab !== want && window.__gsTabB) c.wN(P + 0x1C, want, 4);
@@ -89,9 +121,9 @@
       const sr = Math.max(0, c.s16(P + 0xE0)), rate = Math.max(1, BASE_DRAIN * (1 - 0.1 * sr));
       s.acc = (s.acc || 0) + dt * rate / 30;
       const d = Math.floor(s.acc); s.acc -= d; S = Math.max(0, S - d);
-      // strikes: a foe next to Gandalf loses hit points while Lightning Blade is up and no other hero stands closer to it;
-      // one refill per 10 game ticks (a swing), so a sweep through several foes counts once
-      const hx = c.s16(hero + 0xAE), hy = c.s16(hero + 0xB2);
+      // strikes: a foe next to Gandalf loses hit points and no other hero stands closer to it; one refill per 10 game
+      // ticks (a swing), so a sweep through several foes counts once. The refill follows Lightning Blade's level.
+      const gain = Math.min(30, 5 * Math.min(6, lbL + bonus));
       const others = [0, 1].filter((q) => q !== p).map((q) => c.r32(0x03003C00 + 0x1AC * q)).filter((h2) => ewPtr(h2) && h2 !== hero)
         .map((h2) => [c.s16(h2 + 0xAE), c.s16(h2 + 0xB2)]);
       const hpm = s.hp || (s.hp = new Map()), seen = new Map();
@@ -99,13 +131,13 @@
         if (o === hero || c.r32(o + 0x14) === 0x0802f131) continue;
         const ohp = c.s16(o + 0x5A); seen.set(o, ohp);
         const was = hpm.get(o);
-        if (was === undefined || ohp >= was || was <= 0 || !lbOn || ((now - (s.lastStrike || -99)) | 0) < 10) continue;
+        if (was === undefined || ohp >= was || was <= 0 || lbL <= 0 || ((now - (s.lastStrike || -99)) | 0) < 10) continue;
         const ex = c.s16(o + 0xAE), ey = c.s16(o + 0xB2), dx = ex - hx, dy = ey - hy;
         if (Math.abs(dx) > 48 || Math.abs(dy) > 40) continue;
         const dm = dx * dx + dy * dy;
         if (others.some(([x2, y2]) => (ex - x2) ** 2 + (ey - y2) ** 2 < dm)) continue;
         s.lastStrike = now;
-        S = Math.min(max, S + Math.min(30, 5 * Math.min(6, lbL + bonus)));
+        S = Math.min(max, S + gain);
         if (p === (c.online ? c.me : 0)) window.__lbStrike = { x: ex, y: ey, t: performance.now() };
       }
       s.hp = seen;
@@ -183,6 +215,31 @@
         let px = hx + 5 * k, py = hy - 6 * k; cx.moveTo(px, py);
         for (let i = 0; i < 4; i++) { px += (Math.random() - 0.5) * 6 * k; py += 3 * k; cx.lineTo(px, py); }
         cx.stroke();
+      }
+      cx.globalCompositeOperation = "source-over";
+    }
+    // Lightning Blade cast: a white-blue ring out to the stun range; stunned foes crackle while they are held
+    const lc = window.__lbCast;
+    if (cam && lc && performance.now() - lc.t < 400) {
+      const f = (performance.now() - lc.t) / 400, ex = X(lc.x - cam[0]), ey = Y(lc.y - cam[1] - 8), r = STUN_R * f * v.k;
+      cx.globalCompositeOperation = "lighter";
+      cx.strokeStyle = `rgba(220,240,255,${0.8 * (1 - f)})`; cx.lineWidth = Math.max(1.5, 2.5 * v.k * (1 - f));
+      cx.beginPath(); cx.ellipse(ex, ey, r, r * 0.6, 0, 0, Math.PI * 2); cx.stroke();
+      cx.globalCompositeOperation = "source-over";
+    }
+    if (cam && stunFx.length) {
+      cx.globalCompositeOperation = "lighter";
+      cx.strokeStyle = "rgba(200,230,255,0.9)"; cx.lineWidth = Math.max(1, 0.5 * v.k);
+      for (const [sx, sy] of stunFx) {
+        const ex = X(sx - cam[0]), ey = Y(sy - cam[1] - 22), k = v.k;
+        const rg = cx.createRadialGradient(ex, ey, 0, ex, ey, 7 * k);
+        rg.addColorStop(0, "rgba(170,215,255,0.45)"); rg.addColorStop(1, "rgba(170,215,255,0)");
+        cx.fillStyle = rg; cx.fillRect(ex - 7 * k, ey - 7 * k, 14 * k, 14 * k);
+        if (Math.random() < 0.6) {
+          cx.beginPath(); let px = ex + (Math.random() - 0.5) * 8 * k, py = ey - 4 * k; cx.moveTo(px, py);
+          for (let i = 0; i < 3; i++) { px += (Math.random() - 0.5) * 5 * k; py += 3 * k; cx.lineTo(px, py); }
+          cx.stroke();
+        }
       }
       cx.globalCompositeOperation = "source-over";
     }
