@@ -38,11 +38,10 @@
 //     beam from his staff and motes of light streaming into it, his aura swells, and the light is taken in at the end.
 //   Wisps (was Lightstrike, v222; Jordan, 2026-11-20): no cooldown, but at most one cast every half second (WISP_GAP
 //     ticks: tables I-P at 0x09601000 + 0x100 * i are A-H with Wisps at 0xFFFF, so the game refuses it and takes no
-//     Spirit). Costs WISP_COST Spirit. The game only casts this slot with a staff in Gandalf's off hand (item category 5
-//     at player + 0x44; 0x08043720), so without one the page reads the Quick Skill press itself (L held + A / B / R new,
-//     as 0x08043350 does), makes the game's checks and takes the Spirit. With a staff the game casts it: the ROM entry
-//     now uses Gwaihir's handler like Dash, and the page sees the cast (player + 0x1A3 = 1, + 0x1A5 bit 0) and clears
-//     it before the handler runs. Either way a wisp is let loose. The wisp circles the spot where it was cast, spiralling outward: WISP_TURNS turns of
+//     Spirit). Costs WISP_COST Spirit. The game never casts this slot (v226: cost 0xFFFF in every table, so no Gwaihir
+//     even with a staff): the page reads the Quick Skill press itself (L held + A / B / R new, as 0x08043350 does),
+//     makes the game's checks and takes the Spirit. A game cast that still shows up (player + 0x1A3 = 1, + 0x1A5 bit 0)
+//     is cleared before its handler runs. The wisp circles the spot where it was cast, spiralling outward: WISP_TURNS turns of
 //     WISP_TURN ticks each, from WISP_R0 out to WISP_R1 px (about half the screen across), then it fades. It passes
 //     through foes: each foe it touches loses 5 Hit Points / Wisps level straight off (no armor), flashes with a yellow
 //     aura and gives Gandalf 1 Shield / level; the same wisp can touch the same foe again after WISP_REHIT ticks.
@@ -281,11 +280,12 @@
         c.wN(P + 0x1A5, c.r8(P + 0x1A5) & ~1, 1);
         spawnWisp();
       }
-      // Without a staff (off-hand item category 5, player + 0x44) the game refuses this slot (0x08043720), so the page
-      // reads the Quick Skill press itself as 0x08043350 does: L held (0x0300407C + 2 * player, bit 0x200) and A / B / R
+      // v226 (Jordan: "Gandalf shouldn't summon an eagle anymore"): the game never casts this slot now (Wisps costs 0xFFFF
+      // in every table; with a staff it used to, and Gwaihir's handler sometimes ran before the page saw the cast), so
+      // the page reads the Quick Skill press itself as 0x08043350 does: L held (0x0300407C + 2 * player, bit 0x200) and A / B / R
       // newly down picks slot 0 / 1 / 2 (player + 0x191). It makes the game's own checks and takes the Spirit.
       const held = c.r16(0x0300407C + 2 * p), fresh = held & ~(s.held | 0); s.held = held;
-      if (window.__gsWisp && (held & 0x200) && (fresh & 0x103) && (c.r16(P + 0x44) & 15) !== 5 && !(c.r8(P + 0x1A5) & 1)) {
+      if (window.__gsWisp && (held & 0x200) && (fresh & 0x103) && !(c.r8(P + 0x1A5) & 1)) {
         const slot = fresh & 1 ? 0 : fresh & 2 ? 1 : 2, st62 = c.r8(hero + 0x62), sp = c.s16(P + 0x17E);
         if (c.r8(P + 0x191 + slot) === 1 && (c.r8(P + 0x171) << 24 >> 24) > 0 && !(((s.wispCd || 0) - now | 0) > 0) && sp >= WISP_COST &&
             c.s16(P + 0x17C) > 0 && !WISP_NO_STATE.includes(st62) && !(s.dash)) {
