@@ -497,3 +497,27 @@ inside the engine, so both online pages stay in lockstep. `recomp/playroom/stash
 Tested headless: 1-player all 12 boxes give the sell prompt at the Moria Shrine; one-game P2 boxes 30-34 swap in and
 a stash item sold. Note: the link engine holds only the first 16 MB of the ROM, so hook code past 0x1000000 crashes
 P2/online with wasm "unreachable".
+
+## Forge / Shrine: gear for sale, joystick everywhere, Leave (2026-11-20, Play Room v203)
+
+Jordan (phone video of a Forge): "There are no items for sale, you could randomly generate items there", "the leave
+button serves no purpose and isn't accessible", "notice how I can't access certain things at the forge". The game's
+Forge only sells a Whetstone and an "Adventurer's bargain" (Shrine: Attribute Point, Skill Point, Dried Kingsfoil), and
+the joystick moved the game's own shop cursor, which only knows 8 backpack boxes and the goods (the HD shop shows 12
+boxes and Leave). `recomp/playroom/shop-v203.py` (page code in `shop-v203.js`) replaces the v181 HD shop:
+- The page keeps its own cursor over goods, gear for sale, all 12 backpack boxes and Leave; d-pad / joystick / arrow keys
+  are taken from `EJS_emulator.gameManager.simulateInput` while the shop is up (the game's own Yes / No still gets them).
+  The page walks the game's cursor after it one press at a time and re-reads it (the Forge's map has goods 8-9 only), so
+  A buys / sells through the game.
+- Forges sell 6 random pieces of gear for the hero shopping: item words rolled from the game's tables (0x08068F50,
+  base 0-13 except arrows, general prefixes below the first hero range in table +4, suffixes, no "Cursed" affixes, only
+  gear the hero can wear by the list word's hero bits, Min. Level <= hero level). Names are text(u16 - 1) of each record
+  (texts are sorted, the u16 is one past the name), stats are texts 329 + stat id (0-3 = damage "max/2-max").
+  Price = 5 x the game's sell value, which measured as 3 x Min. Level + a small amount per category.
+- Buying writes the item into the first empty backpack word (hero + 0x5C..0x78) and the gems (hero + 0x184), mirrored
+  with `__mirrorIw` (2-player / online), then presses B and Grab (R, with retries) behind the HD picture: the shop
+  only reads the backpack when it opens. The stock lasts until the level changes (level byte 0x030041F8 reads 0 for a
+  moment while the shop reopens, so it is only compared when the shop first opens).
+Tested headless (Moria Shrine; Forge = the same vendor with +0x60 set to 0): 1-player buy / sell / goods / Leave by
+joystick and by taps at phone size; P2 (two linked games) buy goes into both games and the shop reopens. The game's own
+sale in a P2 game only changes the local game (as before v203).
