@@ -417,7 +417,7 @@ def write_map(R, a, GA, GB, GC, W, H, pixels_needed, rgb, custom, n_last, items,
     return info
 
 
-def build(rom_path, out_dir, base=0x01F00000, ext=37, seed=7):
+def build(rom_path, out_dir, base=0x01F00000, ext=37, seed=7, grids_only=False):
     global W
     R = Rom(rom_path)
     a, b = Level(R, 46), Level(R, 47)
@@ -690,6 +690,9 @@ def build(rom_path, out_dir, base=0x01F00000, ext=37, seed=7):
                for (tx, ty, kind) in FORT_VENDORS]
 
     start = ((FORT_START[0] - FX0) * 8, (FORT_START[1] - FY0) * 8)
+    if grids_only:
+        return dict(R=R, a=a, GA=GA, GB=GB, GC=GC, W=W, H=H, pixels=pixels_needed, rgb=rgb, custom=custom,
+                    n_last=n_last, items=torches + vendors, start=start)
     return write_map(R, a, GA, GB, GC, W, H, pixels_needed, rgb, custom, n_last, torches + vendors, start,
                      out_dir, base, dict(ext_cells=ext, torches=len(torches), vendors=len(vendors)))
 

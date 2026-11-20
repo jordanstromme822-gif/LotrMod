@@ -137,7 +137,7 @@ def outer_gate(img, y0, x0, h, w):
                 img[y0 + y, x0 + x] = c
 
 
-def build(rom_path, out_dir, base=0x1500000, seed=7):
+def build(rom_path, out_dir, base=0x1500000, seed=7, grids_only=False):
     R = Rom(rom_path)
     a, b = Level(R, 46), Level(R, 47)
     pal = R.rom[a.e[15] - 0x08000000:][:0x200]
@@ -298,6 +298,9 @@ def build(rom_path, out_dir, base=0x1500000, seed=7):
             if it[0] == 19 and torch_rec is None: torch_rec = it
     items = [torch_rec[:4] + struct.pack('<HH', tx * 8, ty * 8) + torch_rec[8:] for tx, ty in TORCHES]
     items += [bytes([17, 0, 0, 0]) + struct.pack('<HH', tx * 8, ty * 8) + bytes([kind, 0xFF, 0xFF, 0xFF]) for tx, ty, kind in VENDORS]
+    if grids_only:
+        return dict(R=R, a=a, GA=GA, GB=GB, GC=GC, W=W, H=H, pixels=pixels, rgb=rgb, custom=custom,
+                    n_last=n_last, items=items, start=(START[0] * 8, START[1] * 8))
     return write_map(R, a, GA, GB, GC, W, H, pixels, rgb, custom, n_last, items, (START[0] * 8, START[1] * 8),
                      out_dir, base, dict(map='fort', torches=len(TORCHES), vendors=len(VENDORS)))
 
