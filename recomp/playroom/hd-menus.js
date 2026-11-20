@@ -131,6 +131,7 @@
     vign.addColorStop(0, "rgba(0,0,0,0)"); vign.addColorStop(1, "rgba(0,0,0,0.55)"); x.fillStyle = vign; x.fillRect(0, 0, W, H);
   }
 
+  window.__hdPaint = paint;   // v224: the HD Stats / Skills pages paint the same backdrop
   let lastOn = 0; const QUIT_YES = 0;
   let el = null, bg = null, lastKey = "", busy = 0, shownAt = 0, skipHold = 0, lastCur = -1;
   // the level goal, caught line by line as the game draws it into its line buffer
