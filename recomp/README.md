@@ -567,3 +567,17 @@ own sound at the Forge is clean (no repeated blocks, the same beat as in the lev
   so lag after a hiccup goes in about a second instead of lingering up to 0.4 s; above 0.2 s queued the worklet skips to
   80 ms with a cross-fade (was a hard cut at 0.4 s). The play log line adds "skips N".
 One page host (GbrHost) plays the sound of 1-player, P2 and online games, so all three get this.
+
+## Gold border on better gear (2026-11-20, Play Room v213)
+
+Jordan: "items in your inventory that have a higher item level (character requirement level) or higher current stats
+than the item you have currently equipped that that item would slot into should have a gold border in the inventory
+screen and forge screen". `recomp/playroom/gold-gear.py <page> <out>` adds `gold-gear.js` (`window.__goldGear(item,
+worn, heroId)`) and calls it from the HD Backpack (backpack boxes 8-15 and the stash boxes) and the HD Forge / Shrine
+(backpack boxes and the Forge's gear for sale). A box gets a gold border, a glow and a small gold arrow when its item:
+- is gear the hero can wear (list word bits 26+hero; arrows, Orc Heads and other uniques never), and
+- beats what the hero wears in the slot it goes in (list word bits 18-25 -> hero + 0x3C + 4 * slot): a higher Min. Level
+  (the game's own sum, as in the Forge code) or more stat points (base + prefix + suffix values added up; Cheap / Cursed
+  count against it), or that slot is empty.
+The cursor's own highlight still shows on the box it is on. Page only, same Backpack / Forge code in 1-player, P2 and
+online. Tested headless: Backpack (4 of 7 boxes gold for a level 2 hero) and a Forge (Moria Shrine set to kind 0).
