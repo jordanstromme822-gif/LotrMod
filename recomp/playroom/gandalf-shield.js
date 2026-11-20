@@ -17,6 +17,12 @@
 //   Blinding Aura (v206): casting it refills the shield to full; the game's white burst picture is moved out of sight and
 //     Gandalf's own aura (shader) swells to twice its size and brightens instead; foes from the game's 60 px out to
 //     120 px take the same hit (10 + 2 / level) from the page and are held 3 s (the game blinds the near ones 3 s).
+//     v214 (Jordan, 2026-11-20: "it should be showing a countdown ... and its new animation"): the burst is also drawn on
+//     this page's own effects layer (a white-gold flash, a ring out to the full reach and light rays), so it shows at
+//     every graphics setting, not only in the HD shader. Ready again BA_CD ticks (15 s) after a cast: tables E-H are
+//     A-D with Blinding Aura at 0xFFFF, so the game refuses it and takes no Spirit, and its button counts down.
+//     The cast is seen from the cast flags (player + 0x1A3 = 3, + 0x1A5 bit 0), because the hero's + 0x99 bit 3
+//     stays set ~9 s after a cast.
 //   Dash (was Summon Gwaihir, v206): the ROM entry casts like Lightstrike, so the handler waits for the cast animation;
 //     the page sees the cast (player + 0x1A3 = 4, + 0x1A5 bit 0), clears it before Gwaihir comes and dashes instead:
 //     hit-reaction state 6 with a set velocity moves the hero through the game's own wall checks, DASH_T ticks at
@@ -26,9 +32,10 @@
 // its own player; the engine sends page writes with the buttons, so both pages see the same shield).
 (() => {
   const FAKE = 0x0203FC50, TAB_A = 0x0806EE38, TAB_B = 0x09600000, TAB_C = 0x09600800, TAB_D = 0x09600900;   // copies, set by buildGame
-  const TABS = [TAB_A, TAB_B, TAB_C, TAB_D];
+  // index = Lightning Blade cooling | Dash cooling << 1 | Blinding Aura cooling << 2 (E-H: v214)
+  const TABS = [TAB_A, TAB_B, TAB_C, TAB_D, 0x09600A00, 0x09600B00, 0x09600C00, 0x09600D00];
   const CD_TICKS = 600, BASE_DRAIN = 4, STUN_R = 80, STUN_T = 120;
-  const DASH_CD = 120, DASH_T = 8, DASH_V = 9, BA_R0 = 60, BA_R1 = 120, BA_UPD = 0x08020C05;
+  const BA_CD = 450, DASH_CD = 120, DASH_T = 8, DASH_V = 9, BA_R0 = 60, BA_R1 = 120, BA_UPD = 0x08020C05;
   const st = [{}, {}];
   let lastView = null;
   const ctx = () => {
@@ -109,10 +116,12 @@
       if (p === (c.online ? c.me : 0)) stunFx = fx;
       const tab = c.r32(P + 0x1C), cool = s.cdEnd !== undefined && ((s.cdEnd - now) | 0) > 0;
       const dcool = s.dashCd !== undefined && ((s.dashCd - now) | 0) > 0;
-      const want = window.__gsDash ? TABS[(cool ? 1 : 0) | (dcool ? 2 : 0)] : cool ? TAB_B : TAB_A;
+      const bcool = s.baCd !== undefined && ((s.baCd - now) | 0) > 0;
+      const want = window.__gsDash ? TABS[(cool ? 1 : 0) | (dcool ? 2 : 0) | (bcool && window.__gsBaCd ? 4 : 0)] : cool ? TAB_B : TAB_A;
       if (TABS.includes(tab) && tab !== want && window.__gsTabB) c.wN(P + 0x1C, want, 4);
       s.cdLeft = cool ? ((s.cdEnd - now) | 0) / 30 : 0;
       s.dashLeft = dcool ? ((s.dashCd - now) | 0) / 30 : 0;
+      s.baLeft = bcool && window.__gsBaCd ? ((s.baCd - now) | 0) / 30 : 0;
       // ---- Shield ----
       if (shL <= 0) { if (c.r32(P + 4) === F) c.wN(P + 4, 0, 4); s.hero = hero; s.max = 0; continue; }
       const max = Math.min(120, 20 * Math.min(6, shL + bonus));
@@ -206,10 +215,13 @@
           if (mine) window.__dashTrail = { t: performance.now(), x: hx, y: hy };
         }
       }
-      // Blinding Aura: the hero's + 0x99 bit 3 is set while its burst lives
+      // Blinding Aura: seen from the cast flags (skill 3 going off); the hero's + 0x99 bit 3 stays set ~9 s after it
       const ba = (c.r8(hero + 0x99) & 8) !== 0;
-      if (ba && !s.ba) {
+      const baCast = c.r8(P + 0x1A3) === 3 && (c.r8(P + 0x1A5) & 1) !== 0;
+      if ((baCast && !s.baCast) || (ba && !s.ba && !s.baCast)) {
         s.fill = true;
+        s.baCd = (now + BA_CD) | 0;
+        if (mine) window.__baCast = { x: hx, y: hy, t: performance.now(), L: Math.max(1, c.r8(P + 0x173) << 24 >> 24) };
         const L = Math.max(1, c.r8(P + 0x173) << 24 >> 24), dmg = 10 + 2 * L;
         for (const o of objs(c, hero)) {
           if (o === hero) continue;
@@ -223,7 +235,7 @@
         if (mine) window.__baT = performance.now();
       }
       if (ba) for (const o of objs(c, hero)) if (o !== hero && c.r32(o + 0x14) === BA_UPD && Math.abs(c.s16(o + 0xB2) - hy) < 1000) { c.wN(o + 0xB2, (c.s16(o + 0xB2) + 4000) & 0xffff, 2); c.wN(o + 0xD2, (c.s16(o + 0xD2) + 4000) & 0xffff, 2); }
-      s.ba = ba;
+      s.ba = ba; s.baCast = baCast;
     }
     // the aura swells to twice its size for a moment after Blinding Aura
     const bt = window.__baT ? (performance.now() - window.__baT) / 1000 : 9;
@@ -232,6 +244,7 @@
   };
   const fastLoop = () => { requestAnimationFrame(fastLoop); try { fast(); } catch (e) { (window.__wideLog || (window.__wideLog = [])).push("gs fast: " + (e && e.message || e)); } };
   requestAnimationFrame(fastLoop);
+  window.__baLeft = () => { const c = ctx(); const p = c && c.online ? c.me : 0; return (st[p] && st[p].baLeft) || 0; };
   window.__dashLeft = () => { const c = ctx(); const p = c && c.online ? c.me : 0; return (st[p] && st[p].dashLeft) || 0; };
   window.__lbLeft = () => { const c = ctx(); const p = c && c.online ? c.me : 0; return (st[p] && st[p].cdLeft) || 0; };
   window.__gsState = () => st;
@@ -322,6 +335,35 @@
           for (let i = 0; i < 3; i++) { px += (Math.random() - 0.5) * 5 * k; py += 3 * k; cx.lineTo(px, py); }
           cx.stroke();
         }
+      }
+      cx.globalCompositeOperation = "source-over";
+    }
+    // Blinding Aura (v214): a white-gold flash on Gandalf, a ring of light out to the full reach (BA_R1) and turning rays
+    const bc = window.__baCast;
+    if (cam && bc && performance.now() - bc.t < 1100) {
+      const e = (performance.now() - bc.t) / 1100, k = v.k, ex = X(bc.x - cam[0]), ey = Y(bc.y - cam[1] - 10);
+      const grow = Math.min(1, e / 0.45), ease = 1 - (1 - grow) * (1 - grow), fade = e < 0.45 ? 1 : 1 - (e - 0.45) / 0.55;
+      cx.globalCompositeOperation = "lighter";
+      // core flash
+      const fr = (26 + 30 * ease) * k, fa = e < 0.12 ? e / 0.12 : Math.max(0, 1 - (e - 0.12) / 0.6);
+      const rg = cx.createRadialGradient(ex, ey, 0, ex, ey, fr);
+      rg.addColorStop(0, `rgba(255,255,245,${0.95 * fa})`); rg.addColorStop(0.35, `rgba(255,236,170,${0.55 * fa})`); rg.addColorStop(1, "rgba(255,220,140,0)");
+      cx.fillStyle = rg; cx.fillRect(ex - fr, ey - fr, fr * 2, fr * 2);
+      // rays
+      const n = 14, rot = e * 0.9, rl = BA_R1 * ease * k;
+      for (let i = 0; i < n; i++) {
+        const a = rot + i * Math.PI * 2 / n, w = (i & 1 ? 0.05 : 0.09);
+        const lg = cx.createLinearGradient(ex, ey, ex + Math.cos(a) * rl, ey + Math.sin(a) * rl * 0.6);
+        lg.addColorStop(0, `rgba(255,248,220,${0.5 * fade})`); lg.addColorStop(1, "rgba(255,230,160,0)");
+        cx.fillStyle = lg; cx.beginPath(); cx.moveTo(ex, ey);
+        cx.lineTo(ex + Math.cos(a - w) * rl, ey + Math.sin(a - w) * rl * 0.6); cx.lineTo(ex + Math.cos(a + w) * rl, ey + Math.sin(a + w) * rl * 0.6);
+        cx.closePath(); cx.fill();
+      }
+      // ring at the reach, plus a faint inner ring at the game's own range
+      for (const [R, al, lw] of [[BA_R1, 0.85, 3], [BA_R0, 0.4, 1.5]]) {
+        const r = R * ease * k;
+        cx.strokeStyle = `rgba(255,244,205,${al * fade})`; cx.lineWidth = Math.max(1.5, lw * k * (0.4 + 0.6 * fade));
+        cx.beginPath(); cx.ellipse(ex, ey, r, r * 0.6, 0, 0, Math.PI * 2); cx.stroke();
       }
       cx.globalCompositeOperation = "source-over";
     }
