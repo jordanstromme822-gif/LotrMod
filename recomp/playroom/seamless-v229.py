@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Play Room v227 "Seamless journey" (Jordan, 2026-11-20: "Interconnect each level in a 3Dimensional way so it feels
+"""Play Room v229 "Seamless journey" (Jordan, 2026-11-20: "Interconnect each level in a 3Dimensional way so it feels
 like traveling from each characters start to finish is seamless with no black screens in between").
 
-  seamless-v227.py in.html out.html
+  seamless-v229.py in.html out.html
 
 - seamless.js goes in as its own <script id="seamlessJs"> (replaced whole if it is there already). It wraps
   GbrHost.draw: when the hero takes a door, instead of the game's fade to black, load and fade in, the camera flies
@@ -22,7 +22,7 @@ def rep(a, b, name):
     s = s.replace(a, b)
 
 rep('H.st("turbo", flag && performance.now() - ffSince < 4000 ? 1 : 0);',
-    'H.st("turbo", (flag && performance.now() - ffSince < 4000) || window.__seamTurbo ? 1 : 0);   // v227: also during a door flight',
+    'H.st("turbo", (flag && performance.now() - ffSince < 4000) || window.__seamTurbo ? 1 : 0);   // v229: also during a door flight',
     "turbo")
 
 js = open(os.path.join(HERE, "seamless.js"), encoding="utf-8").read()

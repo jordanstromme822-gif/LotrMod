@@ -1,4 +1,4 @@
-# Seamless journey checks (v227, 2026-11-20)
+# Seamless journey checks (v229, 2026-11-20)
 
 Headless real Play Room like `tools/perf/feel` (`WORK` holds `site/` with the artifact files, including `maps/t/`, and
 `orig.gba`). Both warp to a level, put the hero 40 px from one of its exits and walk through it.
