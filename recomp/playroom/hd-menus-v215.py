@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Play Room v215 (Jordan, 2026-11-20: "Modernize and update all menus"): HD title and pause menus drawn by the page.
+"""Play Room v215-v216 (Jordan, 2026-11-20: "Modernize and update all menus"): HD title and pause menus drawn by the page.
 
   hd-menus-v215.py in.html out.html
 
-Adds hd-menus.js as its own <script> at the end of the page (replaced whole if it is there already).
+Adds hd-menus.js (v216: save slot cards too) as its own <script> at the end of the page (replaced whole if it is there already).
 """
 import os, re, sys
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -16,5 +16,10 @@ if 'id="hdMenusJs"' in s:
 else:
     assert s.count("</body>") == 1
     s = s.replace("</body>", block + "</body>")
+# the Story map's level names, for the save cards (window.__lvName(level) = [region, screen])
+a = "const region = (l) => { for (const r of REG) if (l >= r[0] && l <= r[1]) return r[2]; return \"\"; };"
+if "window.__lvName = (l)" not in s:
+    assert s.count(a) == 1
+    s = s.replace(a, a + "\n        window.__lvName = (l) => [region(l), NAMES[l] || \"\"];")
 open(dst, "w", encoding="utf-8").write(s)
 print("ok", len(s))
