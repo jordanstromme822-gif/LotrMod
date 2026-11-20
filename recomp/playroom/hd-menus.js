@@ -12,7 +12,9 @@
 //            slot cursor 0x030041BC (0 1 / 2 3), sub 0x030041C0 = 0 for the list. Each card reads the slot header
 //            the game keeps at IWRAM 0x03005630 + 0x70 * slot (current page): + 0x65 hero << 4 (as 0x080311E4 reads it), + 0x5C level - 1,
 //            + 0x68 level screen, named like the Story map (window.__lvName). Page 2 flips stay the page's Page button.
-//   Other screens (Options, save slots, hero pick, questions inside a menu) are the
+//   state 6  Options: Music / SFX Volume, Auto Healing, Fast Discard, Difficulty, Credits. Values at IWRAM 0x03002080 + cursor
+//            (the cursor skips 2), changed with Left / Right like a player would.
+//   Other screens (hero pick, Artifacts, questions inside a menu) are the
 //   game's own for now: the overlay only shows while the game's menu sub-state is the plain list (MENU_SUB).
 // Tapping a bar moves the game's cursor there with Up / Down presses and then presses A, as a player would, so it
 // works the same in 1-player, P2 and online games (presses travel with the buttons).
@@ -28,13 +30,22 @@
     disk: '<path d="M4 4h13l3 3v13H4z"/><path d="M8 4v5h8V4M7 20v-6h10v6"/>',
     gem: '<path d="M12 2.5l5 9.5-5 9.5-5-9.5z"/><path d="M7 12h10M12 2.5v19"/>',
     exit: '<path d="M14 4H6v16h8"/><path d="M11 12h10M17 8l4 4-4 4"/>',
+    music: '<path d="M9 18V5l11-2v13"/><circle cx="6.5" cy="18" r="2.5"/><circle cx="17.5" cy="16" r="2.5"/>',
+    sound: '<path d="M4 9h4l5-4v14l-5-4H4z"/><path d="M16.5 8.5a5 5 0 0 1 0 7M19 6a8.5 8.5 0 0 1 0 12"/>',
+    heart: '<path d="M12 20s-7.5-4.6-7.5-10.2A4.3 4.3 0 0 1 12 7.2a4.3 4.3 0 0 1 7.5 2.6C19.5 15.4 12 20 12 20z"/><path d="M12 10.5v5M9.5 13h5"/>',
+    bolt: '<path d="M13 2.5L5 13.5h6l-1 8 8-11h-6z"/>',
+    shield: '<path d="M12 2.5l8 3v6c0 5-3.5 8.5-8 10-4.5-1.5-8-5-8-10v-6z"/><path d="M12 6v12M8 10h8"/>',
   };
   const MENUS = {
     5: { head: "", items: [["New Game", "swords"], ["Load Game", "folder"], ["Multiplayer", "group"], ["Options", "gear"], ["GCN Link", "cube"], ["Bonus Maps", "scroll"]] },
     9: { head: "", items: [] },
+    // Options: the cursor skips 2, each setting's value is at IWRAM 0x03002080 + its cursor (volumes 0-10, 0 = Off;
+    // Auto Healing and Fast Discard 0 Off / 1 On; Difficulty 0 Normal, 1 Hard, 2 Grueling). Left / Right change them.
+    6: { head: "Options", items: [["Music Volume", "music", 0, "vol"], ["SFX Volume", "sound", 1, "vol"], ["Auto Healing", "heart", 3, "on"], ["Fast Discard", "bolt", 4, "on"], ["Difficulty", "shield", 5, "diff"], ["Credits", "scroll", 6]] },
     16: { head: "Game Paused", items: [["Save Game", "disk"], ["Options", "gear"], ["Artifacts", "gem"], ["Quit Game", "exit"]], goal: true },
   };
-  const MENU_SUB = { 5: [0, 1, 2], 16: [0], 9: [0] };
+  const MENU_SUB = { 5: [0, 1, 2], 16: [0], 9: [0], 6: [0] };
+  const OPT = 0x2080, DIFF = ["Normal", "Hard", "Grueling"];
   const HERO = [["Frodo", "#3d5f9a"], ["Legolas", "#3f6a2a"], ["Aragorn", "#5a3a20"], ["Gandalf", "#4a4844"], ["\u00c9owyn", "#7a2a2a"], ["Gimli", "#9a2a1e"], ["Sam", "#5a4a22"], ["Sm\u00e9agol", "#4d5a3a"]];
   const TREE = '<svg class="tr" viewBox="0 0 120 130" aria-hidden="true"><g fill="currentColor"><path d="M60 4l1.6 4.2 4.4.3-3.4 2.8 1.1 4.3L60 13.2l-3.7 2.4 1.1-4.3-3.4-2.8 4.4-.3z"/><circle cx="38" cy="16" r="1.8"/><circle cx="82" cy="16" r="1.8"/><circle cx="24" cy="28" r="1.5"/><circle cx="96" cy="28" r="1.5"/></g><g fill="none" stroke="currentColor" stroke-linecap="round"><path stroke-width="5" d="M60 124V52"/><path stroke-width="3" d="M60 84C48 76 40 66 36 52M60 84c12-8 20-18 24-32M60 70C52 62 48 50 48 38M60 70c8-8 12-20 12-32M60 60V30"/><path stroke-width="2" d="M36 52c-8-4-14-10-16-18M36 52c-4-8-4-14-2-20M84 52c8-4 14-10 16-18M84 52c4-8 4-14 2-20M48 38c-6-4-8-10-8-16M48 38c0-8 2-12 6-16M72 38c6-4 8-10 8-16M72 38c0-8-2-12-6-16M60 30c-3-4-4-6-4-10M60 30c3-4 4-6 4-10M60 96c-10 0-22-2-30-8M60 96c10 0 22-2 30-8"/><path stroke-width="2.4" d="M60 120c-6 4-14 6-24 6M60 120c6 4 14 6 24 6M60 116c-2 4-6 8-12 10M60 116c2 4 6 8 12 10"/></g></svg>';
   const esc = (s) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
@@ -175,6 +186,16 @@
       '#hdMenu .goal{width:100%;max-width:calc(var(--fs)*22);margin-top:calc(var(--fs)*0.25);padding:calc(var(--fs)*0.55) calc(var(--fs)*0.9);box-sizing:border-box;color:#2b1d10;font:500 calc(var(--fs)*0.9)/1.3 "Iowan Old Style","Palatino Linotype",Palatino,Georgia,serif;text-align:left;' +
         'background:radial-gradient(ellipse at 30% 40%,#fbf1d4,#ecd9a8 60%,#d2b57a);border:2px solid #b8893a;box-shadow:0 0 0 1px #4a3415,inset 0 0 calc(var(--fs)*1.4) rgba(120,80,30,0.45),0 4px 12px rgba(0,0,0,0.6);border-radius:3px}' +
       '#hdMenu .goal[hidden]{display:none}' +
+      '#hdMenu .bar.opt{max-width:calc(var(--fs)*24);grid-template-columns:calc(var(--fs)*2.2) 1fr auto;justify-items:start;padding-right:calc(var(--fs)*1.2);box-sizing:border-box}' +
+      '#hdMenu .bar.opt svg{justify-self:center}' +
+      '#hdMenu .val{display:flex;align-items:center;gap:calc(var(--fs)*0.35);color:#f3d27a;font-size:calc(var(--fs)*0.9)}' +
+      '#hdMenu .val em{font-style:normal;min-width:calc(var(--fs)*3.6);text-align:center;font-weight:700;text-shadow:0 1px 2px #000}' +
+      '#hdMenu .val u{text-decoration:none;font-size:calc(var(--fs)*1.3);line-height:.8;padding:0 calc(var(--fs)*0.25);color:#c99a46}' +
+      '#hdMenu .bar.sel .val u{color:#ffe08a}' +
+      '#hdMenu .pips{display:flex;gap:calc(var(--fs)*0.14)}' +
+      '#hdMenu .pips i{width:calc(var(--fs)*0.42);height:calc(var(--fs)*0.85);border:1px solid #8a6a30;border-radius:1px;background:#1a1612;transform:skewX(-12deg)}' +
+      '#hdMenu .pips i.on{background:linear-gradient(#ffeaa0,#d59a34);border-color:#ffe08a;box-shadow:0 0 calc(var(--fs)*0.3) rgba(255,190,80,0.6)}' +
+      '#hdMenu .val em.n{min-width:calc(var(--fs)*1.8)}' +
       '#hdMenu .book{position:relative;width:100%;flex:1 1 auto;min-height:0;display:grid;grid-template-columns:1fr 1fr;grid-template-rows:1fr 1fr;gap:calc(var(--fs)*0.55) calc(var(--fs)*1.1);padding:calc(var(--fs)*0.7) calc(var(--fs)*0.8);box-sizing:border-box;' +
         'background:linear-gradient(90deg,#4a3420,#6b4c2c 48%,#2a1d10 50%,#6b4c2c 52%,#4a3420);border:2px solid #b8893a;border-radius:6px;box-shadow:0 0 0 1px #2a1d10,0 6px 18px rgba(0,0,0,0.7),inset 0 0 calc(var(--fs)*2) rgba(0,0,0,0.6)}' +
       '#hdMenu .card{position:relative;min-height:0;min-width:0;overflow:hidden;gap:calc(var(--ch)*0.04);display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;cursor:pointer;padding:calc(var(--fs)*0.3);box-sizing:border-box;color:#2b1d10;' +
@@ -190,6 +211,7 @@
       '#hdMenu .act i{display:grid;place-items:center;width:calc(var(--fs)*1.25);height:calc(var(--fs)*1.25);border-radius:50%;background:radial-gradient(#fff,#c9c3b6);color:#222;font:700 calc(var(--fs)*0.7)/1 var(--ui,system-ui,sans-serif);font-style:normal}' +
       '#hdMenu .mid.slots{inset:calc(var(--top,0px) + var(--fs)*0.2) calc(max(5%,var(--fs)*2.2) + var(--fs)*3) calc(var(--fs)*0.4);justify-content:flex-start}' +
       '#hdMenu.tall .mid.slots{inset:calc(var(--top,0px) + var(--fs)*0.2) calc(max(5%,var(--fs)*2.2) + var(--fs)*0.4) calc(var(--fs)*0.4)}#hdMenu.tall.sl .ban{display:none}' +
+      '#hdMenu.tall.sl .mid{left:calc(var(--fs)*1.1);right:calc(var(--fs)*1.1)}' +
       '#hdMenu .mid.slots .hd{font-size:min(calc(var(--fs)*1.5),calc(var(--mw)*0.11))}' +
             '</style><canvas class="bg"></canvas><div class="ban l">' + TREE + '</div><div class="ban r">' + TREE + '</div><div class="mid"></div>';
     // inside the game stage, under its own buttons (P2, Levels, Page 1 of 2 stay on top, z 28) and the touch pad (z 25)
@@ -197,17 +219,32 @@
     bg = el.querySelector("canvas.bg");
     el.addEventListener("pointerdown", (e) => { e.preventDefault(); e.stopPropagation(); });
     el.addEventListener("click", async (e) => {
+      if (e.target.closest(".back")) { if (!busy) { busy = 1; try { await tap(0); } finally { busy = 0; } } return; }
       const cd = e.target.closest(".card"), ac = e.target.closest(".act");
       if ((cd || ac) && !busy) { busy = 1; try { await slotTap(cd ? +cd.dataset.i : -1); } finally { busy = 0; } return; }
       const b = e.target.closest(".bar"); if (!b || busy) return;
       const v = view(); if (!v) return;
-      const want = +b.dataset.i, st0 = v.H[v.iw + ST]; busy = 1;
+      const want = +b.dataset.i, st0 = v.H[v.iw + ST], m = MENUS[st0]; if (!m) return;
+      const order = m.items.map((it, i) => it[2] === undefined ? i : it[2]), kind = (m.items[order.indexOf(want)] || [])[3];
+      const pip = e.target.closest("[data-v]"), arrow = e.target.closest("[data-d]");
+      busy = 1;
       try {
+        let there = false;
         for (let n = 0; n < 12; n++) {
           const now = view(); if (!now || now.H[now.iw + ST] !== st0) break;
           const cur = now.H[now.iw + CUR];
-          if (cur === want) { await tap(8); break; }
-          await tap(cur < want ? 5 : 4);
+          if (cur === want) { there = true; break; }
+          await tap(order.indexOf(cur) < order.indexOf(want) ? 5 : 4);
+        }
+        if (!there) return;
+        if (!kind) { await tap(8); return; }
+        // a setting: a volume pip walks the value there, an arrow steps it, the rest of the bar steps it forward
+        const goal = pip ? +pip.dataset.v : null, dir = arrow ? +arrow.dataset.d : 1;
+        for (let n = 0; n < (goal === null ? 1 : 12); n++) {
+          const now = view(); if (!now || now.H[now.iw + ST] !== st0 || now.H[now.iw + CUR] !== want) break;
+          const val = now.H[now.iw + OPT + want];
+          if (goal !== null && val === goal) break;
+          await tap((goal === null ? dir > 0 : goal > val) ? 7 : 6);
         }
       } finally { busy = 0; }
     });
@@ -236,6 +273,13 @@
     }
     return '<div class="orn"></div><div class="hd">' + (saving ? "Save Game" : "Load Game") + '</div><div class="book">' + cards + '</div><div class="act"><i>A</i>' + (saving ? "Save" : "Load") + "</div>";
   };
+  // a setting's value on the right of its bar: ‹ value ›, volumes as ten pips
+  const optHtml = (kind, v) => {
+    let mid;
+    if (kind === "vol") { mid = '<span class="pips">'; for (let k = 1; k <= 10; k++) mid += '<i data-v="' + k + '"' + (k <= v ? ' class="on"' : "") + "></i>"; mid += '</span><em class="n">' + (v ? v : "Off") + "</em>"; }
+    else mid = "<em>" + (kind === "on" ? (v ? "On" : "Off") : DIFF[v] || "?") + "</em>";
+    return '<span class="val"><u data-d="-1">\u2039</u>' + mid + '<u data-d="1">\u203a</u></span>';
+  };
   const tick = () => {
     const hide = () => { if (el && !el.hidden) { el.hidden = true; lastKey = ""; } window.__hdMenuOn = false; };
     try {
@@ -249,9 +293,10 @@
       const goal = m.goal ? goalText() : "";
       const saving = st === 9 && (H[iw + 0x41B4] === 1 || H[iw + 0x41B4] === 3), slotKey = st === 9 ? Array.from(H.subarray(iw + 0x5630, iw + 0x5630 + 0x1C0)).join(",") + "|" + H[iw + 0x41BC] + "|" + saving : "";
       // the stage's own buttons (P2 / Levels on the pause menu, Page 1 of 2 on the save slots) keep a strip at the top
-      const top = (st === 16 || st === 9) ? 48 : 0;
-      const fs = Math.max(9, Math.min((r.height - top) / (m.goal ? 17.5 : 14), r.width / 22));
-      const key = [st, cur, goal + slotKey + top, r.left, r.top, r.width, r.height].join("|");
+      const top = (st === 16 || st === 9) ? 48 : 0, tall = r.height > r.width * 0.9;
+      const fs = Math.max(9, Math.min((r.height - top) / (m.goal ? 17.5 : st === 6 ? 20.5 : 14), r.width / (st !== 6 ? 22 : tall ? 21 : 28)));
+      const optKey = st === 6 ? Array.from(H.subarray(iw + OPT, iw + OPT + 7)).join(",") : "";
+      const key = [st, cur, goal + slotKey + optKey + top, r.left, r.top, r.width, r.height].join("|");
       window.__hdMenuOn = true;
       if (key === lastKey && !el.hidden) return;
       const sizeChanged = !lastKey || lastKey.split("|").slice(3).join() !== key.split("|").slice(3).join();
@@ -265,7 +310,7 @@
       }
       const mid = el.querySelector(".mid");
       mid.classList.toggle("slots", st === 9);
-      el.classList.toggle("sl", st === 9); el.classList.toggle("tall", r.height > r.width * 0.9);   // tall: phone held upright, the cards take the banners' room
+      el.classList.toggle("sl", st === 9 || st === 6); el.classList.toggle("tall", tall);   // tall: phone held upright, the cards take the banners' room
       if (st === 9) {
         mid.innerHTML = slotHtml(H, iw, H[iw + 0x41BC] & 3, saving);
         const c0 = mid.querySelector(".card"), cr = c0 && c0.getBoundingClientRect();   // card text follows the card's size
@@ -278,8 +323,9 @@
         }
       }
       else mid.innerHTML = (m.head ? '<div class="orn"></div><div class="hd">' + esc(m.head) + '</div><div class="orn"></div>' : '<div class="orn"></div>') +
-        m.items.map(([t, ic], i) => '<div class="bar' + (i === cur ? " sel" : "") + '" data-i="' + i + '"><svg viewBox="0 0 24 24">' + ICON[ic] + "</svg><b>" + esc(t) + "</b></div>").join("") +
-        (m.head ? "" : '<div class="orn"></div>') +
+        m.items.map(([t, ic, c, kind], i) => { c = c === undefined ? i : c;
+          return '<div class="bar' + (kind || st === 6 ? " opt" : "") + (c === cur ? " sel" : "") + '" data-i="' + c + '"><svg viewBox="0 0 24 24">' + ICON[ic] + "</svg><b>" + esc(t) + "</b>" + (kind ? optHtml(kind, H[iw + OPT + c]) : "<span></span>") + "</div>"; }).join("") +
+        (m.head ? "" : '<div class="orn"></div>') + (st === 6 ? '<div class="act back"><i>B</i>Back</div>' : "") +
         (m.goal && goal ? '<div class="goal">' + esc(goal) + "</div>" : "");
       if (el.hidden) { el.hidden = false; shownAt = performance.now(); }
     } catch (e) { hide(); (window.__wideLog || (window.__wideLog = [])).push("hdMenu: " + (e && e.message || e)); }
