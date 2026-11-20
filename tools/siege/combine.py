@@ -1,5 +1,5 @@
-"""Siege map, step 3 (Jordan 2026-11-20): the fort from the drawing (fort.py) on the left and Helm's Deep
-(build.py: Hornburg + Valley, cropped) as the bottom-right part, joined by a dirt road. The breach in the
+"""Siege map, step 3 (Jordan 2026-11-20): Helm's Deep (build.py: Hornburg + Valley, cropped) on the left
+and the fort from the drawing (fort.py) on the right (Jordan: "it goes on the right"), joined by a dirt road. The breach in the
 Deeping Wall gets a wooden gate (closed; breaking it later puts the rubble back: the rubble tiles are
 the map's own, the gate is drawn over them).
 
@@ -14,13 +14,14 @@ import fort as fort_mod  # noqa: E402
 from build import BLANK, render, quantize_tile, write_map  # noqa: E402
 
 DOWN = 40                         # fort map is made 40 rows taller (more land north of it)
-HDX = 160                         # Helm's Deep crop starts at this column
+HDX = 0                           # Helm's Deep crop on the left (Jordan: the fort goes on the right)
+FX = 160                          # fort starts at this column
 # dirt road (tile coordinates of the joined map): fort Outer Gate -> north -> east -> Helm's Deep north gate
 ROAD_W = 4
-ROAD = [((78, 60), (78, 130)), ((78, 60), (215, 60)), ((214, 60), (214, 84))]
+ROAD = [((238, 60), (238, 130)), ((54, 60), (238, 60)), ((54, 60), (54, 84))]
 # breach gate: a timber gate standing in the rubble (joined-map tiles)
-BGATE = (265, 118, 283, 137)      # x0, y0, x1, y1
-BGATE_BLOCK = (260, 124, 290, 133)  # rows/cols made solid while the gate stands
+BGATE = (105, 118, 123, 137)      # x0, y0, x1, y1
+BGATE_BLOCK = (100, 124, 130, 133)  # rows/cols made solid while the gate stands
 
 WOOD = [(112, 88, 48), (88, 72, 40), (136, 120, 40), (80, 72, 40), (64, 48, 40), (40, 32, 24)]
 
@@ -108,7 +109,7 @@ def build(rom_path, out_dir, base=0x1500000):
     GA = [[None] * W for _ in range(H)]; GB = [[None] * W for _ in range(H)]; GC = [[1] * W for _ in range(H)]
     for y in range(H):
         for x in range(F['W']):
-            t = F['GA'][y][x]; GA[y][x] = (remap.get(t[0], t[0]), t[1]); GB[y][x] = F['GB'][y][x]; GC[y][x] = F['GC'][y][x]
+            t = F['GA'][y][x]; GA[y][FX + x] = (remap.get(t[0], t[0]), t[1]); GB[y][FX + x] = F['GB'][y][x]; GC[y][FX + x] = F['GC'][y][x]
         for x in range(D['W']):
             GA[y][HDX + x] = D['GA'][y][x]; GB[y][HDX + x] = D['GB'][y][x]; GC[y][HDX + x] = D['GC'][y][x]
 
@@ -140,11 +141,14 @@ def build(rom_path, out_dir, base=0x1500000):
     for x in range(W): GC[0][x] = GC[H - 1][x] = 1
 
     # --- objects: both maps' records, Helm's Deep ones moved right ---------------------------------
-    items = list(F['items'])
+    items = []
+    for it in F['items']:
+        x, y = struct.unpack('<HH', it[4:8])
+        items.append(it[:4] + struct.pack('<HH', x + FX * 8, y) + it[8:])
     for it in D['items']:
         x, y = struct.unpack('<HH', it[4:8])
         items.append(it[:4] + struct.pack('<HH', x + HDX * 8, y) + it[8:])
-    return write_map(R, a, GA, GB, GC, W, H, pixels, rgb, custom, D['n_last'], items, F['start'], out_dir, base,
+    return write_map(R, a, GA, GB, GC, W, H, pixels, rgb, custom, D['n_last'], items, (F['start'][0] + FX * 8, F['start'][1]), out_dir, base,
                      dict(map='fort + helms deep', drawn=len(custom)))
 
 
