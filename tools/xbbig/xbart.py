@@ -10,6 +10,9 @@ with a gold inlay, recurve bow, steel lock, string and a bolt with a white head)
 buffer, then each pixel takes the colour most of its samples have; outlined in colour 4.
 Writes xbbig.bin (16 frames x 512 bytes, frame order: facings 0, 2, .. 14 then 1, 3, .. 15) and xbbig.json (bolt tip
 and the two string ends per frame, in sprite pixels) for the page's glow. PREVIEW=file.png draws them in order.
+FACINGS=32 (v206, Jordan 2026-11-20: "Give the trap turn 32 steps of animation") draws 32 facings, 11.25 degrees apart,
+into xb32.bin (32 x 512 bytes) + xb32.json; frame order: the 8 main ways (facings 0, 4, .. 28), then 2, 6, .. 30, then
+the odd ones, so frames 0-7 are still the 8 ways the game's own code picks.
 Our own art (no game pixels), so it lives in the repo."""
 import json, math, os
 D = os.path.dirname(os.path.abspath(__file__))
@@ -131,19 +134,23 @@ def pack(img):
             for c in range(4): out.append(img[ty + r][tx + 2 * c] | img[ty + r][tx + 2 * c + 1] << 4)
     return bytes(out)
 
-order = list(range(0, 16, 2)) + list(range(1, 16, 2))   # frame k shows facing order[k]
+N = int(os.environ.get("FACINGS", "16")); assert N in (16, 32)
+st8 = N // 8
+order = [f for lv in (st8, st8 // 2, 1) if lv for f in range(N) if f % lv == 0 and (lv == st8 or f % (2 * lv))]
+order = list(dict.fromkeys(order)); assert len(order) == N   # frame k shows facing order[k]
 pics, tips, strings = {}, {}, {}
-for f in range(16):
-    cv, tp, st = draw(math.radians(22.5 * f))
+for f in range(N):
+    cv, tp, st = draw(math.radians(360 / N * f))
     pics[f] = down(cv); tips[f] = [round(tp[0], 2), round(tp[1], 2)]; strings[f] = [round(v, 2) for v in st]
 data = b"".join(pack(pics[f]) for f in order)
-assert len(data) == 8192
-open(os.path.join(D, "xbbig.bin"), "wb").write(data)
-json.dump({"tip": [tips[f] for f in order], "bow": [strings[f] for f in order]}, open(os.path.join(D, "xbbig.json"), "w"))
+assert len(data) == 512 * N
+OUT = "xbbig" if N == 16 else "xb32"
+open(os.path.join(D, OUT + ".bin"), "wb").write(data)
+json.dump({"tip": [tips[f] for f in order], "bow": [strings[f] for f in order]}, open(os.path.join(D, OUT + ".json"), "w"))
 if os.environ.get("PREVIEW"):
     from PIL import Image
-    im = Image.new("RGB", (16 * 34, 34), (70, 80, 90))
-    for n in range(16):
+    im = Image.new("RGB", (N * 34, 34), (70, 80, 90))
+    for n in range(N):
         for y in range(32):
             for x in range(32):
                 c = pics[n][y][x]
