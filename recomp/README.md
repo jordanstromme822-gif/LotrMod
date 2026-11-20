@@ -535,3 +535,17 @@ rest: Left gives a point back to the pool (P + 0x19D) and updates HP/SP and deri
 writes the pending values back into the base (0x08027CDC). Afterwards the page copies the result to the partner game.
 Tested headless on the live page: 1-player (3 placed Strength points taken back and put into Accuracy), P2 (Gimli
 level 51, both games agree after closing). Online uses the same page-write path (not run end to end).
+
+## Sound in step with the game, no loop-like stutter (2026-11-20, Play Room v207)
+
+Jordan (iPhone): "The audio isn't matching up with the game especially at the forge it's almost like it has a loop".
+Headless recordings of the engine's sound blocks (Moria Shrine turned into a Forge, 1x and CPU slowed 3x): the game's
+own sound at the Forge is clean (no repeated blocks, the same beat as in the level), so the page's playback was at fault.
+`recomp/playroom/audio-sync-v207.py` (page only, on top of the v184 sound stream):
+- While the HD Forge / Shrine / Backpack page (`__hdShopOn` / `__hdBpOn`) covers the picture, `GbrHost.draw` no longer
+  draws the HD picture under it. At 3x CPU slow-down the game made ~72% of real-time sound at the Forge and the queue ran
+  dry ~36 times in 8 s (fade out, 60 ms wait, fade in = the "loop"); without the hidden picture ~90-98% and far fewer gaps.
+- Playback speed follows the queue both ways (-1% .. +3%, aiming at 70 ms queued) instead of +1% above 0.14 s only,
+  so lag after a hiccup goes in about a second instead of lingering up to 0.4 s; above 0.2 s queued the worklet skips to
+  80 ms with a cross-fade (was a hard cut at 0.4 s). The play log line adds "skips N".
+One page host (GbrHost) plays the sound of 1-player, P2 and online games, so all three get this.
