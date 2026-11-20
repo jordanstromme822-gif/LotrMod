@@ -36,13 +36,27 @@
 //     the hero; at the end it is 0, so the game itself goes back to standing (state 1, stand anim). Gandalf holds the
 //     staff-raised frame (DASH_F) of his cast animation, and the effects layer draws a light ahead of him with a
 //     beam from his staff and motes of light streaming into it, his aura swells, and the light is taken in at the end.
+//   Wisps (was Lightstrike, v222; Jordan, 2026-11-20): no cooldown, but at most one cast every half second (WISP_GAP
+//     ticks: tables I-P at 0x09601000 + 0x100 * i are A-H with Wisps at 0xFFFF, so the game refuses it and takes no
+//     Spirit). Costs WISP_COST Spirit. The game only casts this slot with a staff in Gandalf's off hand (item category 5
+//     at player + 0x44; 0x08043720), so without one the page reads the Quick Skill press itself (L held + A / B / R new,
+//     as 0x08043350 does), makes the game's checks and takes the Spirit. With a staff the game casts it: the ROM entry
+//     now uses Gwaihir's handler like Dash, and the page sees the cast (player + 0x1A3 = 1, + 0x1A5 bit 0) and clears
+//     it before the handler runs. Either way a wisp is let loose. The wisp circles the spot where it was cast, spiralling outward: WISP_TURNS turns of
+//     WISP_TURN ticks each, from WISP_R0 out to WISP_R1 px (about half the screen across), then it fades. It passes
+//     through foes: each foe it touches loses 5 Hit Points / Wisps level straight off (no armor), flashes with a yellow
+//     aura and gives Gandalf 1 Shield / level; the same wisp can touch the same foe again after WISP_REHIT ticks.
 // Works in 1-player, P2 (one or two games: every write goes into every running game) and online (each page runs only
 // its own player; the engine sends page writes with the buttons, so both pages see the same shield).
 (() => {
   const FAKE = 0x0203FC50, TAB_A = 0x0806EE38, TAB_B = 0x09600000, TAB_C = 0x09600800, TAB_D = 0x09600900;   // copies, set by buildGame
   // index = Lightning Blade cooling | Dash cooling << 1 | Blinding Aura cooling << 2 (E-H: v214)
   const TABS = [TAB_A, TAB_B, TAB_C, TAB_D, 0x09600A00, 0x09600B00, 0x09600C00, 0x09600D00];
+  // v222: + Wisps cooling << 3 (I-P at 0x09601000 + 0x100 * i)
+  for (let i = 0; i < 8; i++) TABS.push(0x09601000 + 0x100 * i);
   const CD_TICKS = 600, BASE_DRAIN = 4, STUN_R = 80, STUN_T = 120;
+  const WISP_COST = 10, WISP_NO_STATE = [6, 0x0A, 0x22, 0x23, 0x30, 0x31, 0x32, 0x60];   // hero states the game won't cast from (0x08043484)
+  const WISP_GAP = 15, WISP_TURNS = 5, WISP_TURN = 20, WISP_R0 = 6, WISP_R1 = 84, WISP_SQ = 0.62, WISP_HIT = 15, WISP_REHIT = 15;
   const BA_CD = 450, DASH_CD = 120, DASH_T = 8, DASH_V = 9, DASH_F = 3, BA_R0 = 60, BA_R1 = 120, BA_UPD = 0x08020C05;
   const st = [{}, {}];
   let lastView = null;
@@ -83,6 +97,28 @@
     if (c.r32(t + 0x50) < left) c.wN(t + 0x50, left, 4);
   };
   let stunFx = [];
+  const wantTab = (s, now) => {
+    const cool = s.cdEnd !== undefined && ((s.cdEnd - now) | 0) > 0;
+    const dcool = s.dashCd !== undefined && ((s.dashCd - now) | 0) > 0;
+    const bcool = s.baCd !== undefined && ((s.baCd - now) | 0) > 0;
+    const wcool = s.wispCd !== undefined && ((s.wispCd - now) | 0) > 0;
+    if (!window.__gsDash) return cool ? TAB_B : TAB_A;
+    return TABS[(cool ? 1 : 0) | (dcool ? 2 : 0) | (bcool && window.__gsBaCd ? 4 : 0) | (wcool && window.__gsWisp ? 8 : 0)];
+  };
+  // a foe a wisp can touch: alive and on the field (the first half of tools/turn16/turn16.c stunnable(), any state)
+  const foe = (c, t) => { const e8 = c.r32(t + 0xE8); return (e8 & 0x801040) === 0x1000 && (e8 & 0x10040400) !== 0 && c.s16(t + 0x5A) > 0; };
+  // where a wisp is, age u game ticks after its cast (world px, ground level)
+  const wispAt = (w, u) => {
+    const f = Math.max(0, Math.min(1, u / (WISP_TURNS * WISP_TURN))), r = WISP_R0 + (WISP_R1 - WISP_R0) * f;
+    const a = w.a0 + w.dir * 2 * Math.PI * u / WISP_TURN;
+    return [w.x + Math.cos(a) * r, w.y + Math.sin(a) * r * WISP_SQ];
+  };
+  const segD2 = (ax, ay, bx, by, px, py) => {   // squared distance from p to the segment a-b
+    const dx = bx - ax, dy = by - ay, l = dx * dx + dy * dy, t = l ? Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / l)) : 0;
+    const qx = ax + dx * t - px, qy = ay + dy * t - py; return qx * qx + qy * qy;
+  };
+  const wispFx = [[], []], wispHits = [];
+  let tickSeen = -1, tickPn = 0;
   const tick = () => {
     const c = ctx(); if (!c) return;
     if (c.online && !window.__mp.sync) return;   // an online engine that can't send page writes: leave the game alone
@@ -125,7 +161,7 @@
       const tab = c.r32(P + 0x1C), cool = s.cdEnd !== undefined && ((s.cdEnd - now) | 0) > 0;
       const dcool = s.dashCd !== undefined && ((s.dashCd - now) | 0) > 0;
       const bcool = s.baCd !== undefined && ((s.baCd - now) | 0) > 0;
-      const want = window.__gsDash ? TABS[(cool ? 1 : 0) | (dcool ? 2 : 0) | (bcool && window.__gsBaCd ? 4 : 0)] : cool ? TAB_B : TAB_A;
+      const want = wantTab(s, now);
       if (TABS.includes(tab) && tab !== want && window.__gsTabB) c.wN(P + 0x1C, want, 4);
       s.cdLeft = cool ? ((s.cdEnd - now) | 0) / 30 : 0;
       s.dashLeft = dcool ? ((s.dashCd - now) | 0) / 30 : 0;
@@ -184,12 +220,14 @@
   };
   // ---- every animation frame: Dash and Blinding Aura (the cast windows are a few game ticks long) ----
   const fast = () => {
-    const c = ctx(); if (!c || (c.online && !window.__mp.sync) || c.r8(0x030041B0) !== 1) { window.__auraS = 1; window.__auraX = 0; return; }
+    const c = ctx(); if (!c || (c.online && !window.__mp.sync) || c.r8(0x030041B0) !== 1) { window.__auraS = 1; window.__auraX = 0; wispFx[0] = wispFx[1] = []; return; }
     const now = c.r32(0x030041A4), count = Math.min(2, c.r8(0x03003F58) || 1);
+    if (now !== tickSeen) { tickSeen = now; tickPn = performance.now(); }
     const players = c.online ? [c.me] : [0, 1].filter((p) => p < Math.max(count, 1) || ewPtr(c.r32(0x03003C00 + 0x1AC * p)));
+    for (const p of [0, 1]) if (!players.includes(p)) wispFx[p] = [];
     for (const p of players) {
       const P = 0x03003C00 + 0x1AC * p, hero = c.r32(P), s = st[p];
-      if (!ewPtr(hero) || c.r8(P + 0x19F) !== 3) continue;
+      if (!ewPtr(hero) || c.r8(P + 0x19F) !== 3) { s.wisps = null; wispFx[p] = []; continue; }
       const hx = c.s16(hero + 0xAE), hy = c.s16(hero + 0xB2), mine = p === (c.online ? c.me : 0);
       // Dash: take over the cast before its handler (Gwaihir) runs
       if (window.__gsDash && !s.dash && c.r8(P + 0x1A3) === 4 && (c.r8(P + 0x1A5) & 1) && c.r8(hero + 0x62) !== 6) {
@@ -230,6 +268,62 @@
           if (mine) window.__dashTrail = { t: performance.now(), x: hx, y: hy };
         }
       }
+      // Wisps (v222): take over the cast before its handler (Gwaihir's) runs, and let a wisp loose
+      const spawnWisp = () => {
+        const fa = 0x0203FFC0 + 4 * p;
+        const ang = (c.r8(fa) & 2) ? c.r8(fa + 1) / 256 * Math.PI * 2 : (c.r8(hero + 0xF8) & 7) / 8 * Math.PI * 2;   // 0 up, clockwise
+        const L = Math.max(1, c.r8(P + 0x171) << 24 >> 24);
+        (s.wisps || (s.wisps = [])).push({ x: hx, y: hy, t0: now, a0: ang - Math.PI / 2, dir: (s.wispN = (s.wispN || 0) + 1) & 1 ? 1 : -1, L, last: now, hit: new Map() });
+        s.wispCd = (now + WISP_GAP) | 0;
+        const want = wantTab(s, now); if (TABS.includes(c.r32(P + 0x1C)) && window.__gsTabB) c.wN(P + 0x1C, want, 4);
+      };
+      if (window.__gsWisp && c.r8(P + 0x1A3) === 1 && (c.r8(P + 0x1A5) & 1)) {   // the game took it (a staff in his off hand)
+        c.wN(P + 0x1A5, c.r8(P + 0x1A5) & ~1, 1);
+        spawnWisp();
+      }
+      // Without a staff (off-hand item category 5, player + 0x44) the game refuses this slot (0x08043720), so the page
+      // reads the Quick Skill press itself as 0x08043350 does: L held (0x0300407C + 2 * player, bit 0x200) and A / B / R
+      // newly down picks slot 0 / 1 / 2 (player + 0x191). It makes the game's own checks and takes the Spirit.
+      const held = c.r16(0x0300407C + 2 * p), fresh = held & ~(s.held | 0); s.held = held;
+      if (window.__gsWisp && (held & 0x200) && (fresh & 0x103) && (c.r16(P + 0x44) & 15) !== 5 && !(c.r8(P + 0x1A5) & 1)) {
+        const slot = fresh & 1 ? 0 : fresh & 2 ? 1 : 2, st62 = c.r8(hero + 0x62), sp = c.s16(P + 0x17E);
+        if (c.r8(P + 0x191 + slot) === 1 && (c.r8(P + 0x171) << 24 >> 24) > 0 && !(((s.wispCd || 0) - now | 0) > 0) && sp >= WISP_COST &&
+            c.s16(P + 0x17C) > 0 && !WISP_NO_STATE.includes(st62) && !(s.dash)) {
+          c.wN(P + 0x17E, (sp - WISP_COST) & 0xffff, 2);
+          spawnWisp();
+        }
+      }
+      if (s.wisps && s.wisps.length) {
+        const life = WISP_TURNS * WISP_TURN, hpm = s.hp || (s.hp = new Map());
+        let list = null;
+        for (let i = s.wisps.length - 1; i >= 0; i--) {
+          const w = s.wisps[i], u1 = (now - w.t0) | 0;
+          if (u1 < 0 || u1 > life + 12) { s.wisps.splice(i, 1); continue; }
+          if (u1 > w.last - w.t0 && u1 <= life) {
+            // every game tick since the last look: the path piece it flew, and any foe on it
+            for (let u = Math.max(1, (w.last - w.t0) + 1); u <= u1; u++) {
+              const [ax, ay] = wispAt(w, u - 1), [bx, by] = wispAt(w, u);
+              list = list || objs(c, hero).filter((o) => o !== hero && o !== c.r32(0x03003C00) && o !== c.r32(0x03003DAC) && foe(c, o));
+              for (const o of list) {
+                const ox = c.s16(o + 0xAE), oy = c.s16(o + 0xB2);
+                if (segD2(ax, ay, bx, by, ox, oy) > WISP_HIT * WISP_HIT) continue;
+                const lastHit = w.hit.get(o);
+                if (lastHit !== undefined && ((w.t0 + u - lastHit) | 0) < WISP_REHIT) continue;
+                const hp0 = c.s16(o + 0x5A); if (hp0 <= 0) continue;
+                w.hit.set(o, (w.t0 + u) | 0);
+                const hp1 = hp0 - 5 * w.L;
+                c.wN(o + 0x5A, (hp1 <= 0 ? 0 : hp1) & 0xffff, 2);
+                if (hpm.has(o)) hpm.set(o, hp1 <= 0 ? 0 : hp1);   // not a sword strike (the Shield refill below)
+                s.addS = (s.addS || 0) + w.L;
+                wispHits.push({ o, x: ox, y: oy, t: performance.now() });
+              }
+            }
+          }
+          w.last = (w.t0 + Math.min(u1, life)) | 0;
+          w.now = now;
+        }
+      }
+      wispFx[p] = s.wisps ? s.wisps : [];
       // Blinding Aura: seen from the cast flags (skill 3 going off); the hero's + 0x99 bit 3 stays set ~9 s after it
       const ba = (c.r8(hero + 0x99) & 8) !== 0;
       const baCast = c.r8(P + 0x1A3) === 3 && (c.r8(P + 0x1A5) & 1) !== 0;
@@ -466,6 +560,53 @@
       }
       cx.globalCompositeOperation = "source-over";
     } else if (dashMotes.length) dashMotes.length = 0;
+    // Wisps (v222): a pale gold light with a fading tail, circling out from where it was cast; a yellow aura on each
+    // foe it touches. Drawn between game ticks too (the tick's share of 1/30 s since it came).
+    if (cam && (wispFx[0].length || wispFx[1].length || wispHits.length)) {
+      const k = v.k, pn = performance.now(), fr = Math.min(1, (pn - tickPn) / 33.3), life = WISP_TURNS * WISP_TURN;
+      cx.globalCompositeOperation = "lighter"; cx.lineCap = "round";
+      for (const list of wispFx) for (const w of list) {
+        const u = ((w.now - w.t0) | 0) + fr;
+        if (u > life + 12) continue;
+        const fade = (u < 3 ? u / 3 : 1) * (u > life ? Math.max(0, 1 - (u - life) / 12) : 1);
+        if (fade <= 0) continue;
+        const uu = Math.min(u, life);
+        // tail: the last stretch of its path, thinning out
+        const TAIL = 7, N = 10;
+        for (let q = N; q >= 1; q--) {
+          const ua = Math.max(0, uu - TAIL * q / N), ub = Math.max(0, uu - TAIL * (q - 1) / N);
+          if (ub <= 0) continue;
+          const [ax, ay] = wispAt(w, ua), [bx, by] = wispAt(w, ub), al = fade * (1 - (q - 1) / N);
+          cx.strokeStyle = `rgba(255,${226 + 20 * (1 - q / N) | 0},${140 + 90 * (1 - q / N) | 0},${0.55 * al})`;
+          cx.lineWidth = Math.max(1, (1 + 4 * (1 - q / N)) * k);
+          cx.beginPath(); cx.moveTo(X(ax - cam[0]), Y(ay - cam[1] - 14)); cx.lineTo(X(bx - cam[0]), Y(by - cam[1] - 14)); cx.stroke();
+        }
+        // the wisp: a bright core in a soft gold glow that flickers
+        const [wx, wy] = wispAt(w, uu), ex = X(wx - cam[0]), ey = Y(wy - cam[1] - 14 + 1.5 * Math.sin(pn / 90 + w.t0));
+        const r = (7 + 1.5 * Math.sin(pn / 55 + w.t0 * 3)) * k;
+        const rg = cx.createRadialGradient(ex, ey, 0, ex, ey, r * 2.4);
+        rg.addColorStop(0, `rgba(255,255,250,${fade})`); rg.addColorStop(0.18, `rgba(255,248,205,${0.9 * fade})`);
+        rg.addColorStop(0.45, `rgba(255,214,110,${0.38 * fade})`); rg.addColorStop(1, "rgba(255,190,80,0)");
+        cx.fillStyle = rg; cx.fillRect(ex - r * 2.4, ey - r * 2.4, r * 4.8, r * 4.8);
+        // its light on the ground
+        const sg = cx.createRadialGradient(ex, ey + 14 * k, 0, ex, ey + 14 * k, 10 * k);
+        sg.addColorStop(0, `rgba(255,220,140,${0.22 * fade})`); sg.addColorStop(1, "rgba(255,220,140,0)");
+        cx.fillStyle = sg; cx.beginPath(); cx.ellipse(ex, ey + 14 * k, 10 * k, 5 * k, 0, 0, Math.PI * 2); cx.fill();
+      }
+      for (let i = wispHits.length - 1; i >= 0; i--) {
+        const h = wispHits[i], e = (pn - h.t) / 380;
+        if (e >= 1 || e < 0) { wispHits.splice(i, 1); continue; }
+        const ex = X(h.x - cam[0]), ey = Y(h.y - cam[1] - 14), a = e < 0.15 ? e / 0.15 : 1 - (e - 0.15) / 0.85;
+        const r = (14 + 8 * e) * k;
+        const rg = cx.createRadialGradient(ex, ey, 0, ex, ey, r);
+        rg.addColorStop(0, `rgba(255,250,170,${0.55 * a})`); rg.addColorStop(0.5, `rgba(255,220,60,${0.4 * a})`); rg.addColorStop(1, "rgba(255,200,40,0)");
+        cx.fillStyle = rg; cx.beginPath(); cx.ellipse(ex, ey, r * 0.8, r * 1.15, 0, 0, Math.PI * 2); cx.fill();
+        cx.strokeStyle = `rgba(255,232,90,${0.75 * a})`; cx.lineWidth = Math.max(1, 1.6 * k * (1 - e));
+        cx.beginPath(); cx.ellipse(ex, ey + 12 * k, (7 + 12 * e) * k, (4 + 6 * e) * k, 0, 0, Math.PI * 2); cx.stroke();
+      }
+      if (wispHits.length > 40) wispHits.splice(0, wispHits.length - 40);
+      cx.globalCompositeOperation = "source-over";
+    }
     const sk = window.__lbStrike;
     if (cam && sk && performance.now() - sk.t < 220) {
       const f = (performance.now() - sk.t) / 220, ex = X(sk.x - cam[0]), ey = Y(sk.y - cam[1] - 12), r = (10 + 14 * f) * v.k;
