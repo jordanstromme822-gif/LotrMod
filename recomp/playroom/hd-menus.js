@@ -159,7 +159,8 @@
       if (s.length >= 2 && goalLines[goalLines.length - 1] !== s) goalLines.push(s);
     } catch (e) {}
   }, 3);
-  const gi = (id, v) => { try { window.EJS_emulator.gameManager.simulateInput(0, id, v); } catch (e) {} };
+  let own = 0;   // our own presses skip the d-pad handling below
+  const gi = (id, v) => { own++; try { window.EJS_emulator.gameManager.simulateInput(0, id, v); } catch (e) {} own--; };
   // online games send presses with the buttons a little later (same as the HD Backpack's press)
   const tap = (id) => new Promise((res) => { const d = window.__mp && window.__mp.sync ? 50 : 0; setTimeout(() => { gi(id, 1); setTimeout(() => { gi(id, 0); setTimeout(res, 140 + d); }, 90); }, d); });
   const view = () => {
@@ -167,8 +168,104 @@
     if (M._rotk_link_iwram && M._rotk_link_on && M._rotk_link_on() && window.__mp && window.__mp.online && !window.__mp.sync) return null;
     const onl = !!(window.__mp && window.__mp.online), me = onl ? window.__mp.me & 1 : 0;
     const iw = onl && M._rotk_link_iwram ? M._rotk_link_iwram(me) : M._rotk_iwram();
-    return iw ? { H: M.HEAPU8, iw } : null;
+    const ew = onl && M._rotk_link_ewram ? M._rotk_link_ewram(me) : M._rotk_ewram ? M._rotk_ewram() : 0;
+    return iw ? { H: M.HEAPU8, iw, ew } : null;
   };
+  // ---- v220 (Jordan: "if it is a block menu you should be able to move an item in all four directions or move the
+  // cursor in all 4 directions"; "bonus map selection still functions like the old menu") ----
+  // The d-pad (pad, keyboard, joystick) goes through the emulator's simulateInput; on grid screens the page answers it:
+  //   HD Backpack (state 10): the cursor moves to the box that is really up / down / left / right of it on screen
+  //     (the game's own cursor graph doesn't match the HD layout). Browsing: the page's cursor request (EWRAM
+  //     0x0203F603 = box + 1, then a Down press, as a tap does). Move Item: the game's target cursor is walked there.
+  //   Choose Your Path (state 24): Up / Down move between rows of map cards, and to the difficulty row; A starts.
+  const nearBox = (sel, from, id, ok) => {
+    const cells = Array.from(document.querySelectorAll(sel)).filter((c) => !ok || ok(+c.dataset.c) || +c.dataset.c === from), f = cells.find((c) => c.dataset.c === String(from));
+    if (!f) return null;
+    const a = f.getBoundingClientRect(), ax = a.left + a.width / 2, ay = a.top + a.height / 2;
+    let best = null, bd = 1e9;
+    for (const c of cells) {
+      if (c === f) continue;
+      const b = c.getBoundingClientRect(), dx = b.left + b.width / 2 - ax, dy = b.top + b.height / 2 - ay;
+      const along = id === 7 ? dx : id === 6 ? -dx : id === 5 ? dy : -dy, side = id >= 6 ? Math.abs(dy) : Math.abs(dx);
+      if (along < Math.min(a.width, a.height) * 0.3 || side > along * 1.2) continue;   // only boxes inside a 50-degree cone that way
+      const d = along + side * 2.5;
+      if (d < bd) { bd = d; best = c; }
+    }
+    return best ? +best.dataset.c : null;
+  };
+  const held = {};
+  let stashT = -1, lastStash = "";
+  setInterval(() => {   // Move Item: show the stash box the d-pad picked as the cursor
+    const bp = document.getElementById("hdBp"); if (!bp || bp.hidden) { stashT = -1; return; }
+    const want = stashT >= 0 ? String(stashT) : "";
+    bp.querySelectorAll(".cell.hdpick").forEach((c) => { if (c.dataset.c !== want) c.classList.remove("hdpick"); });
+    if (!want) { bp.querySelectorAll(".cell.hdcur").forEach((c) => { c.classList.remove("hdcur"); c.classList.add("cur"); }); return; }
+    const c = bp.querySelector('.cell[data-c="' + want + '"]'); if (c) c.classList.add("hdpick", "cur");
+    bp.querySelectorAll(".cell.cur").forEach((o) => { if (o !== c) { o.classList.remove("cur"); o.classList.add("hdcur"); } });
+  }, 30);   // a direction the page answered: its release is ours too
+  let bm = { focus: 0, diff: 0, go: 0, t: 0 };   // Choose Your Path: which row the d-pad is on, the difficulty picked, starting
+  const walkSeq = async (seq) => { busy = 1; try { for (const k of seq) await tap(k); } finally { busy = 0; } };
+  const handle = (id, v) => {
+    const vw = view(); if (!vw) return false;
+    const { H, iw, ew } = vw, st = H[iw + ST], sub = H[iw + SUB];
+    if (st === 24 && id === 0 && v) { bm.go = 0; return false; }
+    if (st !== 10 || sub !== 6) stashT = -1;
+    if (st === 10 && sub === 6 && id === 0 && v) { stashT = -1; return false; }
+    if (st === 10 && sub === 6 && id === 8 && v && stashT >= 0 && ew) { H[ew + 0x3F604] = stashT - 30 + 1; stashT = -1; held[8] = 1; return true; }   // put it in that stash box (the game's Move Item swap)   // B: back out (the page stops answering the game's steps)
+    if (id < 4 || id > 8) return false;
+    if (!v) { if (held[id]) { delete held[id]; return true; } return false; }
+    if (st === 10 && id !== 8 && ew && document.querySelector("#hdBp:not([hidden])")) {
+      const curEl = document.querySelector("#hdBp .cell.cur"); if (!curEl) return false;
+      const from = sub === 6 && stashT >= 0 ? stashT : +curEl.dataset.c;
+      if (sub === 0) {
+        const to = nearBox("#hdBp .cell[data-c]", from, id); held[id] = 1;
+        if (to === null || busy) return true;
+        H[ew + 0x3F603] = to + 1; walkSeq([5]);
+        return true;
+      }
+      if (sub === 6) {   // Move Item: backpack boxes 8-14 and the stash box shown as box 15 (the game's 4 x 2 grid)
+        // the stash box the game shows as its box 15 (EWRAM 0x0203F868 + player: which of the 5)
+        const cellsSel = "#hdBp .iv .cell[data-c]", winBox = 30 + Math.min(4, H[ew + 0x3F868 + (H[iw + 0x3F59] & 1)]);
+        const to = nearBox(cellsSel, from, id, (c) => (c >= 8 && c <= 14) || (c >= 30 && c < 35)); held[id] = 1;
+        if (to === null || busy) return true;
+        // the other stash boxes: the page holds the pick (gold) until A, then asks for the game's swap (EWRAM 0x0203F604)
+        if (to >= 30 && to !== winBox) { stashT = to; lastStash = ""; return true; }
+        stashT = -1;
+        const g = (c) => (c >= 30 ? 15 : c);
+        const real = document.querySelector("#hdBp .cell.hdcur") || curEl, a = g(+real.dataset.c), b = g(to); let x = a & 3, y = (a >> 2) & 1; const tx = b & 3, ty = (b >> 2) & 1, seq = [];
+        while (x < tx) { seq.push(7); x++; } while (x > tx) { seq.push(6); x--; } while (y < ty) { seq.push(5); y++; } while (y > ty) { seq.push(4); y--; }
+        if (seq.length) walkSeq(seq);
+        return true;
+      }
+      return false;
+    }
+    if (st === 24 && sub === 0) {
+      const tall = el && el.classList.contains("tall"), cur = H[iw + CUR] & 3, cols = tall ? 2 : 4;
+      if (id === 8) { bm.go = 1; bm.t = performance.now(); return false; }   // A: the game opens the map; the page goes on
+      held[id] = 1;
+      if (busy) return true;
+      if (bm.focus === 1) {
+        if (id === 6 || id === 7) { bm.diff = Math.max(0, Math.min(2, bm.diff + (id === 7 ? 1 : -1))); lastKey = ""; }
+        else if (id === 4) { bm.focus = 0; lastKey = ""; }
+        return true;
+      }
+      if (id === 6 || id === 7) { held[id] = 0; delete held[id]; return false; }   // across: the game's own
+      const row = (cur / cols) | 0, rows = Math.ceil(4 / cols);
+      if (id === 5 && row === rows - 1) { bm.focus = 1; lastKey = ""; return true; }
+      if (id === 4 && row === 0) return true;
+      const to = cur + (id === 5 ? cols : -cols), seq = []; for (let k = cur; k !== to; k += to > cur ? 1 : -1) seq.push(to > cur ? 7 : 6);
+      walkSeq(seq);
+      return true;
+    }
+    return false;
+  };
+  setInterval(() => {
+    const g = window.EJS_emulator && window.EJS_emulator.gameManager;
+    if (!g || g.__hdGridWrap || typeof g.simulateInput !== "function") return;
+    const orig = g.simulateInput;
+    g.simulateInput = function (p, id, v) { if (!own && !window.__padOwn && !p) { let h = false; try { h = handle(id, v); } catch (e) {} if (h) return; } return orig.apply(this, arguments); };
+    g.__hdGridWrap = true;
+  }, 500);
   function build() {
     el = document.createElement("div"); el.id = "hdMenu"; el.hidden = true;
     el.innerHTML = '<style>' +
@@ -238,6 +335,10 @@
       '#hdMenu .pth div{display:flex;flex-wrap:wrap;align-items:center;gap:calc(var(--fs)*0.35)}#hdMenu .pth i{flex:0 0 100%;font:700 calc(var(--fs)*0.85)/1.2 var(--display,Georgia,serif);color:#6b4518;font-style:normal}' +
       '#hdMenu .pk{padding:calc(var(--fs)*0.15) calc(var(--fs)*0.6);border:1.5px solid #a87a32;border-radius:999px;cursor:pointer;font-weight:600}' +
       '#hdMenu .pk.sel{background:linear-gradient(#3b2c14,#1a1209);color:#ffe08a;border-color:#ffe08a;box-shadow:0 0 calc(var(--fs)*0.5) rgba(255,190,80,0.8)}#hdMenu .pk.dim{opacity:.55}' +
+      '#hdMenu .goal.pth.one{display:flex;flex-direction:column;align-items:center;gap:calc(var(--fs)*0.35);max-width:calc(var(--fs)*24)}#hdMenu .pth.one div{justify-content:center}#hdMenu .pth.one i{flex:none}' +
+      '#hdMenu .pk.on{border-color:#6b4518;background:rgba(107,69,24,0.18);color:#3b2410;font-weight:700}' +
+      '#hdMenu .mapc.on{border-color:#d8a240;box-shadow:inset 0 0 calc(var(--fs)*1.2) rgba(120,80,30,0.4),0 0 0 2px #b8893a}' +
+      '#hdMenu .acts2{display:flex;gap:calc(var(--fs)*0.8)}#hdMenu .act.go{border-color:#ffe08a;background:linear-gradient(#3b2c14,#1a1209);box-shadow:0 0 calc(var(--fs)*0.6) rgba(255,190,80,0.6)}#hdMenu .act.busy{opacity:.7}' +
       '#hdMenu.tall .maps{grid-template-columns:repeat(2,1fr)}#hdMenu.tall .goal.pth{grid-template-columns:1fr}' +
       '#hdMenu .mid.slots .hd{font-size:min(calc(var(--fs)*1.5),calc(var(--mw)*0.11))}' +
             '</style><canvas class="bg"></canvas><div class="ban l">' + TREE + '</div><div class="ban r">' + TREE + '</div><div class="mid"></div>';
@@ -246,6 +347,10 @@
     bg = el.querySelector("canvas.bg");
     el.addEventListener("pointerdown", (e) => { e.preventDefault(); e.stopPropagation(); });
     el.addEventListener("click", async (e) => {
+      const bd = e.target.closest("[data-bmd]");
+      if (bd) { bm.diff = +bd.dataset.bmd; bm.focus = 1; lastKey = ""; return; }
+      if (e.target.closest("[data-bmgo]")) { if (!busy && !bm.go) { bm.go = 1; bm.t = performance.now(); busy = 1; try { await tap(8); } finally { busy = 0; } } return; }
+      if (e.target.closest("[data-bm]")) bm.focus = 0;
       const w = e.target.closest("[data-walk]");
       if (w) { if (!busy) { busy = 1; try { await walk(w.dataset); } finally { busy = 0; } } return; }
       if (e.target.closest(".back")) { if (!busy) { busy = 1; try { await tap(0); } finally { busy = 0; } } return; }
@@ -332,13 +437,15 @@
   const yn = (txt, q, yes) => '<div class="orn"></div><div class="hd">' + txt[0] + '</div><div class="orn"></div><div class="goal q">' + txt[1] + "</div>" +
     '<div class="bar' + (q === yes ? " sel" : "") + '" data-walk="41BC,' + yes + ',5,4" data-press="8"><svg viewBox="0 0 24 24">' + ICON.exit + "</svg><b>Yes</b><span></span></div>" +
     '<div class="bar' + (q !== yes ? " sel" : "") + '" data-walk="41BC,' + (1 - yes) + ',5,4" data-press="8"><svg viewBox="0 0 24 24">' + ICON.swords + "</svg><b>No</b><span></span></div>";
+  // v220: one screen like the other new menus: tap a map, tap a difficulty, Start (or d-pad all four ways and A).
+  // The game still asks map, level, difficulty one after another; the page answers its level and difficulty steps.
   const pathHtml = (H, iw, sub, cur) => {
-    const c2 = H[iw + 0x41B4], mp = MAPS[cur & 3];
+    const going = bm.go || sub > 0;
     let cards = "";
-    MAPS.forEach(([n, l, ic], k) => { cards += '<div class="mapc' + (k === cur ? " sel" : "") + '" data-walk="41B8,' + k + ',7,6" data-sub="0" data-press="8"><svg viewBox="0 0 24 24">' + ICON[ic] + '</svg><span class="nm">' + esc(n) + "</span>" + (l ? "<em>" + esc(l) + "</em>" : "") + "</div>"; });
-    const row = (t, k, s2) => '<b class="pk' + (sub === s2 && c2 === k ? " sel" : "") + (sub < s2 ? " dim" : "") + '" data-walk="41B4,' + k + ',5,4" data-sub="' + s2 + '" data-press="8">' + esc(t) + "</b>";
-    return '<div class="orn"></div><div class="hd">Choose Your Path</div><div class="maps">' + cards + '</div><div class="goal pth"><div><i>' + esc(mp[0]) + "</i>" + row(mp[1] || mp[0], 0, 1) + "</div><div><i>Difficulty</i>" + ["Normal", "Hard", "Grueling"].map((t, k) => row(t, k, 2)).join("") + "</div></div>" +
-      '<div class="act back"><i>B</i>Back</div>';
+    MAPS.forEach(([n, l, ic], k) => { cards += '<div class="mapc' + (k === cur && bm.focus === 0 ? " sel" : k === cur ? " on" : "") + '" data-walk="41B8,' + k + ',7,6" data-sub="0" data-bm="map"><svg viewBox="0 0 24 24">' + ICON[ic] + '</svg><span class="nm">' + esc(n) + "</span>" + (l ? "<em>" + esc(l) + "</em>" : "") + "</div>"; });
+    const pills = ["Normal", "Hard", "Grueling"].map((t, k) => '<b class="pk' + (bm.diff === k ? (bm.focus === 1 ? " sel" : " on") : "") + '" data-bmd="' + k + '">' + esc(t) + "</b>").join("");
+    return '<div class="orn"></div><div class="hd">Choose Your Path</div><div class="maps">' + cards + '</div><div class="goal pth one"><i>Difficulty</i><div>' + pills + "</div></div>" +
+      '<div class="acts2"><div class="act back"><i>B</i>Back</div><div class="act go' + (going ? " busy" : "") + '" data-bmgo="1"><i>A</i>' + (going ? "Starting\u2026" : "Start") + "</div></div>";
   };
   const waitHtml = (t) => '<div class="orn"></div><div class="hd">Multiplayer</div><div class="orn"></div><div class="goal q">' + t + '</div><div class="act back"><i>B</i>Cancel</div>';
   const tick = () => {
@@ -355,6 +462,12 @@
       // GCN Link is gone from the title menu: if the cursor lands on it (keys, pads), step past it the same way
       if (st === 5 && sub !== 3 && H[iw + CUR] === 4 && !busy && performance.now() > skipHold) { busy = 1; tap(lastCur === 5 ? 4 : 5).finally(() => { busy = 0; }); }
       if (st === 5) lastCur = H[iw + CUR];
+      // Choose Your Path: after A on a map the game asks its level (one per map) and then the difficulty: answer them
+      if (st !== 24) bm = { focus: 0, diff: bm.diff, go: 0, t: 0 };
+      else if (sub === 0 && bm.go && performance.now() - bm.t > 2500) bm.go = 0;   // backed out
+      else if (!busy && sub > 0 && !bm.go) { busy = 1; tap(0).finally(() => { busy = 0; }); }   // backed out of a step: back to the maps
+      else if (!busy && sub === 1) { bm.t = performance.now(); busy = 1; tap(8).finally(() => { busy = 0; }); }
+      else if (!busy && sub === 2 && bm.go) { busy = 1; walk({ walk: "41B4," + bm.diff + ",5,4", press: "8" }).finally(() => { busy = 0; }); }
       const cv = document.getElementById("mpCanvas"); if (!cv) return hide();
       const r = cv.getBoundingClientRect(); if (!r.width || !r.height) return hide();
       if (!el) build();
@@ -363,9 +476,9 @@
       const saving = st === 9 && (H[iw + 0x41B4] === 1 || H[iw + 0x41B4] === 3), slotKey = st === 9 ? Array.from(H.subarray(iw + 0x5630, iw + 0x5630 + 0x1C0)).join(",") + "|" + H[iw + 0x41BC] + "|" + saving : "";
       // the stage's own buttons (P2 / Levels on the pause menu, Page 1 of 2 on the save slots) keep a strip at the top
       const top = (st === 16 || st === 9) ? 48 : 0, tall = r.height > r.width * 0.9;
-      const fs = Math.max(9, Math.min((r.height - top) / (m.goal ? 17.5 : st === 6 ? 20.5 : st === 24 ? (tall ? 29 : 19) : 15.5), r.width / (st === 24 ? (tall ? 20 : 30) : st !== 6 ? 22 : tall ? 21 : 28)));
+      const fs = Math.max(9, Math.min((r.height - top) / (m.goal ? 17.5 : st === 6 ? 20.5 : st === 24 ? (tall ? 29 : 20.5) : 15.5), r.width / (st === 24 ? (tall ? 20 : 30) : st !== 6 ? 22 : tall ? 21 : 28)));
       const optKey = st === 6 ? Array.from(H.subarray(iw + OPT, iw + OPT + 7)).join(",") : "";
-      const key = [st, cur, sub + "/" + H[iw + 0x41B4] + "/" + H[iw + 0x41BC] + "/" + goal + slotKey + optKey + top, r.left, r.top, r.width, r.height].join("|");
+      const key = [st, cur, sub + "/" + bm.focus + bm.diff + bm.go + "/" + H[iw + 0x41B4] + "/" + H[iw + 0x41BC] + "/" + goal + slotKey + optKey + top, r.left, r.top, r.width, r.height].join("|");
       window.__hdMenuOn = true;
       if (key === lastKey && !el.hidden) return;
       const sizeChanged = !lastKey || lastKey.split("|").slice(3).join() !== key.split("|").slice(3).join();
