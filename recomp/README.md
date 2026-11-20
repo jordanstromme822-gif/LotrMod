@@ -521,3 +521,17 @@ boxes and Leave). `recomp/playroom/shop-v203.py` (page code in `shop-v203.js`) r
 Tested headless (Moria Shrine; Forge = the same vendor with +0x60 set to 0): 1-player buy / sell / goods / Leave by
 joystick and by taps at phone size; P2 (two linked games) buy goes into both games and the shop reopens. The game's own
 sale in a P2 game only changes the local game (as before v203).
+
+## Take attribute points back any time (2026-11-20, Play Room v206)
+
+Jordan: "stats placed should allow me to unplace them whenever I want". The game's Stats page (state 0x0E) already
+removes a point with Left, but only down to the value the attribute had when the page opened (0x08028634 compares the
+pending values 0x03001CE8 + 12 * player with the base attributes P + 0x2A..0x32), and only if the hero had spare
+points as it opened (0x030041BC, set by the enter function 0x080274F4; Left/Right/Up/Down do nothing while it is 0).
+Page-only fix (`recomp/playroom/statrefund-v206.py` + `statrefund-v206.js`): 0.3 s after the page opens, the page
+lowers the base attributes to the hero's starting values (tools/heroes.py table if present, else read from the New
+Game code 0x08025D6C) and sets 0x030041BC to 1 (tapping Down, Up so the game draws its cursor). The game does the
+rest: Left gives a point back to the pool (P + 0x19D) and updates HP/SP and derived attributes, and leaving the page
+writes the pending values back into the base (0x08027CDC). Afterwards the page copies the result to the partner game.
+Tested headless on the live page: 1-player (3 placed Strength points taken back and put into Accuracy), P2 (Gimli
+level 51, both games agree after closing). Online uses the same page-write path (not run end to end).
