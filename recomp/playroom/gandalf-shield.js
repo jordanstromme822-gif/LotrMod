@@ -28,6 +28,14 @@
 //     hit-reaction state 6 with a set velocity moves the hero through the game's own wall checks, DASH_T ticks at
 //     DASH_V px a tick, through foes. While Lightning Blade is up each foe dashed through gives 10 Shield. 4 s cooldown
 //     through tables C / D (Dash costs 0xFFFF there).
+//     v218 (Jordan, 2026-11-20: "it should be redrawn as if he's being pulled forward by the light using his aura and
+//     not make the damage sound effect"): state 6 is the game's hit reaction, and its handler (0x080244A0) starts a hit
+//     (hurt pose = anim 3, hurt sound 0x08046EEC from the hero's sound table 0x080585D4 + 2, 15 invulnerable ticks)
+//     whenever + 0xE8 bit 0x20 is clear. The page now sets that bit and keeps its timer (+ 0x56) up, so the handler
+//     only "continues" a hit: no sound, no hurt pose. + 0x54 (hit ticks left) is kept above 0 so the game keeps moving
+//     the hero; at the end it is 0, so the game itself goes back to standing (state 1, stand anim). Gandalf holds the
+//     staff-raised frame (DASH_F) of his cast animation, and the effects layer draws a light ahead of him with a
+//     beam from his staff and motes of light streaming into it, his aura swells, and the light is taken in at the end.
 // Works in 1-player, P2 (one or two games: every write goes into every running game) and online (each page runs only
 // its own player; the engine sends page writes with the buttons, so both pages see the same shield).
 (() => {
@@ -35,7 +43,7 @@
   // index = Lightning Blade cooling | Dash cooling << 1 | Blinding Aura cooling << 2 (E-H: v214)
   const TABS = [TAB_A, TAB_B, TAB_C, TAB_D, 0x09600A00, 0x09600B00, 0x09600C00, 0x09600D00];
   const CD_TICKS = 600, BASE_DRAIN = 4, STUN_R = 80, STUN_T = 120;
-  const BA_CD = 450, DASH_CD = 120, DASH_T = 8, DASH_V = 9, BA_R0 = 60, BA_R1 = 120, BA_UPD = 0x08020C05;
+  const BA_CD = 450, DASH_CD = 120, DASH_T = 8, DASH_V = 9, DASH_F = 3, BA_R0 = 60, BA_R1 = 120, BA_UPD = 0x08020C05;
   const st = [{}, {}];
   let lastView = null;
   const ctx = () => {
@@ -192,15 +200,22 @@
         else ang = (c.r8(hero + 0xF8) & 7) / 8 * Math.PI * 2;    // 8-way facing: 0 up, 2 right, 4 down, 6 left
         s.dash = { end: (now + DASH_T) | 0, vx: Math.round(Math.sin(ang) * DASH_V * 65536), vy: Math.round(-Math.cos(ang) * DASH_V * 65536), hit: new Set(), soft: new Set(), lb: (c.r8(hero + 0x99) & 1) !== 0 };
         s.dashCd = (now + DASH_CD) | 0;
-        if (mine) window.__dashFx = { t: performance.now(), x: hx, y: hy, a: ang };
+        s.dash.anim = c.r8(hero + 0x95);   // the cast animation the game started; its staff-raised frame is held
+        if (mine) window.__dashFx = { t: performance.now(), x: hx, y: hy, a: ang, on: true, end: 0 };
       }
       if (s.dash) {
         const d = s.dash;
         if (((d.end - now) | 0) <= 0 || c.s16(P + 0x17C) <= 0) {
-          c.wN(hero + 0xB4, 0, 4); c.wN(hero + 0xB8, 0, 4); if (c.r8(hero + 0x62) === 6) c.wN(hero + 0x62, 1, 1);
+          // let the game end the hit itself next tick (state 1, stand anim): hit ticks 0, the "already hit" bit kept 2 ticks
+          c.wN(hero + 0xB4, 0, 4); c.wN(hero + 0xB8, 0, 4); c.wN(hero + 0x54, 0, 2); c.wN(hero + 0x56, 2, 2); c.wN(hero + 0x20, 1, 1);
           for (const o of d.soft) if (ewPtr(o)) c.wN(o + 0xE8, c.r32(o + 0xE8) | 4, 4);   // foes solid again
           s.dash = null;
+          if (mine && window.__dashFx) { window.__dashFx.on = false; window.__dashFx.end = performance.now(); window.__dashFx.ex = hx; window.__dashFx.ey = hy; }
         } else {
+          // a hit already under way (no hurt pose, no hurt sound), DASH_T + 2 ticks long
+          c.wN(hero + 0xE8, c.r32(hero + 0xE8) | 0x20, 4); c.wN(hero + 0x56, 8, 2); c.wN(hero + 0x76, 0, 2);
+          c.wN(hero + 0x54, Math.max(2, ((d.end - now) | 0) + 2), 2);
+          if (c.r8(hero + 0x95) === d.anim && d.anim !== 3) { c.wN(hero + 0x23, DASH_F, 1); c.wN(hero + 0x20, 20, 1); }
           if (c.r8(hero + 0x62) !== 6) c.wN(hero + 0x62, 6, 1);
           c.wN(hero + 0xB4, d.vx, 4); c.wN(hero + 0xB8, d.vy, 4);
           for (const o of objs(c, hero)) {
@@ -240,7 +255,10 @@
     // the aura swells to twice its size for a moment after Blinding Aura
     const bt = window.__baT ? (performance.now() - window.__baT) / 1000 : 9;
     const env = bt < 0.15 ? bt / 0.15 : bt < 0.9 ? 1 : bt < 1.6 ? 1 - (bt - 0.9) / 0.7 : 0;
-    window.__auraS = 1 + env; window.__auraX = 2.0 * env;
+    // and grows and brightens while the light pulls him (Dash, v218)
+    const df = window.__dashFx, dt = df ? (performance.now() - df.t) / 1000 : 9;
+    const denv = df && df.on && dt < 1 ? Math.min(1, dt / 0.08) : df ? Math.max(0, 1 - (performance.now() - df.end) / 350) : 0;
+    window.__auraS = 1 + Math.max(env, 0.6 * denv); window.__auraX = Math.max(2.0 * env, 1.2 * denv);
   };
   const fastLoop = () => { requestAnimationFrame(fastLoop); try { fast(); } catch (e) { (window.__wideLog || (window.__wideLog = [])).push("gs fast: " + (e && e.message || e)); } };
   requestAnimationFrame(fastLoop);
@@ -269,7 +287,8 @@
   // XP vial on the game picture: the HUD sits at the bottom of the picture, its 240 px centred across the width
   // (measured headless, 320 x 240 picture): inside of the vial x 4.5..17.2, y 142.5..160 of that 240 x 160 strip.
   const VIAL = { x: 4.5, y: 142.5, w: 12.7, h: 17.5 };
-  let glowT = 0;
+  let glowT = 0, dashMoteT = 0;
+  const dashMotes = [];
   const draw = (t) => {
     requestAnimationFrame(draw);
     const v = lastView, g = window.__gsShown;
@@ -277,12 +296,12 @@
     if (!ensure(v.host)) return;
     if (cv.width !== v.CW || cv.height !== v.CH) { cv.width = v.CW; cv.height = v.CH; }
     cx.setTransform(1, 0, 0, 1, 0, 0); cx.clearRect(0, 0, cv.width, cv.height);
-    if (!g || window.__fxOff) return;
+    if (window.__fxOff) return;   // v218: casts are drawn even before Gandalf has a Shield level
     const VI = window.__gsVial || VIAL;
     const gx = (v.w - 240) / 2 + VI.x, gy = v.h - 160 + VI.y;
     const X = (x) => v.ox + (x - v.sx) * v.k, Y = (y) => v.oy + (y - v.sy) * v.ky;
     const x0 = X(gx), x1 = X(gx + VI.w), yb = Y(gy + VI.h), yt = Y(gy);
-    if (g.frac > 0.001) {
+    if (g && g.frac > 0.001) {
       const top = yb - (yb - yt) * g.frac;
       const gr = cx.createLinearGradient(0, top, 0, yb);
       gr.addColorStop(0, "rgba(190,230,255,0.85)"); gr.addColorStop(1, "rgba(70,150,255,0.8)");
@@ -297,7 +316,7 @@
     }
     // Lightning Blade: a white glow on the sword arm and short crackles while it is up, a white flash on each strike
     const cam = window.__FX && window.__FX.cam;
-    if (cam && g.lb) {
+    if (cam && g && g.lb) {
       glowT += 1;
       const hx = X(g.hx - cam[0]), hy = Y(g.hy - cam[1] - 14), k = v.k;
       cx.globalCompositeOperation = "lighter";
@@ -367,18 +386,86 @@
       }
       cx.globalCompositeOperation = "source-over";
     }
-    // Dash: a pale streak behind Gandalf
-    const df = window.__dashFx, dtr = window.__dashTrail;
-    if (cam && df && dtr && performance.now() - df.t < 450) {
-      const f = Math.min(1, (performance.now() - dtr.t) / 250);
-      const x0 = X(df.x - cam[0]), y0 = Y(df.y - cam[1] - 12), x1 = X(dtr.x - cam[0]), y1 = Y(dtr.y - cam[1] - 12);
+    // Dash (v218): Gandalf is pulled by light. A light shines ahead of him, a beam runs from his staff into it and motes
+    // of light stream past him into it; his aura glows; at the end he takes the light in (a soft flash and ring).
+    const df = window.__dashFx, dtr = window.__dashTrail, pn = performance.now();
+    if (cam && df && pn - df.t < 1400) {
+      const k = v.k, ux = Math.sin(df.a), uy = -Math.cos(df.a), on = df.on && pn - df.t < 1000;
+      const hp = on && dtr ? [dtr.x, dtr.y] : [df.ex === undefined ? df.x : df.ex, df.ey === undefined ? df.y : df.ey];
+      const prog = Math.min(1, (pn - df.t) / (DASH_T / 30 * 1000));
+      const ab = on ? 0 : df.end ? Math.min(1, (pn - df.end) / 130) : 1;         // 0..1: the light flying into him
+      const lead = (24 + 34 * (1 - prog)) * (1 - ab);
+      const lx = hp[0] + ux * lead, ly = hp[1] + uy * lead - 16;               // the light, at staff height
+      const sx = hp[0] + ux * 5, sy = hp[1] + uy * 5 - 18;                     // the staff
+      const dtm = dashMoteT ? Math.min(50, pn - dashMoteT) : 16; dashMoteT = pn;
       cx.globalCompositeOperation = "lighter";
-      const lg = cx.createLinearGradient(x0, y0, x1, y1);
-      lg.addColorStop(0, "rgba(200,225,255,0)"); lg.addColorStop(1, `rgba(220,235,255,${0.55 * (1 - f)})`);
-      cx.strokeStyle = lg; cx.lineCap = "round"; cx.lineWidth = 10 * v.k;
-      cx.beginPath(); cx.moveTo(x0, y0); cx.lineTo(x1, y1); cx.stroke();
+      // the path behind him: a soft warm glow from where he started, and his aura as a pale gold-white halo
+      const fade = on ? 1 : Math.max(0, 1 - (pn - df.end) / 380);
+      if (fade > 0) {
+        const x0 = X(df.x - cam[0]), y0 = Y(df.y - cam[1] - 12), x1 = X(hp[0] - cam[0]), y1 = Y(hp[1] - cam[1] - 12);
+        const lg = cx.createLinearGradient(x0, y0, x1, y1);
+        lg.addColorStop(0, "rgba(255,236,190,0)"); lg.addColorStop(1, `rgba(255,244,220,${0.32 * fade})`);
+        cx.strokeStyle = lg; cx.lineCap = "round"; cx.lineWidth = 13 * k;
+        cx.beginPath(); cx.moveTo(x0, y0); cx.lineTo(x1, y1); cx.stroke();
+        const hx = X(hp[0] - cam[0]), hy = Y(hp[1] - cam[1] - 14), hr = 22 * k * (0.95 + 0.08 * Math.sin(pn / 45));
+        const hg = cx.createRadialGradient(hx, hy, 0, hx, hy, hr);
+        hg.addColorStop(0, `rgba(255,250,235,${0.42 * fade})`); hg.addColorStop(0.5, `rgba(255,232,170,${0.2 * fade})`); hg.addColorStop(1, "rgba(150,200,255,0)");
+        cx.fillStyle = hg; cx.fillRect(hx - hr, hy - hr, hr * 2, hr * 2);
+      }
+      if (ab < 1) {
+        const LX = X(lx - cam[0]), LY = Y(ly - cam[1]), SX = X(sx - cam[0]), SY = Y(sy - cam[1]);
+        const grow = Math.min(1, (pn - df.t) / 70), a = grow * (1 - ab);
+        // the beam from his staff into the light, bending a little as it pulls
+        const px = -uy, py = ux, wob = Math.sin(pn / 38) * 2.5 * k, mx = (SX + LX) / 2 + px * wob, my = (SY + LY) / 2 + py * wob;
+        for (const [w, col] of [[8 * k, `rgba(255,214,140,${0.28 * a})`], [3.5 * k, `rgba(255,240,200,${0.55 * a})`], [1.4 * k, `rgba(255,255,255,${0.95 * a})`]]) {
+          cx.strokeStyle = col; cx.lineWidth = Math.max(1, w); cx.lineCap = "round";
+          cx.beginPath(); cx.moveTo(SX, SY); cx.quadraticCurveTo(mx, my, LX, LY); cx.stroke();
+        }
+        // the light itself, with four turning rays
+        const r = (11 + 3 * Math.sin(pn / 60)) * k * (0.5 + 0.5 * grow) * (1 - 0.5 * ab);
+        const rg = cx.createRadialGradient(LX, LY, 0, LX, LY, r * 2.2);
+        rg.addColorStop(0, `rgba(255,255,255,${a})`); rg.addColorStop(0.22, `rgba(255,248,215,${0.85 * a})`);
+        rg.addColorStop(0.5, `rgba(255,214,130,${0.35 * a})`); rg.addColorStop(1, "rgba(160,205,255,0)");
+        cx.fillStyle = rg; cx.fillRect(LX - r * 2.2, LY - r * 2.2, r * 4.4, r * 4.4);
+        const rot = pn / 260;
+        cx.strokeStyle = `rgba(255,250,230,${0.7 * a})`; cx.lineWidth = Math.max(1, 1.1 * k);
+        cx.beginPath();
+        for (let q = 0; q < 4; q++) {
+          const an = rot + q * Math.PI / 2, rl = r * (q & 1 ? 1.6 : 2.4);
+          cx.moveTo(LX + Math.cos(an) * r * 0.3, LY + Math.sin(an) * r * 0.3); cx.lineTo(LX + Math.cos(an) * rl, LY + Math.sin(an) * rl);
+        }
+        cx.stroke();
+      }
+      // motes: born around and behind him, drawn into the light
+      if (on) for (let q = 0; q < Math.max(1, Math.round(dtm / 6)); q++) {
+        const side = (Math.random() - 0.5) * 26, back = 4 + Math.random() * 18;
+        dashMotes.push({ x: hp[0] - ux * back - uy * side, y: hp[1] - uy * back + ux * side - 4 - Math.random() * 22, t: pn, life: 220 + Math.random() * 140 });
+      }
+      if (dashMotes.length > 90) dashMotes.splice(0, dashMotes.length - 90);
+      cx.lineCap = "round";
+      for (let q = dashMotes.length - 1; q >= 0; q--) {
+        const m = dashMotes[q], age = (pn - m.t) / m.life;
+        if (age >= 1) { dashMotes.splice(q, 1); continue; }
+        const tx = lx - m.x, ty = ly - m.y, dd = Math.hypot(tx, ty) || 1, sp = Math.min(dd, (0.12 + 0.5 * age) * dtm);
+        m.x += tx / dd * sp; m.y += ty / dd * sp;
+        const al = Math.sin(age * Math.PI) * (dd < 6 ? 0.3 : 1);
+        cx.strokeStyle = `rgba(255,${238 + (q & 1) * 17},${190 + (q & 3) * 20},${0.7 * al})`; cx.lineWidth = Math.max(1, (q & 1 ? 1.2 : 1.8) * k);
+        cx.beginPath(); cx.moveTo(X(m.x - tx / dd * 5 - cam[0]), Y(m.y - ty / dd * 5 - cam[1])); cx.lineTo(X(m.x - cam[0]), Y(m.y - cam[1])); cx.stroke();
+      }
+      // taken in: a soft flash on him and a thin ring at his feet
+      if (!on && df.end) {
+        const e = (pn - df.end - 90) / 300;
+        if (e > 0 && e < 1) {
+          const hx = X(hp[0] - cam[0]), hy = Y(hp[1] - cam[1] - 14), fr = (14 + 12 * e) * k;
+          const fg = cx.createRadialGradient(hx, hy, 0, hx, hy, fr);
+          fg.addColorStop(0, `rgba(255,255,245,${0.75 * (1 - e)})`); fg.addColorStop(1, "rgba(255,225,160,0)");
+          cx.fillStyle = fg; cx.fillRect(hx - fr, hy - fr, fr * 2, fr * 2);
+          cx.strokeStyle = `rgba(255,240,200,${0.6 * (1 - e)})`; cx.lineWidth = Math.max(1, 1.5 * k);
+          cx.beginPath(); cx.ellipse(hx, hy + 10 * k, (8 + 22 * e) * k, (5 + 12 * e) * k, 0, 0, Math.PI * 2); cx.stroke();
+        }
+      }
       cx.globalCompositeOperation = "source-over";
-    }
+    } else if (dashMotes.length) dashMotes.length = 0;
     const sk = window.__lbStrike;
     if (cam && sk && performance.now() - sk.t < 220) {
       const f = (performance.now() - sk.t) / 220, ex = X(sk.x - cam[0]), ey = Y(sk.y - cam[1] - 12), r = (10 + 14 * f) * v.k;
