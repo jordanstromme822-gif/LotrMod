@@ -40,7 +40,7 @@
 //     ticks: tables I-P at 0x09601000 + 0x100 * i are A-H with Wisps at 0xFFFF, so the game refuses it and takes no
 //     Spirit). Costs WISP_COST Spirit. The game never casts this slot (v226: cost 0xFFFF in every table, so no Gwaihir
 //     even with a staff): the page reads the Quick Skill press itself (L held + A / B / R new, as 0x08043350 does),
-//     makes the game's checks and takes the Spirit. A game cast that still shows up (player + 0x1A3 = 1, + 0x1A5 bit 0)
+//     makes the game's checks and takes the Spirit (v227: held, not just new, so holding it recasts each WISP_GAP). A game cast that still shows up (player + 0x1A3 = 1, + 0x1A5 bit 0)
 //     is cleared before its handler runs. The wisp circles the spot where it was cast, spiralling outward: WISP_TURNS turns of
 //     WISP_TURN ticks each, from WISP_R0 out to WISP_R1 px (about half the screen across), then it fades. It passes
 //     through foes: each foe it touches loses 5 Hit Points / Wisps level straight off (no armor), flashes with a yellow
@@ -55,7 +55,7 @@
   for (let i = 0; i < 8; i++) TABS.push(0x09601000 + 0x100 * i);
   const CD_TICKS = 600, BASE_DRAIN = 4, STUN_R = 80, STUN_T = 120;
   const WISP_COST = 10, WISP_NO_STATE = [6, 0x0A, 0x22, 0x23, 0x30, 0x31, 0x32, 0x60];   // hero states the game won't cast from (0x08043484)
-  const WISP_GAP = 15, WISP_TURNS = 5, WISP_TURN = 20, WISP_R0 = 6, WISP_R1 = 84, WISP_SQ = 0.62, WISP_HIT = 15, WISP_REHIT = 15;
+  const WISP_GAP = 15, WISP_TURNS = 7, WISP_TURN = 20, WISP_R0 = 6, WISP_R1 = 84, WISP_SQ = 0.62, WISP_HIT = 15, WISP_REHIT = 15;
   const BA_CD = 450, DASH_CD = 120, DASH_T = 8, DASH_V = 9, DASH_F = 3, BA_R0 = 60, BA_R1 = 120, BA_UPD = 0x08020C05;
   const st = [{}, {}];
   let lastView = null;
@@ -285,9 +285,12 @@
       // the page reads the Quick Skill press itself as 0x08043350 does: L held (0x0300407C + 2 * player, bit 0x200) and A / B / R
       // newly down picks slot 0 / 1 / 2 (player + 0x191). It makes the game's own checks and takes the Spirit.
       const held = c.r16(0x0300407C + 2 * p), fresh = held & ~(s.held | 0); s.held = held;
-      if (window.__gsWisp && (held & 0x200) && (fresh & 0x103) && !(c.r8(P + 0x1A5) & 1)) {
-        const slot = fresh & 1 ? 0 : fresh & 2 ? 1 : 2, st62 = c.r8(hero + 0x62), sp = c.s16(P + 0x17E);
-        if (c.r8(P + 0x191 + slot) === 1 && (c.r8(P + 0x171) << 24 >> 24) > 0 && !(((s.wispCd || 0) - now | 0) > 0) && sp >= WISP_COST &&
+      // v227 (Jordan: "Holding down the whisp button should keep casting wisps given the delay"): any held A / B / R whose
+      // slot holds Wisps casts again each time the half-second gate opens, as long as L stays down and Spirit lasts.
+      const wSlot = (held & 1) && c.r8(P + 0x191) === 1 ? 0 : (held & 2) && c.r8(P + 0x192) === 1 ? 1 : (held & 0x100) && c.r8(P + 0x193) === 1 ? 2 : -1;
+      if (window.__gsWisp && (held & 0x200) && wSlot >= 0 && !(c.r8(P + 0x1A5) & 1)) {
+        const st62 = c.r8(hero + 0x62), sp = c.s16(P + 0x17E);
+        if ((c.r8(P + 0x171) << 24 >> 24) > 0 && !(((s.wispCd || 0) - now | 0) > 0) && sp >= WISP_COST &&
             c.s16(P + 0x17C) > 0 && !WISP_NO_STATE.includes(st62) && !(s.dash)) {
           c.wN(P + 0x17E, (sp - WISP_COST) & 0xffff, 2);
           spawnWisp();
