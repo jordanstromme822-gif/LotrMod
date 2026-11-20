@@ -14,11 +14,21 @@
 //     hero's skill table) points at a copy whose Lightning Blade costs 0xFFFF, so the game refuses it and takes no Spirit.
 //   Seen: the sword glows white (FX layer), Gandalf's aura turns a softer light blue as the shield fills
 //     (window.__shieldFrac), and the green XP vial at the bottom left fills light blue with the shield.
+//   Blinding Aura (v206): casting it refills the shield to full; the game's white burst picture is moved out of sight and
+//     Gandalf's own aura (shader) swells to twice its size and brightens instead; foes from the game's 60 px out to
+//     120 px take the same hit (10 + 2 / level) from the page and are held 3 s (the game blinds the near ones 3 s).
+//   Dash (was Summon Gwaihir, v206): the ROM entry casts like Lightstrike, so the handler waits for the cast animation;
+//     the page sees the cast (player + 0x1A3 = 4, + 0x1A5 bit 0), clears it before Gwaihir comes and dashes instead:
+//     hit-reaction state 6 with a set velocity moves the hero through the game's own wall checks, DASH_T ticks at
+//     DASH_V px a tick, through foes. While Lightning Blade is up each foe dashed through gives 10 Shield. 4 s cooldown
+//     through tables C / D (Dash costs 0xFFFF there).
 // Works in 1-player, P2 (one or two games: every write goes into every running game) and online (each page runs only
 // its own player; the engine sends page writes with the buttons, so both pages see the same shield).
 (() => {
-  const FAKE = 0x0203FC50, TAB_A = 0x0806EE38, TAB_B = 0x09600000;   // TAB_B: copy of Gandalf's table, set by buildGame
+  const FAKE = 0x0203FC50, TAB_A = 0x0806EE38, TAB_B = 0x09600000, TAB_C = 0x09600800, TAB_D = 0x09600900;   // copies, set by buildGame
+  const TABS = [TAB_A, TAB_B, TAB_C, TAB_D];
   const CD_TICKS = 600, BASE_DRAIN = 4, STUN_R = 80, STUN_T = 120;
+  const DASH_CD = 120, DASH_T = 8, DASH_V = 9, BA_R0 = 60, BA_R1 = 120, BA_UPD = 0x08020C05;
   const st = [{}, {}];
   let lastView = null;
   const ctx = () => {
@@ -62,7 +72,7 @@
     const c = ctx(); if (!c) return;
     if (c.online && !window.__mp.sync) return;   // an online engine that can't send page writes: leave the game alone
     if (c.r8(0x030041B0) !== 1) {   // not in a level: the real table back (the Skills page shows its costs)
-      for (const p of [0, 1]) { const P = 0x03003C00 + 0x1AC * p; if (c.r32(P + 0x1C) === TAB_B) c.wN(P + 0x1C, TAB_A, 4); }
+      for (const p of [0, 1]) { const P = 0x03003C00 + 0x1AC * p; if (TABS.includes(c.r32(P + 0x1C)) && c.r32(P + 0x1C) !== TAB_A) c.wN(P + 0x1C, TAB_A, 4); }
       return;
     }
     const now = c.r32(0x030041A4), count = Math.min(2, c.r8(0x03003F58) || 1);
@@ -98,9 +108,11 @@
       }
       if (p === (c.online ? c.me : 0)) stunFx = fx;
       const tab = c.r32(P + 0x1C), cool = s.cdEnd !== undefined && ((s.cdEnd - now) | 0) > 0;
-      const want = cool ? TAB_B : TAB_A;
-      if ((tab === TAB_A || tab === TAB_B) && tab !== want && window.__gsTabB) c.wN(P + 0x1C, want, 4);
+      const dcool = s.dashCd !== undefined && ((s.dashCd - now) | 0) > 0;
+      const want = window.__gsDash ? TABS[(cool ? 1 : 0) | (dcool ? 2 : 0)] : cool ? TAB_B : TAB_A;
+      if (TABS.includes(tab) && tab !== want && window.__gsTabB) c.wN(P + 0x1C, want, 4);
       s.cdLeft = cool ? ((s.cdEnd - now) | 0) / 30 : 0;
+      s.dashLeft = dcool ? ((s.dashCd - now) | 0) / 30 : 0;
       // ---- Shield ----
       if (shL <= 0) { if (c.r32(P + 4) === F) c.wN(P + 4, 0, 4); s.hero = hero; s.max = 0; continue; }
       const max = Math.min(120, 20 * Math.min(6, shL + bonus));
@@ -117,6 +129,8 @@
         const back = Math.min(s.prevS, s.prevHp - hp), mx = c.s16(P + 0xD0) || 9999;
         hp = Math.min(mx, hp + back); c.wN(P + 0x17C, hp, 2);
       }
+      if (s.fill) { S = max; s.fill = false; }   // Blinding Aura
+      if (s.addS) { S = Math.min(max, S + s.addS); s.addS = 0; }   // Dash through foes with Lightning Blade up
       // drain, slowed by Spirit Regen (stat 30, player + 0xE0)
       const sr = Math.max(0, c.s16(P + 0xE0)), rate = Math.max(1, BASE_DRAIN * (1 - 0.1 * sr));
       s.acc = (s.acc || 0) + dt * rate / 30;
@@ -151,6 +165,74 @@
     window.__shieldFrac = shown ? shown.frac : 0;
     window.__lbGlow = shown && shown.lb ? 1 : 0;
   };
+  // ---- every animation frame: Dash and Blinding Aura (the cast windows are a few game ticks long) ----
+  const fast = () => {
+    const c = ctx(); if (!c || (c.online && !window.__mp.sync) || c.r8(0x030041B0) !== 1) { window.__auraS = 1; window.__auraX = 0; return; }
+    const now = c.r32(0x030041A4), count = Math.min(2, c.r8(0x03003F58) || 1);
+    const players = c.online ? [c.me] : [0, 1].filter((p) => p < Math.max(count, 1) || ewPtr(c.r32(0x03003C00 + 0x1AC * p)));
+    for (const p of players) {
+      const P = 0x03003C00 + 0x1AC * p, hero = c.r32(P), s = st[p];
+      if (!ewPtr(hero) || c.r8(P + 0x19F) !== 3) continue;
+      const hx = c.s16(hero + 0xAE), hy = c.s16(hero + 0xB2), mine = p === (c.online ? c.me : 0);
+      // Dash: take over the cast before its handler (Gwaihir) runs
+      if (window.__gsDash && !s.dash && c.r8(P + 0x1A3) === 4 && (c.r8(P + 0x1A5) & 1) && c.r8(hero + 0x62) !== 6) {
+        c.wN(P + 0x1A5, c.r8(P + 0x1A5) & ~1, 1);
+        let ang;
+        const fa = 0x0203FFC0 + 4 * p;
+        if (c.r8(fa) & 2) ang = c.r8(fa + 1) / 256 * Math.PI * 2;
+        else ang = (c.r8(hero + 0xF8) & 7) / 8 * Math.PI * 2;    // 8-way facing: 0 up, 2 right, 4 down, 6 left
+        s.dash = { end: (now + DASH_T) | 0, vx: Math.round(Math.sin(ang) * DASH_V * 65536), vy: Math.round(-Math.cos(ang) * DASH_V * 65536), hit: new Set(), soft: new Set(), lb: (c.r8(hero + 0x99) & 1) !== 0 };
+        s.dashCd = (now + DASH_CD) | 0;
+        if (mine) window.__dashFx = { t: performance.now(), x: hx, y: hy, a: ang };
+      }
+      if (s.dash) {
+        const d = s.dash;
+        if (((d.end - now) | 0) <= 0 || c.s16(P + 0x17C) <= 0) {
+          c.wN(hero + 0xB4, 0, 4); c.wN(hero + 0xB8, 0, 4); if (c.r8(hero + 0x62) === 6) c.wN(hero + 0x62, 1, 1);
+          for (const o of d.soft) if (ewPtr(o)) c.wN(o + 0xE8, c.r32(o + 0xE8) | 4, 4);   // foes solid again
+          s.dash = null;
+        } else {
+          if (c.r8(hero + 0x62) !== 6) c.wN(hero + 0x62, 6, 1);
+          c.wN(hero + 0xB4, d.vx, 4); c.wN(hero + 0xB8, d.vy, 4);
+          for (const o of objs(c, hero)) {
+            if (o === hero || d.hit.has(o) || !stunnable(c, o)) continue;
+            const dx = c.s16(o + 0xAE) - hx, dy = c.s16(o + 0xB2) - hy, r2 = dx * dx + dy * dy;
+            // foes near the path stop blocking (+0xE8 bit 2: the solid body the hero bumps into) until the dash ends
+            if (r2 < 48 * 48 && (c.r32(o + 0xE8) & 4)) { c.wN(o + 0xE8, c.r32(o + 0xE8) & ~4, 4); d.soft.add(o); }
+            if (r2 > 18 * 18) continue;
+            d.hit.add(o);
+            if (d.lb || (c.r8(hero + 0x99) & 1)) s.addS = (s.addS || 0) + 10;
+          }
+          if (mine) window.__dashTrail = { t: performance.now(), x: hx, y: hy };
+        }
+      }
+      // Blinding Aura: the hero's + 0x99 bit 3 is set while its burst lives
+      const ba = (c.r8(hero + 0x99) & 8) !== 0;
+      if (ba && !s.ba) {
+        s.fill = true;
+        const L = Math.max(1, c.r8(P + 0x173) << 24 >> 24), dmg = 10 + 2 * L;
+        for (const o of objs(c, hero)) {
+          if (o === hero) continue;
+          if (c.r32(o + 0x14) === BA_UPD) { c.wN(o + 0xB2, (c.s16(o + 0xB2) + 4000) & 0xffff, 2); c.wN(o + 0xD2, (c.s16(o + 0xD2) + 4000) & 0xffff, 2); continue; }
+          if (!stunnable(c, o)) continue;
+          const dx = c.s16(o + 0xAE) - hx, dy = c.s16(o + 0xB2) - hy, r2 = dx * dx + dy * dy;
+          if (r2 <= BA_R0 * BA_R0 || r2 > BA_R1 * BA_R1) continue;
+          c.wN(o + 0x5A, (c.s16(o + 0x5A) - dmg) & 0xffff, 2);
+          if (c.s16(o + 0x5A) > 0) { (s.stun || (s.stun = new Map())).set(o, (now + 90) | 0); stunHold(c, o, 90); }   // "blinded" 3 s
+        }
+        if (mine) window.__baT = performance.now();
+      }
+      if (ba) for (const o of objs(c, hero)) if (o !== hero && c.r32(o + 0x14) === BA_UPD && Math.abs(c.s16(o + 0xB2) - hy) < 1000) { c.wN(o + 0xB2, (c.s16(o + 0xB2) + 4000) & 0xffff, 2); c.wN(o + 0xD2, (c.s16(o + 0xD2) + 4000) & 0xffff, 2); }
+      s.ba = ba;
+    }
+    // the aura swells to twice its size for a moment after Blinding Aura
+    const bt = window.__baT ? (performance.now() - window.__baT) / 1000 : 9;
+    const env = bt < 0.15 ? bt / 0.15 : bt < 0.9 ? 1 : bt < 1.6 ? 1 - (bt - 0.9) / 0.7 : 0;
+    window.__auraS = 1 + env; window.__auraX = 2.0 * env;
+  };
+  const fastLoop = () => { requestAnimationFrame(fastLoop); try { fast(); } catch (e) { (window.__wideLog || (window.__wideLog = [])).push("gs fast: " + (e && e.message || e)); } };
+  requestAnimationFrame(fastLoop);
+  window.__dashLeft = () => { const c = ctx(); const p = c && c.online ? c.me : 0; return (st[p] && st[p].dashLeft) || 0; };
   window.__lbLeft = () => { const c = ctx(); const p = c && c.online ? c.me : 0; return (st[p] && st[p].cdLeft) || 0; };
   window.__gsState = () => st;
   setInterval(() => { try { tick(); } catch (e) { (window.__wideLog || (window.__wideLog = [])).push("gs: " + (e && e.message || e)); } }, 50);
@@ -241,6 +323,18 @@
           cx.stroke();
         }
       }
+      cx.globalCompositeOperation = "source-over";
+    }
+    // Dash: a pale streak behind Gandalf
+    const df = window.__dashFx, dtr = window.__dashTrail;
+    if (cam && df && dtr && performance.now() - df.t < 450) {
+      const f = Math.min(1, (performance.now() - dtr.t) / 250);
+      const x0 = X(df.x - cam[0]), y0 = Y(df.y - cam[1] - 12), x1 = X(dtr.x - cam[0]), y1 = Y(dtr.y - cam[1] - 12);
+      cx.globalCompositeOperation = "lighter";
+      const lg = cx.createLinearGradient(x0, y0, x1, y1);
+      lg.addColorStop(0, "rgba(200,225,255,0)"); lg.addColorStop(1, `rgba(220,235,255,${0.55 * (1 - f)})`);
+      cx.strokeStyle = lg; cx.lineCap = "round"; cx.lineWidth = 10 * v.k;
+      cx.beginPath(); cx.moveTo(x0, y0); cx.lineTo(x1, y1); cx.stroke();
       cx.globalCompositeOperation = "source-over";
     }
     const sk = window.__lbStrike;
