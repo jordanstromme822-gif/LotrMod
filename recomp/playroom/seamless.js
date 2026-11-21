@@ -8,6 +8,11 @@
 // the game's own zoom, from where the hero leaves to where they come in, like the camera following them across one
 // big level. No black frame, no lift, no line.
 //
+// v234 (Jordan, 2026-11-21: "Use 3d to connect the maps position them where you need them then add in the images that
+// would make them seamlessly connect"): a door at a map's edge puts the next map past that edge with a gap as in the 3D
+// World (64-160 map pixels), and the gap is filled with ground made from both maps' own edges: each edge strip mirrored
+// outwards and the two blended across the gap, so the old map's ground runs on into the new one's.
+//
 // How: the game writes the next level to IWRAM 0x030041F8 a few frames before its fade starts (0x03004174 still holds
 // the old one); that frame is copied off the game canvas and stays on top of the old screen's map picture. The way
 // the hero was walking (or the nearest map edge) says which side the next screen goes on; its entry point is the
@@ -22,6 +27,8 @@
   const T_WAIT = 0.88;       // how far (share of the scroll) the view goes before it waits for the new screen
   const STEP = 30;           // map pixels from the door the hero leaves by to the one they come in at
   const FEATHER = 26;        // map pixels over which the next screen's picture blends into this one at the join
+  const BRIDGE = [64, 112, 160];   // ground between two maps' edges: least, usual, most (map pixels)
+  const EDGE_NEAR = 120;     // a door this close to its map's edge leads off the map (else it is a door inside it)
   const ROW_Y = 0.575;       // the hero stands this far down the game's view (measured: 138 of 240 rows)
   // Top left of the game's whole view on the map (measured against the map pictures): the hero in the middle (18 rows
   // low), held inside the map with the wide view's extra margin ((w - 240) / 2 at the sides, (h - 160) / 2 at the
@@ -72,7 +79,7 @@
   const preload = (l) => {
     const D = window.__smData; if (!D || !D.SZ) return;
     const want = [l].concat((D.EE[l] || []).filter((e) => e[0] === 1).map((e) => e[3]));
-    want.forEach((k) => { if (D.SZ[k] && !pre[k]) pre[k] = [true, false].map((t) => { const im = new Image(); im.decoding = "async"; im.src = pic(k, t); return im; }); });
+    want.forEach((k) => { if (D.SZ[k] && !pre[k]) pre[k] = [false, true].map((t) => { const im = new Image(); im.decoding = "async"; im.src = pic(k, t); return im; }); });
   };
 
   // Where the game's picture sits on screen (CSS pixels inside #game) and which part of the map it shows.
@@ -139,20 +146,82 @@
     node.style.webkitMaskImage = g; node.style.maskImage = g;
   };
 
+  // Pixels of a map picture (map pixel units) in rectangle x, y, w, h, from the full picture or else the small one.
+  const pixels = (l, x, y, w, h) => {
+    const p = pre[l] || [], D = window.__smData, sz = D.SZ[l], ok = (im) => im && im.complete && im.naturalWidth;
+    const im = ok(p[0]) ? p[0] : ok(p[1]) ? p[1] : null; if (!im) return null;
+    const kx = im.naturalWidth / sz[0], ky = im.naturalHeight / sz[1];
+    const c = document.createElement("canvas"); c.width = w; c.height = h; const cx = c.getContext("2d");
+    cx.drawImage(im, x * kx, y * ky, w * kx, h * ky, 0, 0, w, h);
+    return cx.getImageData(0, 0, w, h).data;
+  };
+  // The ground between two maps: each map's last strip at the facing edge, mirrored outwards, the two blended
+  // across the gap (more of the old one near it, more of the new one near that), so both edges run on with no line.
+  function bridge(from, to, B, dir, gap, camA, camB) {
+    const D = window.__smData, szA = D.SZ[from], szB = D.SZ[to], ax = dir[0], sg = dir[1], pp = 1 - ax, K = 40;
+    const bb = [B.x, B.y], ca = [camA[0], camA[1], camA[2], camA[3]], cb = [B.x + camB[0], B.y + camB[1]];
+    const p0 = Math.floor(Math.min(ca[pp], cb[pp]) - 60), p1 = Math.ceil(Math.max(ca[pp], cb[pp]) + ca[2 + pp] + 60), PL = p1 - p0;
+    if (PL <= 0 || PL > 2400) return null;
+    const eA = sg > 0 ? szA[ax] : 0, kA = Math.min(K, szA[ax]), kB = Math.min(K, szB[ax]);
+    const rect = (sz, a0, al) => ax ? [0, a0, sz[0], al] : [a0, 0, al, sz[1]];
+    const ra = rect(szA, sg > 0 ? szA[ax] - kA : 0, kA), rb = rect(szB, sg > 0 ? 0 : szB[ax] - kB, kB);
+    const PA = pixels(from, ...ra), PB = pixels(to, ...rb); if (!PA || !PB) return null;
+    const rwA = ra[2], rwB = rb[2];
+    const mir = (v, n) => { v = ((v % (2 * n)) + 2 * n) % (2 * n); return v < n ? v : 2 * n - 1 - v; };   // mirrored repeat
+    const at = (P, rw, a, p) => (ax ? (a * rw + p) : (p * rw + a)) * 4;
+    const W = ax ? PL : gap, H = ax ? gap : PL, c = document.createElement("canvas"); c.width = W; c.height = H;
+    const cx = c.getContext("2d"), out = cx.createImageData(W, H), o = out.data;
+    for (let d = 0; d < gap; d++) {
+      const t = (d + 0.5) / gap, w = t * t * (3 - 2 * t);
+      // distance from each edge, mirrored back into that map's strip
+      const ia = mir(d, kA), ib = mir(gap - 1 - d, kB);
+      const aA = sg > 0 ? kA - 1 - ia : ia, aB = sg > 0 ? ib : kB - 1 - ib;
+      for (let i = 0; i < PL; i++) {
+        const p = p0 + i, qa = mir(p, szA[pp]), qb = mir(Math.round(p - bb[pp]), szB[pp]);
+        const sa = at(PA, rwA, aA, qa), sb = at(PB, rwB, aB, qb);
+        const row = ax ? (sg > 0 ? d : gap - 1 - d) : i, col = ax ? i : (sg > 0 ? d : gap - 1 - d), q = (row * W + col) * 4;
+        o[q] = PA[sa] + (PB[sb] - PA[sa]) * w; o[q + 1] = PA[sa + 1] + (PB[sb + 1] - PA[sa + 1]) * w; o[q + 2] = PA[sa + 2] + (PB[sb + 2] - PA[sa + 2]) * w; o[q + 3] = 255;
+      }
+    }
+    cx.putImageData(out, 0, 0);
+    const x = ax ? p0 : (sg > 0 ? eA : eA - gap), y = ax ? (sg > 0 ? eA : eA - gap) : p0;
+    c.style.imageRendering = "auto";
+    return { c, x, y, w: W, h: H };
+  }
+
   function start(m, from, to, hero, snap, view) {
     const D = window.__smData || {};
     const camA = view.cam, same = to === from;
     if (window.__seamDebug) window.__seamDbg = { from, to, hero, cam: camA, v: view.v, pic: snap.toDataURL() };
-    // One map: the old screen at 0,0; the next one placed so its entry point is a step on from the door.
+    // One map: the old screen at 0,0. A door at the map's edge: the next map goes past that edge, the gap between
+    // them as in the 3D World (held to BRIDGE), the hero's way in straight on from the way out, and the gap filled
+    // with ground made from both maps' edges. A door inside the map: the next map is laid over it a step past the door.
     const dir = heading(hero, from), entry = same ? null : entryOf(from, to);
-    let B = { x: 0, y: 0 }, seam = 0;
+    const szA = D.SZ && D.SZ[from], szB = D.SZ && D.SZ[to];
+    let B = { x: 0, y: 0 }, seam = 0, gap = 0;
     if (entry) {
-      const go = [dir[0] === 0 ? dir[1] : 0, dir[0] === 1 ? dir[1] : 0];
-      B = { x: hero[0] + go[0] * STEP - entry[0], y: hero[1] + go[1] * STEP - entry[1] };
-      seam = hero[dir[0]] + dir[1] * STEP / 2;
+      const ax = dir[0], sg = dir[1], pp = 1 - ax;
+      const edgeA = szA ? (sg > 0 ? szA[ax] : 0) : null, toEdge = edgeA === null ? 1e9 : Math.abs(edgeA - hero[ax]);
+      if (szB && toEdge <= EDGE_NEAR) {
+        gap = BRIDGE[1];
+        const L = layout(), TA = L && L.T && L.T[from], TB = L && L.T && L.T[to];
+        if (TA && TB) {   // the 3D World's own gap on this side, when it puts the next map there
+          const g = sg > 0 ? (ax ? TB.y - (TA.y + TA.h) : TB.x - (TA.x + TA.w)) : (ax ? TA.y - (TB.y + TB.h) : TA.x - (TB.x + TB.w));
+          if (g >= 0) gap = Math.max(BRIDGE[0], Math.min(BRIDGE[2], g));
+        }
+        const edgeB = edgeA + sg * gap, b = [0, 0];
+        b[ax] = sg > 0 ? edgeB : edgeB - szB[ax];
+        b[pp] = hero[pp] - entry[pp];
+        B = { x: b[0], y: b[1] };
+      } else {
+        gap = 0;
+        const go = [ax === 0 ? sg : 0, ax === 1 ? sg : 0];
+        B = { x: hero[0] + go[0] * STEP - entry[0], y: hero[1] + go[1] * STEP - entry[1] };
+        seam = hero[ax] + sg * STEP / 2;
+      }
     }
     const ob = entry && origin(entry, to, view.v.w, view.v.h);
-    if (window.__seamDebug) Object.assign(window.__seamDbg, { dir, entry, B, seam });
+    if (window.__seamDebug) Object.assign(window.__seamDbg, { dir, entry, B, seam, gap });
     const camBest = entry ? [ob[0] + view.v.sx, ob[1] + view.v.sy, camA[2], camA[3]] : camA.slice();
 
     let el = document.getElementById("seam");
@@ -181,11 +250,16 @@
     };
     // The next screen over the old one past the door, blending in at the join (it comes up as the view moves).
     const imB = entry ? mapImg(to, B.x, B.y) : null;
-    if (imB) { maskAt(imB, dir[0], dir[0] ? B.y : B.x, seam, dir[1]); imB.style.opacity = "0"; }
+    if (imB && !gap) maskAt(imB, dir[0], dir[0] ? B.y : B.x, seam, dir[1]);
+    let br = null;
+    if (imB && gap) { try { br = bridge(from, to, B, dir, gap, camA, camBest); } catch (e) { br = null; (window.__wideLog || (window.__wideLog = [])).push("seam: ground " + (e && e.message)); } }
+    if (window.__seamDebug) window.__seamDbg.br = !!br;
+    if (br) put(br.c, br.x, br.y, br.w, br.h);
+    if (imB) imB.style.opacity = "0";
     // The game's picture on top: whole at first (exactly what was on screen), then its HUD rows and the black past the
     // map's edge give way to the map pictures as the view moves.
     const wholeA = twin(snap, camA, from, view.cut, camA[0], camA[1]);
-    S = { el, wd, put, twin, snapA: snap, wholeA, wholeB: null, viewA: view, B, imB, from, to, camA, camB: camBest, camBact: null, view, t: 0, uR: 0, last: performance.now(), haveB: false, wantB: false,
+    S = { el, wd, put, twin, snapA: snap, wholeA, wholeB: null, viewA: view, B, imB, br: br && br.c, from, to, camA, camB: camBest, camBact: null, view, t: 0, uR: 0, last: performance.now(), haveB: false, wantB: false,
       loaded: false, sawLoad: false, pl: -1, steady: 0, online: m.online, born: performance.now(), paused: false };
     const cA = [camA[0] + camA[2] / 2, camA[1] + camA[3] / 2], cB = [B.x + camBest[0] + camBest[2] / 2, B.y + camBest[1] + camBest[3] / 2];
     S.dur = Math.max(D_MIN, Math.min(D_MAX, Math.hypot(cB[0] - cA[0], cB[1] - cA[1]) / SPEED));
@@ -212,6 +286,7 @@
     const ox = v.css[0] + v.css[2] / 2, oy = v.css[1] + v.css[3] / 2;
     const g = smooth(u / 0.22);
     if (s.imB) s.imB.style.opacity = g.toFixed(3);
+    if (s.br) s.br.style.opacity = g.toFixed(3);
     s.wholeA.style.opacity = (1 - g).toFixed(3);
     if (s.wholeB) s.wholeB.style.opacity = w.toFixed(3);   // the black past the new map's edge comes back as the view settles
     s.snapA.style.opacity = (1 - w).toFixed(3);              // and the hero is only where they came in
