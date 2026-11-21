@@ -388,3 +388,9 @@ Built by `tools/siege/build.py ROM OUT --base 0x1500000`, put in the page by `re
   offset, store chunk 1 again as plain data with the new tiles appended (numbers 1413 + k for Hornburg).
 - Vendors: object type 17, byte 8 = kind (0 forge, 2 spirit shrine); they show and work in slot 45 although
   Hornburg (46) has none.
+
+- 2026-11-21 v235 (sharp-v235.py): the HD picture was drawn on a canvas capped at 1280 wide / 3 px per game pixel and the
+  browser stretched it (bilinear blur, ~2.6x on a sideways iPhone). Now the last lighting pass renders into a 3x texture and
+  one pass (5-tap Catmull-Rom + CAS-style sharpening, 4 taps, clamped) draws it at the screen's own pixels (cap 2880).
+  Slow check is a trial ladder (full res -> 3x -> Low -> raw): a step that doesn't raise the picture rate 10% (or to 40/s)
+  is undone, so an engine-bound level (Moria on iPhone) no longer throws HD away.
