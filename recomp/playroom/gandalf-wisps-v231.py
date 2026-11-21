@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Play Room v230 (Jordan, 2026-11-21): "Change whisp summon to 2.5 revolutions that last approx 4.8 seconds all rotating
+"""Play Room v231 (Jordan, 2026-11-21; built on the seamless-doors v230): "Change whisp summon to 2.5 revolutions that last approx 4.8 seconds all rotating
 clockwise with a .7 second delay in between cast times make an animation of Gandalf raising his staff to summon the whisp
 out the top of it".
 
-  gandalf-wisps-v230.py in.html out.html original.gba      (in.html already has gandalf-wisps-v227.py)
+  gandalf-wisps-v231.py in.html out.html original.gba      (in.html already has gandalf-wisps-v227.py)
 
   - gandalf-shield.js (swapped in whole): WISP_TURNS 2.5 x WISP_TURN 57.6 ticks (4.8 s), clockwise only, WISP_GAP 21 ticks
     (0.7 s); each cast plays the game's spell-cast pose (staff raised) and the wisp comes out of the staff top.
