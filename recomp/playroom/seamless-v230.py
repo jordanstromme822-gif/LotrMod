@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
-"""Play Room v229 "Seamless journey" (Jordan, 2026-11-20: "Interconnect each level in a 3Dimensional way so it feels
-like traveling from each characters start to finish is seamless with no black screens in between").
+"""Play Room v230 "One big level" (Jordan, 2026-11-20: "Interconnect each level in a 3Dimensional way so it feels
+like traveling from each characters start to finish is seamless with no black screens in between"; 2026-11-21: "I want
+them to feel like one big level, no line or cut scene, just cohesive movement between maps").
 
-  seamless-v229.py in.html out.html
+  seamless-v230.py in.html out.html
 
 - seamless.js goes in as its own <script id="seamlessJs"> (replaced whole if it is there already). It wraps
-  GbrHost.draw: when the hero takes a door, instead of the game's fade to black, load and fade in, the camera flies
-  over the 3D World layout (World3D.layout from world3d.js, v225) from the old screen to the new one and lands on it.
-- The level-load turbo (EWRAM 0x0203FFF1) also runs while window.__seamTurbo is set, so the flight is not kept
-  waiting by the game's fade out and fade in (1-player and P2; online keeps its own speed).
+  GbrHost.draw: when the hero takes a door, instead of the game's fade to black, load and fade in, the next screen's
+  map picture is joined on past the door and the view scrolls straight on, at the game's zoom, to where the hero comes
+  in (v229 flew over the 3D World instead: lift, tilt, gold road).
+- The level-load turbo (EWRAM 0x0203FFF1) also runs while window.__seamTurbo is set (from v229; kept if present).
 """
 import os, re, sys
 HERE = os.path.dirname(os.path.abspath(__file__))
