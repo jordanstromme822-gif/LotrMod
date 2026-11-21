@@ -5,7 +5,8 @@
 // against the screen it leads to, at that screen's way in (the exits and ways in the Story map read from the game, EE).
 // Missions with no door between them (a story jump) continue from the far side of the screen. Gold roads are doors,
 // dashed roads are story jumps. Pick a hero to light their path in story order with numbered missions; tap a screen
-// for its card. One finger moves the map, two fingers zoom, turn and tilt; on PC drag, right-drag and the wheel.
+// for its card. v237: screens joined at an edge door have the in-between ground the game's seamless doors (v234)
+// draw, blended from both screens' edges, so the world reads as one continuous land. One finger moves the map, two fingers zoom, turn and tilt; on PC drag, right-drag and the wheel.
 // Data comes from the Story map (window.__smData). three.js r128 is lazy-loaded from lib/three.min.js.
 (() => {
   const U = 100;                                   // picture pixels per world unit
@@ -168,6 +169,8 @@
     unmount();
     if (!document.getElementById("w3dCss")) { const st = document.createElement("style"); st.id = "w3dCss"; st.textContent = CSS; document.head.appendChild(st); }
     sc.classList.add("w3d-sc");
+    const leg = sc.parentNode && sc.parentNode.querySelector(".sm-leg");
+    if (leg) leg.innerHTML = '<span><b style="background:linear-gradient(90deg,#6f8a3a,#b9a063,#6f8a3a)"></b>Joined ground: walk straight on</span><span><b style="background:#e8b84a;height:5px;vertical-align:2px"></b>Door inside a screen</span><span><b style="background:repeating-linear-gradient(90deg,#cfc6b0 0 4px,transparent 4px 7px);height:3px;vertical-align:3px"></b>Story jump</span>';
     const root = document.createElement("div"); root.id = "w3d"; sc.appendChild(root);
     const msg = document.createElement("div"); msg.className = "w-msg"; msg.textContent = "Raising the world…"; root.appendChild(msg);
     const view = { root, dead: false };
@@ -234,9 +237,8 @@
     const thumbQ = Object.keys(tiles).map(Number);
     function loadThumb(l) {
       loader.load("maps/t/L" + l + ".webp", (tx) => { if (view.dead) { tx.dispose(); return; } tx.anisotropy = maxAniso;
-        const k = tiles[l]; if (!k.full) { k.mat.map = tx; k.mat.color.set(0xffffff); k.mat.needsUpdate = true; } k.thumb = tx; loaded++; dirty(); }, undefined, () => {});
+        const k = tiles[l]; if (!k.full) { k.mat.map = tx; if (!k.dim) k.mat.color.set(0xffffff); k.mat.needsUpdate = true; } k.thumb = tx; loaded++; tryBridges(l); dirty(); }, undefined, () => {});
     }
-    thumbQ.forEach(loadThumb);
     // Full pictures for the screens you are close to (at most 6 at once).
     const fullSet = [];
     function wantFull(l) {
@@ -248,6 +250,86 @@
         while (fullSet.length > 6) { const o = tiles[fullSet.shift()]; if (o.full) { o.full.dispose(); o.full = false; o.mat.map = o.thumb || null; o.mat.needsUpdate = true; } }
         dirty(); }, undefined, () => { k.fullLoading = false; });
     }
+
+    // Ground between joined screens (v237, as the game's seamless doors since v234): a door within 120 px of its
+    // screen's edge leads straight across a gap to the next screen, and the gap is land made from both screens' own
+    // edges, each 40 px edge strip mirrored outwards and the two blended across (more of each near its own side), as a
+    // ramp from one screen's height to the other's. Doors inside a screen keep their gold arc.
+    const EDGE_NEAR = 120, STRIP = 40, BK = 0.2;   // door-to-edge reach, strip width (map px), bridge texels per map px
+    const bridges = [], bridged = {};
+    const pairKey = (a, b) => Math.min(a, b) + "-" + Math.max(a, b);
+    links.forEach((k) => {
+      if (!k.real) return; const key = pairKey(k.a, k.b); if (bridged[key]) return;
+      const A = T[k.a], Bt = T[k.b]; if (!A || !Bt) return;
+      let side = null, g = 0;
+      const ovY = Math.min(A.y + A.h, Bt.y + Bt.h) - Math.max(A.y, Bt.y), ovX = Math.min(A.x + A.w, Bt.x + Bt.w) - Math.max(A.x, Bt.x);
+      if (Bt.x >= A.x + A.w && ovY > 0) { side = "R"; g = Bt.x - (A.x + A.w); } else if (Bt.x + Bt.w <= A.x && ovY > 0) { side = "L"; g = A.x - (Bt.x + Bt.w); }
+      else if (Bt.y >= A.y + A.h && ovX > 0) { side = "B"; g = Bt.y - (A.y + A.h); } else if (Bt.y + Bt.h <= A.y && ovX > 0) { side = "T"; g = A.y - (Bt.y + Bt.h); }
+      if (!side || g < 8 || g > 420) return;
+      const ax = side === "L" || side === "R" ? 0 : 1, ov = ax ? ovX : ovY; if (ov < 80) return;
+      const edge = side === "R" ? A.x + A.w : side === "L" ? A.x : side === "B" ? A.y + A.h : A.y;
+      if (Math.abs(k.pa[ax] - edge) > EDGE_NEAR) return;
+      bridged[key] = 1;
+      bridges.push({ a: k.a, b: k.b, side, ax, gap: g, p0: Math.max(ax ? A.x : A.y, ax ? Bt.x : Bt.y), p1: Math.min(ax ? A.x + A.w : A.y + A.h, ax ? Bt.x + Bt.w : Bt.y + Bt.h), built: false });
+    });
+    const pixCache = {};
+    function pix(l) {   // the screen's thumbnail as pixels, at BK texels per map pixel
+      if (pixCache[l]) return pixCache[l];
+      const k = tiles[l], im = k && k.thumb && k.thumb.image; if (!im || !im.width) return null;
+      const w = Math.max(2, Math.round(k.t.w * BK)), h = Math.max(2, Math.round(k.t.h * BK)), c = document.createElement("canvas"); c.width = w; c.height = h;
+      const cx = c.getContext("2d"); cx.drawImage(im, 0, 0, w, h);
+      return (pixCache[l] = { d: cx.getImageData(0, 0, w, h).data, w, h });
+    }
+    const bridgeMats = [];
+    function buildBridge(br) {
+      const PA = pix(br.a), PB = pix(br.b); if (!PA || !PB) return;
+      br.built = true;
+      const A = T[br.a], Bt = T[br.b], ax = br.ax, sg = br.side === "R" || br.side === "B" ? 1 : -1;
+      const G = Math.max(2, Math.round(br.gap * BK)), N = Math.max(2, Math.round((br.p1 - br.p0) * BK)), K = Math.max(1, Math.round(STRIP * BK));
+      const mir = (v, n) => { v = ((v % (2 * n)) + 2 * n) % (2 * n); return v < n ? v : 2 * n - 1 - v; };
+      // canvas: columns run with world x, rows with world z
+      const W = ax ? N : G, H = ax ? G : N, c = document.createElement("canvas"); c.width = W; c.height = H;
+      const cx = c.getContext("2d"), out = cx.createImageData(W, H), o = out.data;
+      const at = (P, x, y) => { x = Math.max(0, Math.min(P.w - 1, x)); y = Math.max(0, Math.min(P.h - 1, y)); return (y * P.w + x) * 4; };
+      const aOff = Math.round(((ax ? A.x : A.y)) * BK), bOff = Math.round(((ax ? Bt.x : Bt.y)) * BK), q0 = Math.round(br.p0 * BK);
+      const aLen = ax ? PA.h : PA.w, bLen = ax ? PB.h : PB.w;
+      for (let d = 0; d < G; d++) {
+        const t = (d + 0.5) / G, w = t * t * (3 - 2 * t);
+        const ia = mir(d, K), ib = mir(G - 1 - d, K);
+        const aA = sg > 0 ? aLen - 1 - ia : ia, aB = sg > 0 ? ib : bLen - 1 - ib;
+        for (let i = 0; i < N; i++) {
+          const pa = q0 + i - aOff, pb = q0 + i - bOff;
+          const sa = ax ? at(PA, pa, aA) : at(PA, aA, pa), sb = ax ? at(PB, pb, aB) : at(PB, aB, pb);
+          const dd = sg > 0 ? d : G - 1 - d, row = ax ? dd : i, col = ax ? i : dd, q = (row * W + col) * 4;
+          o[q] = PA.d[sa] + (PB.d[sb] - PA.d[sa]) * w; o[q + 1] = PA.d[sa + 1] + (PB.d[sb + 1] - PA.d[sa + 1]) * w; o[q + 2] = PA.d[sa + 2] + (PB.d[sb + 2] - PA.d[sa + 2]) * w; o[q + 3] = 255;
+        }
+      }
+      cx.putImageData(out, 0, 0);
+      const tx = new THREE.CanvasTexture(c); tx.anisotropy = maxAniso;
+      // A ramp from A's top to B's top, with stone sides down to the ground.
+      const yA = tiles[br.a].y, yB = tiles[br.b].y;
+      const e0 = (sg > 0 ? (ax ? A.y + A.h : A.x + A.w) : (ax ? A.y : A.x)) / U, e1 = e0 + sg * br.gap / U, s0 = br.p0 / U, s1 = br.p1 / U;
+      const P = (e, s, y) => ax ? [s, y, e] : [e, y, s];
+      const lo = Math.min(e0, e1), hi = Math.max(e0, e1), yLo = e0 < e1 ? yA : yB, yHi = e0 < e1 ? yB : yA;
+      // corners: (lo,s0) (hi,s0) (lo,s1) (hi,s1); uv: world x -> u, world z -> 1 - v
+      const pos = [], uv = [], idx = [];
+      const corner = (e, s, y) => { pos.push(...P(e, s, y)); const wx = ax ? s : e, wz = ax ? e : s; const x0 = ax ? s0 : lo, x1 = ax ? s1 : hi, z0 = ax ? lo : s0, z1 = ax ? hi : s1; uv.push((wx - x0) / (x1 - x0), 1 - (wz - z0) / (z1 - z0)); };
+      corner(lo, s0, yLo); corner(hi, s0, yHi); corner(lo, s1, yLo); corner(hi, s1, yHi);
+      idx.push(0, 2, 1, 1, 2, 3);
+      const geo = new THREE.BufferGeometry(); geo.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3)); geo.setAttribute("uv", new THREE.Float32BufferAttribute(uv, 2)); geo.setIndex(idx); geo.computeVertexNormals();
+      const mat = new THREE.MeshBasicMaterial({ map: tx, side: THREE.DoubleSide });
+      const m = new THREE.Mesh(geo, mat); scene.add(m);
+      // stone sides at both ends of the span
+      const sp = [], si = [];
+      [s0, s1].forEach((s) => { const b = sp.length / 3; sp.push(...P(lo, s, yLo), ...P(hi, s, yHi), ...P(lo, s, -0.6), ...P(hi, s, -0.6)); si.push(b, b + 1, b + 2, b + 1, b + 3, b + 2); });
+      const sg2 = new THREE.BufferGeometry(); sg2.setAttribute("position", new THREE.Float32BufferAttribute(sp, 3)); sg2.setIndex(si); sg2.computeVertexNormals();
+      const sm = new THREE.Mesh(sg2, new THREE.MeshLambertMaterial({ color: 0x4a4038, side: THREE.DoubleSide })); scene.add(sm);
+      br.mesh = m; br.mat = mat; br.tx = tx; bridgeMats.push(mat);
+      if (br.dimmed) mat.color.set(0x3a3a3a);
+      dirty();
+    }
+    const tryBridges = (l) => bridges.forEach((br) => { if (!br.built && (br.a === l || br.b === l)) buildBridge(br); });
+    thumbQ.forEach(loadThumb);
 
     // Roads: gold arcs for doors, dashed pale arcs for story jumps.
     const roadMat = new THREE.MeshBasicMaterial({ color: 0xe8b84a }), jumpMat = new THREE.LineDashedMaterial({ color: 0xcfc6b0, dashSize: 1.2, gapSize: 0.9, transparent: true, opacity: 0.8 });
@@ -262,9 +344,10 @@
       const key = Math.min(k.a, k.b) + "-" + Math.max(k.a, k.b) + (k.real ? "r" : "j"); if (doneRoad[key]) return; doneRoad[key] = 1;
       const c = arc(k.pa, k.pb, tiles[k.a].y, tiles[k.b].y, 0.6);
       let o;
-      if (k.real) o = new THREE.Mesh(new THREE.TubeGeometry(c, 24, 0.22, 6, false), roadMat);
+      if (k.real && bridged[pairKey(k.a, k.b)]) o = null;
+      else if (k.real) o = new THREE.Mesh(new THREE.TubeGeometry(c, 24, 0.22, 6, false), roadMat);
       else { o = new THREE.Line(new THREE.BufferGeometry().setFromPoints(c.getPoints(40)), jumpMat); o.computeLineDistances(); }
-      scene.add(o); roads.push(o);
+      if (o) { scene.add(o); roads.push(o); }
       // A glowing gem where a door is.
       if (k.real) [k.pa, k.pb].forEach((p, i) => { const g = new THREE.Mesh(new THREE.OctahedronGeometry(0.45), new THREE.MeshBasicMaterial({ color: 0xffe08a })); g.position.set(p[0] / U, tiles[i ? k.b : k.a].y + 0.5, p[1] / U); scene.add(g); roads.push(g); });
     });
@@ -283,7 +366,8 @@
         const pts = [];
         const seg = (c) => c.getPoints(16).forEach((p) => pts.push(p));
         seg(new THREE.LineCurve3(new THREE.Vector3(ta.cx, ta.y + 0.9, ta.cz), new THREE.Vector3(pa[0] / U, ta.y + 0.9, pa[1] / U)));
-        seg(arc(pa, pb, ta.y + 0.75, tb.y + 0.75, 1.2));
+        if (bridged[pairKey(a, b)]) seg(new THREE.LineCurve3(new THREE.Vector3(pa[0] / U, ta.y + 0.9, pa[1] / U), new THREE.Vector3(pb[0] / U, tb.y + 0.9, pb[1] / U)));
+        else seg(arc(pa, pb, ta.y + 0.75, tb.y + 0.75, 1.2));
         seg(new THREE.LineCurve3(new THREE.Vector3(pb[0] / U, tb.y + 0.9, pb[1] / U), new THREE.Vector3(tb.cx, tb.y + 0.9, tb.cz)));
         const tube = new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts), 60, 0.32, 6, false), mat);
         scene.add(tube); pathObjs.push(tube);
@@ -378,6 +462,7 @@
       const on = new Set(sel(h));
       Object.values(tiles).forEach((k) => { const lit = h < 0 || on.has(k.t.l); k.mat.color.set(lit ? 0xffffff : 0x3a3a3a); k.edges.material.opacity = lit ? 0.85 : 0.2; k.dim = !lit; });
       roads.forEach((o) => { o.visible = h < 0; });
+      bridges.forEach((br) => { br.dimmed = !!(tiles[br.a].dim || tiles[br.b].dim); if (br.mat) br.mat.color.set(br.dimmed ? 0x3a3a3a : 0xffffff); });
       clearPath();
       if (h >= 0 && h < 4) D.HEROES[h].m.forEach((ms) => drawPath(ms, HERO_COL[h]));
       if (h === 4) D.BONUS.forEach((b) => drawPath(b.s.map((v) => v[0]), HERO_COL[4]));
@@ -544,9 +629,10 @@
       cancelAnimationFrame(raf); ro.disconnect(); window.removeEventListener("keydown", onKey);
       scene.traverse((o) => { if (o.geometry) o.geometry.dispose(); });
       Object.values(tiles).forEach((k) => { k.thumb && k.thumb.dispose(); k.full && k.full.dispose(); k.mat.dispose(); });
+      bridges.forEach((br) => { br.tx && br.tx.dispose(); br.mat && br.mat.dispose(); });
       renderer.dispose(); if (renderer.forceContextLoss) renderer.forceContextLoss(); root.remove();
     };
-    view.api = { pickHero, showCard, fitTo, cam, tiles, layout: L, dirty };
+    view.api = { pickHero, showCard, fitTo, cam, goal, tiles, layout: L, dirty, bridges };
     fitTo(sel(-1), true); applyCam(); dirty();
   }
 
