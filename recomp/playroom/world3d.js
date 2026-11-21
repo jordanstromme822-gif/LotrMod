@@ -220,6 +220,7 @@
     // Slabs.
     const side = new THREE.MeshLambertMaterial({ color: 0x4a4038 }), bottom = new THREE.MeshLambertMaterial({ color: 0x1a1512 });
     const loader = new THREE.TextureLoader();
+    const W3X = { 76: 1 };   // v238: hand-built screens (game art re-laid), 3D World only
     const tiles = {}, pickables = [];
     const top = (l) => (RISE[region(l)] || 0) * 1 + 0.6;
     Object.values(T).forEach((t) => {
@@ -236,7 +237,7 @@
     let loaded = 0;
     const thumbQ = Object.keys(tiles).map(Number);
     function loadThumb(l) {
-      loader.load("maps/t/L" + l + ".webp", (tx) => { if (view.dead) { tx.dispose(); return; } tx.anisotropy = maxAniso;
+      loader.load((W3X[l] ? "maps/x/t/L" : "maps/t/L") + l + ".webp", (tx) => { if (view.dead) { tx.dispose(); return; } tx.anisotropy = maxAniso;
         const k = tiles[l]; if (!k.full) { k.mat.map = tx; if (!k.dim) k.mat.color.set(0xffffff); k.mat.needsUpdate = true; } k.thumb = tx; loaded++; tryBridges(l); dirty(); }, undefined, () => {});
     }
     // Full pictures for the screens you are close to (at most 6 at once).
@@ -244,7 +245,7 @@
     function wantFull(l) {
       const k = tiles[l]; if (!k || k.full || k.fullLoading) return;
       k.fullLoading = true;
-      loader.load("maps/L" + l + ".webp", (tx) => { k.fullLoading = false; if (view.dead) { tx.dispose(); return; }
+      loader.load((W3X[l] ? "maps/x/L" : "maps/L") + l + ".webp", (tx) => { k.fullLoading = false; if (view.dead) { tx.dispose(); return; }
         tx.anisotropy = maxAniso; tx.magFilter = THREE.NearestFilter;
         k.full = tx; k.mat.map = tx; k.mat.color.set(0xffffff); k.mat.needsUpdate = true; fullSet.push(l);
         while (fullSet.length > 6) { const o = tiles[fullSet.shift()]; if (o.full) { o.full.dispose(); o.full = false; o.mat.map = o.thumb || null; o.mat.needsUpdate = true; } }
