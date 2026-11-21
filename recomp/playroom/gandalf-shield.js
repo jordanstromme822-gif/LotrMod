@@ -45,7 +45,7 @@
 //     WISP_TURN ticks each, from WISP_R0 out to WISP_R1 px (about half the screen across), then it fades. It passes
 //     through foes: each foe it touches loses 5 Hit Points / Wisps level straight off (no armor), flashes with a yellow
 //     aura and gives Gandalf 1 Shield / level; the same wisp can touch the same foe again after WISP_REHIT ticks.
-//     v230 (Jordan): 2.5 turns over 4.8 s, all clockwise, 0.7 s apart; each cast plays the game's spell-cast pose (staff
+//     v231 (Jordan): 2.5 turns over 4.8 s, all clockwise, 0.7 s apart; each cast plays the game's spell-cast pose (staff
 //     raised) and the wisp leaves the staff top, then sinks to its usual height as it circles.
 // Works in 1-player, P2 (one or two games: every write goes into every running game) and online (each page runs only
 // its own player; the engine sends page writes with the buttons, so both pages see the same shield).
@@ -56,7 +56,7 @@
   // v222: + Wisps cooling << 3 (I-P at 0x09601000 + 0x100 * i)
   for (let i = 0; i < 8; i++) TABS.push(0x09601000 + 0x100 * i);
   const CD_TICKS = 600, BASE_DRAIN = 4, STUN_R = 80, STUN_T = 120;
-  // v230 cast pose (Jordan: "an animation of Gandalf raising his staff to summon the wisp out the top of it"): the game's own
+  // v231 cast pose (Jordan: "an animation of Gandalf raising his staff to summon the wisp out the top of it"): the game's own
   // spell cast (the one Blinding Aura plays: state 0x0A, animation set WISP_CAST_SET, animation 0), cut short after the raise.
   // The wisp leaves the staff top WISP_POP ticks in and he stands again at WISP_END.
   const WISP_STAND_SET = 0x0805B324, WISP_CAST_SET = 0x0805B5A4, WISP_CAST_GFX = 0x080621E0, WISP_POP = 4, WISP_END = 7, WISP_TIP = 34, WISP_DROP = 10;
@@ -301,7 +301,7 @@
         if ((c.r8(P + 0x171) << 24 >> 24) > 0 && !(((s.wispCd || 0) - now | 0) > 0) && sp >= WISP_COST &&
             c.s16(P + 0x17C) > 0 && !WISP_NO_STATE.includes(st62) && !(s.dash) && !s.raise) {
           c.wN(P + 0x17E, (sp - WISP_COST) & 0xffff, 2);
-          // v230: he raises his staff (the game's cast pose) and the wisp leaves its top WISP_POP ticks later
+          // v231: he raises his staff (the game's cast pose) and the wisp leaves its top WISP_POP ticks later
           s.wispCd = (now + WISP_GAP) | 0;
           s.raise = { t0: now, pose: c.r32(hero + 0x24) === WISP_STAND_SET };
           if (s.raise.pose) {
@@ -620,7 +620,7 @@
         const sg = cx.createRadialGradient(ex, ey + hh * k, 0, ex, ey + hh * k, 10 * k);
         sg.addColorStop(0, `rgba(255,220,140,${0.22 * fade})`); sg.addColorStop(1, "rgba(255,220,140,0)");
         cx.fillStyle = sg; cx.beginPath(); cx.ellipse(ex, ey + hh * k, 10 * k, 5 * k, 0, 0, Math.PI * 2); cx.fill();
-        // v230: a burst of light at the staff top as it comes out
+        // v231: a burst of light at the staff top as it comes out
         if (u < 8) {
           const bx = X(w.x - cam[0]), by = Y(w.y - cam[1] - WISP_TIP), e = u / 8, br = (6 + 16 * e) * k;
           const bg = cx.createRadialGradient(bx, by, 0, bx, by, br);
