@@ -1,24 +1,27 @@
-// Seamless journey (Jordan, 2026-11-20: "Interconnect each level in a 3Dimensional way so it feels like traveling from
-// each character's start to finish is seamless with no black screens in between").
+// Seamless journey, one big level (Jordan, 2026-11-20: "Interconnect each level in a 3Dimensional way so it feels like
+// traveling from each character's start to finish is seamless with no black screens in between"; 2026-11-21: "I want
+// them to feel like one big level, no line or cut scene, just cohesive movement between maps").
 //
 // When the hero walks through a door the game turns the screen black for about a second (fade out, the new screen is
-// built, fade in). Now the page covers that with a short flight over the same joined world as the Story map's 3D World
-// (World3D.layout): the camera lifts off the screen the hero is leaving, tilts back over the overhead pictures of both
-// screens with the door's gold road between them, and comes down where the hero walks in. No black frame is shown.
+// built, fade in). Now the page joins the two screens into one map at the door instead: the next screen's map picture
+// is laid right past the door the hero walks through (its own door a step further on), and the view scrolls on, at
+// the game's own zoom, from where the hero leaves to where they come in, like the camera following them across one
+// big level. No black frame, no lift, no line.
 //
 // How: the game writes the next level to IWRAM 0x030041F8 a few frames before its fade starts (0x03004174 still holds
-// the old one); that frame is copied off the game canvas as the take-off picture. While the flight runs, the live
-// picture is held under it and the engine runs fast (the same turbo the load already uses, not online). The new
-// screen is ready once 0x03004174 = 0x030041F8, the load flag (EWRAM 0x0203FFF1) is clear and the fade in has
-// settled (picture brightness steady); that picture is the landing picture. The game waits (paused, not online)
-// while the camera lands, so nothing happens to the hero unseen. A load with no level change (the same screen, a
-// respawn) flies from the last bright picture. Page only: 1-player, P2 and online alike.
+// the old one); that frame is copied off the game canvas and stays on top of the old screen's map picture. The way
+// the hero was walking (or the nearest map edge) says which side the next screen goes on; its entry point is the
+// door's far end in the 3D World (World3D.layout), else its door back. While the scroll runs the live picture is held
+// under it and the engine runs fast (the load turbo, not online). The new screen is ready once 0x03004174 =
+// 0x030041F8, the load flag (EWRAM 0x0203FFF1) is clear and the fade in has settled (picture brightness steady); that
+// picture fades in where it belongs and the view settles on it while the game waits (paused, not online). A load with
+// no level change (a respawn) holds the last bright picture. Page only: 1-player, P2 and online alike.
 (() => {
-  const D_ALL = 1.15;        // seconds for a whole flight when the new screen is ready in time
-  const T_WAIT = 0.52;       // how far (share of the flight) the camera goes before it waits for the new screen
-  const TILT = 34;           // degrees the world tips back at the top of the flight (grows with the height, so
-                             // the big pictures never reach past the eye while the camera is still low)
-  const GAP = 140;           // picture pixels between two screens when the 3D World has no place for one
+  const SPEED = 330;         // map pixels a second the view scrolls (the hero's run is about a quarter of that)
+  const D_MIN = 0.42, D_MAX = 1.0;   // seconds a scroll takes at least and at most
+  const T_WAIT = 0.88;       // how far (share of the scroll) the view goes before it waits for the new screen
+  const STEP = 30;           // map pixels from the door the hero leaves by to the one they come in at
+  const FEATHER = 26;        // map pixels over which the next screen's picture blends into this one at the join
   const ROW_Y = 0.575;       // the hero stands this far down the game's view (measured: 138 of 240 rows)
   // Top left of the game's whole view on the map (measured against the map pictures): the hero in the middle (18 rows
   // low), held inside the map with the wide view's extra margin ((w - 240) / 2 at the sides, (h - 160) / 2 at the
@@ -29,7 +32,7 @@
     if (sz) { x = Math.max(-mx, Math.min(sz[0] - 240 - mx, x)); y = Math.max(-my, Math.min(sz[1] - 174 - my, y)); }
     return [x, y];
   };
-  let pin = null, lay = null, layTried = false, S = null, good = null, pre = {}, lastSt = -1, lastLv = -1, hookT = 0;
+  let pin = null, trail = [], lay = null, layTried = false, S = null, good = null, pre = {}, lastSt = -1, lastLv = -1, hookT = 0;
 
   const layout = () => {
     if (lay || layTried) return lay;
@@ -65,11 +68,11 @@
     return [f(-cam[1], cam[3]), f(cam[0] + cam[2] - sz[0], cam[2]), f(cam[1] + cam[3] - sz[1], cam[3]), f(-cam[0], cam[2])];
   };
   const busy = () => !!(window.__hdShopOn || window.__hdBpOn || window.__hdPgOn);
-  const pic = (l) => "maps/t/L" + l + ".webp";
+  const pic = (l, t) => "maps/" + (t ? "t/" : "") + "L" + l + ".webp";
   const preload = (l) => {
     const D = window.__smData; if (!D || !D.SZ) return;
     const want = [l].concat((D.EE[l] || []).filter((e) => e[0] === 1).map((e) => e[3]));
-    want.forEach((k) => { if (D.SZ[k] && !pre[k]) { const im = new Image(); im.decoding = "async"; im.src = pic(k); pre[k] = im; } });
+    want.forEach((k) => { if (D.SZ[k] && !pre[k]) pre[k] = [true, false].map((t) => { const im = new Image(); im.decoding = "async"; im.src = pic(k, t); return im; }); });
   };
 
   // Where the game's picture sits on screen (CSS pixels inside #game) and which part of the map it shows.
@@ -105,40 +108,51 @@
     } catch (e) { return null; }
   };
 
-  const CSS = "#seam{position:absolute;inset:0;z-index:20;overflow:hidden;pointer-events:none;perspective:2000px;" +
-    "background:radial-gradient(120% 70% at 50% 110%,rgba(240,130,50,.35),transparent 60%),linear-gradient(#141a2e,#2b2235 45%,#3a2a28 70%,#17120e)}" +
+  const CSS = "#seam{position:absolute;inset:0;z-index:20;overflow:hidden;pointer-events:none;background:#000}" +
     "#seam .w{position:absolute;left:0;top:0;transform-origin:0 0;will-change:transform}" +
     "#seam .w>*{position:absolute;display:block;box-sizing:border-box;max-width:none;max-height:none}" +
-    "#seam .m{filter:brightness(.82) saturate(.9);box-shadow:0 0 0 6px #b8893a,0 0 0 9px #2a1d10,0 30px 60px rgba(0,0,0,.6);image-rendering:auto}" +
-    "#seam .s{transition:opacity .16s linear}" +
-    "#seam .road{height:14px;margin-top:-7px;transform-origin:0 50%;border-radius:7px;background:linear-gradient(#f6dc93,#c99a46);box-shadow:0 0 18px rgba(255,200,90,.7)}" +
-    "#seam .nm{left:0;top:0;font:700 34px/1 var(--display,Georgia,serif);color:#f6dc93;text-shadow:0 2px 8px #000,0 0 18px rgba(0,0,0,.8);white-space:nowrap;transform:translate(-50%,-140%)}";
+    "#seam .s{transition:opacity .18s linear}";
+
+  // Which way the hero was going: their last steps, else the map edge they are nearest. [axis, sign]
+  const heading = (hero, lv) => {
+    const old = trail.length > 6 ? trail[trail.length - 7] : trail[0];
+    if (old && old[2] === lv) { const dx = hero[0] - old[0], dy = hero[1] - old[1];
+      if (Math.max(Math.abs(dx), Math.abs(dy)) >= 3) return Math.abs(dx) >= Math.abs(dy) ? [0, Math.sign(dx)] : [1, Math.sign(dy)]; }
+    const D = window.__smData, sz = (D && D.SZ && D.SZ[lv]) || [hero[0] * 2, hero[1] * 2];
+    const d = [hero[0], sz[0] - hero[0], hero[1], sz[1] - hero[1]], k = d.indexOf(Math.min(...d));
+    return [[0, -1], [0, 1], [1, -1], [1, 1]][k];
+  };
+  // Where the hero comes in on the next screen (its own map pixels).
+  const entryOf = (from, to) => {
+    const D = window.__smData || {}, sz = D.SZ && D.SZ[to]; if (!sz) return null;
+    const L = layout(), TB = L && L.T && L.T[to];
+    const lk = L && TB && (L.links.find((k) => k.a === from && k.b === to) || L.links.find((k) => k.a === to && k.b === from));
+    if (lk) { const there = lk.a === to ? lk.pa : lk.pb; return [there[0] - TB.x, there[1] - TB.y]; }
+    const e = (D.EE && D.EE[to] || []).find((e) => e[0] === 1 && e[3] === from);
+    if (e) return [e[1] * sz[0] / 1000, e[2] * sz[1] / 1000];
+    return [sz[0] / 2, sz[1] / 2];
+  };
+  // A soft edge along the join: keep the part of a picture past the join line (seam, along axis ax) on side sg.
+  const maskAt = (node, ax, start, seam, sg) => {
+    const t = seam - start, a = (t - FEATHER / 2).toFixed(1) + "px", b = (t + FEATHER / 2).toFixed(1) + "px";
+    const g = "linear-gradient(to " + (ax ? "bottom" : "right") + "," + (sg > 0 ? "transparent " + a + ",#000 " + b : "#000 " + a + ",transparent " + b) + ")";
+    node.style.webkitMaskImage = g; node.style.maskImage = g;
+  };
 
   function start(m, from, to, hero, snap, view) {
-    const L = layout(), D = window.__smData || {};
-    const T = L && L.T;
-    let TA = T && T[from], TB = T && T[to];
-    const camA = view.cam;
+    const D = window.__smData || {};
+    const camA = view.cam, same = to === from;
     if (window.__seamDebug) window.__seamDbg = { from, to, hero, cam: camA, v: view.v, pic: snap.toDataURL() };
-    let A = TA ? { x: TA.x, y: TA.y, w: TA.w, h: TA.h } : { x: 0, y: 0, w: 0, h: 0 };
-    // Where the hero will walk in on the new screen: the door's far end in the 3D World, else the screen's middle.
-    let B = null, entry = null, road = null;
-    if (TB && to !== from) {
-      B = { x: TB.x, y: TB.y, w: TB.w, h: TB.h };
-      const lk = L.links.find((k) => k.a === from && k.b === to) || L.links.find((k) => k.a === to && k.b === from);
-      if (lk) { const there = lk.a === to ? lk.pa : lk.pb, here = lk.a === to ? lk.pb : lk.pa; entry = [there[0] - B.x, there[1] - B.y]; road = [here, there]; }
-      else entry = [B.w / 2, B.h / 2];
+    // One map: the old screen at 0,0; the next one placed so its entry point is a step on from the door.
+    const dir = heading(hero, from), entry = same ? null : entryOf(from, to);
+    let B = { x: 0, y: 0 }, seam = 0;
+    if (entry) {
+      const go = [dir[0] === 0 ? dir[1] : 0, dir[0] === 1 ? dir[1] : 0];
+      B = { x: hero[0] + go[0] * STEP - entry[0], y: hero[1] + go[1] * STEP - entry[1] };
+      seam = hero[dir[0]] + dir[1] * STEP / 2;
     }
-    if (!B) {   // no place in the 3D World: the next screen goes just past the side the hero left by
-      const w = TA ? TA.w : camA[2] * 3, h = TA ? TA.h : camA[3] * 3;
-      const d = [hero[0], w - hero[0], hero[1], h - hero[1]], side = d.indexOf(Math.min(...d));
-      const dir = to === from ? [0, 0] : [[-1, 0], [1, 0], [0, -1], [0, 1]][side];
-      B = { x: A.x + camA[0] + dir[0] * (camA[2] + GAP), y: A.y + camA[1] + dir[1] * (camA[3] + GAP), w: 0, h: 0 };
-      entry = [camA[2] / 2, camA[3] * ROW_Y];
-      if (to === from) { B = A; entry = null; }
-    }
-    if (to === from) B = A;
     const ob = entry && origin(entry, to, view.v.w, view.v.h);
+    if (window.__seamDebug) Object.assign(window.__seamDbg, { dir, entry, B, seam });
     const camBest = entry ? [ob[0] + view.v.sx, ob[1] + view.v.sy, camA[2], camA[3]] : camA.slice();
 
     let el = document.getElementById("seam");
@@ -148,20 +162,33 @@
     const host = window.GbrHost.canvas.parentElement; host.appendChild(el);
     const wd = document.createElement("div"); wd.className = "w"; el.appendChild(wd);
     const put = (node, x, y, w, h) => { node.style.left = x + "px"; node.style.top = y + "px"; if (w !== undefined) { node.style.width = w + "px"; node.style.height = h + "px"; } wd.appendChild(node); return node; };
-    const mapImg = (l, R) => { if (!R.w || !D.SZ || !D.SZ[l]) return; const im = pre[l] && pre[l].complete && pre[l].naturalWidth ? pre[l].cloneNode() : new Image(); if (!im.src) im.src = pic(l); im.className = "m"; im.onerror = () => { im.style.visibility = "hidden"; }; put(im, R.x, R.y, R.w, R.h); };
-    mapImg(from, A); if (B !== A) mapImg(to, B);
-    // Other screens under the flight path are ground too (the same joined world as the 3D World).
-    if (T && B !== A) {
-      const ax = A.x + camA[0], ay = A.y + camA[1], bx = B.x + camBest[0], by = B.y + camBest[1], pad = Math.max(camA[2], camA[3]) * 1.5;
-      const x0 = Math.min(ax, bx) - pad, y0 = Math.min(ay, by) - pad, x1 = Math.max(ax, bx) + camA[2] + pad, y1 = Math.max(ay, by) + camA[3] + pad;
-      Object.values(T).forEach((t) => { if (t.l === from || t.l === to || t.x > x1 || t.x + t.w < x0 || t.y > y1 || t.y + t.h < y0) return; mapImg(t.l, t); });
-    }
-    if (road) { const r = document.createElement("div"); r.className = "road"; const dx = road[1][0] - road[0][0], dy = road[1][1] - road[0][1];
-      r.style.width = Math.hypot(dx, dy) + "px"; r.style.transform = "rotate(" + Math.atan2(dy, dx) + "rad)"; put(r, road[0][0], road[0][1]); }
-    if (B !== A && D.NAMES && D.NAMES[to]) { const n = document.createElement("div"); n.className = "nm"; n.textContent = D.NAMES[to]; put(n, B.x + B.w / 2, B.y + Math.max(0, camBest[1])); n.style.fontSize = Math.max(34, camA[2] / 9) + "px"; }
-    snap.className = "s"; snap.__out = outside(camA, from); snap.__cut = view.cut; put(snap, A.x + camA[0], A.y + camA[1], camA[2], camA[3]);
-    S = { el, wd, put, A, B, from, to, camA, camB: camBest, camBact: null, view, t: 0, uR: 0, last: performance.now(), haveB: false, wantB: false,
+    // The map picture (full size when it has arrived, else the small one) under the game's own picture.
+    const mapImg = (l, x, y) => {
+      const sz = D.SZ && D.SZ[l]; if (!sz) return null;
+      const p = pre[l] || [], ok = (im) => im && im.complete && im.naturalWidth;
+      const im = ok(p[0]) ? p[0].cloneNode() : ok(p[1]) ? p[1].cloneNode() : new Image();
+      if (!im.src) im.src = pic(l, false);
+      im.onerror = () => { im.style.visibility = "hidden"; };
+      if (p[0] && !ok(p[0])) p[0].addEventListener("load", () => { if (im.isConnected) im.src = p[0].src; }, { once: true });   // sharp one when it comes
+      return put(im, x, y, sz[0], sz[1]);
+    };
+    mapImg(from, 0, 0);
+    const twin = (c, cam, lv, cut, x, y) => {   // the picture twice: trimmed to its map (under), and whole (on top)
+      const w = document.createElement("canvas"); w.width = c.width; w.height = c.height; w.getContext("2d").drawImage(c, 0, 0);
+      const o = outside(cam, lv), pc = (x) => (100 * x).toFixed(2) + "%";
+      c.className = "s"; c.style.clipPath = "inset(" + pc(o[0]) + " " + pc(o[1]) + " " + pc(Math.max(o[2], cut)) + " " + pc(o[3]) + ")";
+      put(c, x, y, cam[2], cam[3]); put(w, x, y, cam[2], cam[3]); return w;
+    };
+    // The next screen over the old one past the door, blending in at the join (it comes up as the view moves).
+    const imB = entry ? mapImg(to, B.x, B.y) : null;
+    if (imB) { maskAt(imB, dir[0], dir[0] ? B.y : B.x, seam, dir[1]); imB.style.opacity = "0"; }
+    // The game's picture on top: whole at first (exactly what was on screen), then its HUD rows and the black past the
+    // map's edge give way to the map pictures as the view moves.
+    const wholeA = twin(snap, camA, from, view.cut, camA[0], camA[1]);
+    S = { el, wd, put, twin, snapA: snap, wholeA, wholeB: null, viewA: view, B, imB, from, to, camA, camB: camBest, camBact: null, view, t: 0, uR: 0, last: performance.now(), haveB: false, wantB: false,
       loaded: false, sawLoad: false, pl: -1, steady: 0, online: m.online, born: performance.now(), paused: false };
+    const cA = [camA[0] + camA[2] / 2, camA[1] + camA[3] / 2], cB = [B.x + camBest[0] + camBest[2] / 2, B.y + camBest[1] + camBest[3] / 2];
+    S.dur = Math.max(D_MIN, Math.min(D_MAX, Math.hypot(cB[0] - cA[0], cB[1] - cA[1]) / SPEED));
     if (!m.online) window.__seamTurbo = 1;
     move(0);
     requestAnimationFrame(tick);
@@ -169,25 +196,29 @@
 
   const smooth = (x) => { x = Math.max(0, Math.min(1, x)); return x * x * (3 - 2 * x); };
   function move(u) {
-    const s = S, v = s.view, kAx = v.css[2] / s.camA[2], kAy = v.css[3] / s.camA[3];
-    const cA = [s.A.x + s.camA[0] + s.camA[2] / 2, s.A.y + s.camA[1] + s.camA[3] / 2];
+    const s = S, vA = s.viewA, v = s.view;
+    let kx = vA.css[2] / s.camA[2], ky = vA.css[3] / s.camA[3];
+    const cA = [s.camA[0] + s.camA[2] / 2, s.camA[1] + s.camA[3] / 2];
     const est = [s.B.x + s.camB[0] + s.camB[2] / 2, s.B.y + s.camB[1] + s.camB[3] / 2];
-    let cB = est;
-    if (s.camBact) { const act = [s.B.x + s.camBact[0] + s.camBact[2] / 2, s.B.y + s.camBact[1] + s.camBact[3] / 2], w = smooth((u - s.uR) / Math.max(0.05, 1 - s.uR)); cB = [est[0] + (act[0] - est[0]) * w, est[1] + (act[1] - est[1]) * w]; }
-    const sm = smooth(u), bump = Math.sin(Math.PI * Math.max(0, Math.min(1, u)));
+    let cB = est, w = 0;
+    if (s.camBact) {   // the new screen is in: settle on where its picture really is (and at its zoom)
+      const act = [s.B.x + s.camBact[0] + s.camBact[2] / 2, s.B.y + s.camBact[1] + s.camBact[3] / 2];
+      w = smooth((u - s.uR) / Math.max(0.05, 1 - s.uR)); cB = [est[0] + (act[0] - est[0]) * w, est[1] + (act[1] - est[1]) * w];
+      const bx = v.css[2] / s.camBact[2], by = v.css[3] / s.camBact[3];
+      kx = Math.exp(Math.log(kx) + (Math.log(bx) - Math.log(kx)) * w); ky = Math.exp(Math.log(ky) + (Math.log(by) - Math.log(ky)) * w);
+    }
+    const sm = ease(u);
     const cx = cA[0] + (cB[0] - cA[0]) * sm, cy = cA[1] + (cB[1] - cA[1]) * sm;
-    // Lift high enough to see both screens at the top of the flight (between 30% and 70% of the game's own zoom).
-    const dx = Math.abs(est[0] - cA[0]), dy = Math.abs(est[1] - cA[1]);
-    const kMid = Math.max(0.3 * kAx, Math.min(0.7 * kAx, v.W / (dx + s.camA[2] * 1.7), v.H / (dy + s.camA[3] * 1.7) * kAx / kAy));
-    const lift = Math.log(Math.max(1e-4, kMid / kAx)) * bump;
-    const kx = kAx * Math.exp(lift), ky = kAy * Math.exp(lift);
     const ox = v.css[0] + v.css[2] / 2, oy = v.css[1] + v.css[3] / 2;
-    // In the air the game's own HUD rows and the black past the map's edge are cut off the pictures.
-    const g = Math.min(1, bump * 4);
-    for (const c of s.wd.querySelectorAll("canvas.s")) { const o = c.__out || [0, 0, 0, 0], pc = (x) => (100 * x * g).toFixed(2) + "%";
-      c.style.clipPath = "inset(" + pc(o[0]) + " " + pc(o[1]) + " " + pc(Math.max(o[2], c.__cut || 0)) + " " + pc(o[3]) + ")"; }
-    s.wd.style.transform = "translate(" + ox.toFixed(2) + "px," + oy.toFixed(2) + "px) rotateX(" + (TILT * bump * bump).toFixed(2) + "deg) scale(" + kx.toFixed(5) + "," + ky.toFixed(5) + ") translate(" + (-cx).toFixed(2) + "px," + (-cy).toFixed(2) + "px)";
+    const g = smooth(u / 0.22);
+    if (s.imB) s.imB.style.opacity = g.toFixed(3);
+    s.wholeA.style.opacity = (1 - g).toFixed(3);
+    if (s.wholeB) s.wholeB.style.opacity = w.toFixed(3);   // the black past the new map's edge comes back as the view settles
+    s.snapA.style.opacity = (1 - w).toFixed(3);              // and the hero is only where they came in
+    s.wd.style.transform = "translate(" + ox.toFixed(2) + "px," + oy.toFixed(2) + "px) scale(" + kx.toFixed(5) + "," + ky.toFixed(5) + ") translate(" + (-cx).toFixed(2) + "px," + (-cy).toFixed(2) + "px)";
   }
+  // Ease in a little (the hero was already moving), ease out into the new view.
+  const ease = (u) => { u = Math.max(0, Math.min(1, u)); const a = 0.35; return u < a ? u * u / a : a + 2 * (u - a) - (u - a) * (u - a) / (1 - a); };
   function finish(ok, why) {
     const s = S; if (!s) return;
     S = null; window.__seamTurbo = 0;
@@ -200,11 +231,12 @@
     const s = S; if (!s) return;
     const now = performance.now(), dt = Math.min(0.05, (now - s.last) / 1000); s.last = now;
     if (now - s.born > 5000) { finish(false, "time"); return; }
-    let rate = 1 / D_ALL;
+    let rate = 1 / s.dur;
     if (!s.haveB) { const room = T_WAIT - s.t; rate *= room > 0.12 ? 1 : Math.max(0.04, room / 0.12); }
+    else rate = Math.min(rate, (1 - s.uR) / 0.3);   // settle on the new picture over at least 0.3 s
     if (pin !== null) { s.t = pin; s.born = now; } else s.t = Math.min(s.haveB ? 1 : T_WAIT, s.t + dt * rate);
     move(s.t);
-    if (s.haveB && s.t >= 1) { finish(true); return; }
+    if (s.haveB && s.t >= 1 && now - s.gotB > 200) { finish(true); return; }
     requestAnimationFrame(tick);
   }
 
@@ -231,6 +263,7 @@
           if (v && v.w === f.w && v.h === f.h) { if (!good || good.raw.length !== n) good = { raw: new Uint8Array(n) }; good.raw.set(f.u8.subarray(f.off, f.off + n)); good.lum = lum; good.at = performance.now(); good.hero = hero; good.lv = cur; good.v = Object.assign({}, v); }
         }
       }
+      if (hero) { trail.push([hero[0], hero[1], cur]); if (trail.length > 12) trail.shift(); }
       if (st === 1 && cur !== lastLv) { lastLv = cur; preload(cur); setTimeout(layout, 50); }
       lastSt = st;
       return;
@@ -241,10 +274,9 @@
       if (!drew) return;
       const hero = heroAt(m), view = hero && viewNow(hero, s.to), snap = view && grab(view);
       if (!snap) { finish(false, "picture"); return; }
-      s.camBact = view.cam; s.uR = s.t; s.view = view; snap.__out = outside(view.cam, s.to); snap.__cut = view.cut;
-      snap.className = "s"; snap.style.opacity = "0";
-      s.put(snap, s.B.x + view.cam[0], s.B.y + view.cam[1], view.cam[2], view.cam[3]);
-      requestAnimationFrame(() => { snap.style.opacity = "1"; });
+      s.camBact = view.cam; s.uR = s.t; s.view = view; s.gotB = performance.now();
+      s.wholeB = s.twin(snap, view.cam, s.to, 0, s.B.x + view.cam[0], s.B.y + view.cam[1]); s.wholeB.style.opacity = "0";
+      snap.style.opacity = "0"; requestAnimationFrame(() => { snap.style.opacity = "1"; });
       s.wantB = false; s.haveB = true; window.__seamTurbo = 0;
       H.holdT = performance.now() + 2000;
       if (!s.online) { try { m.M._rotk_pause(1); s.paused = true; } catch (e) {} }
