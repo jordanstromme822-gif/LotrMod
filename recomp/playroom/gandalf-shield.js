@@ -45,6 +45,8 @@
 //     WISP_TURN ticks each, from WISP_R0 out to WISP_R1 px (about half the screen across), then it fades. It passes
 //     through foes: each foe it touches loses 5 Hit Points / Wisps level straight off (no armor), flashes with a yellow
 //     aura and gives Gandalf 1 Shield / level; the same wisp can touch the same foe again after WISP_REHIT ticks.
+//     v230 (Jordan): 2.5 turns over 4.8 s, all clockwise, 0.7 s apart; each cast plays the game's spell-cast pose (staff
+//     raised) and the wisp leaves the staff top, then sinks to its usual height as it circles.
 // Works in 1-player, P2 (one or two games: every write goes into every running game) and online (each page runs only
 // its own player; the engine sends page writes with the buttons, so both pages see the same shield).
 (() => {
@@ -54,8 +56,12 @@
   // v222: + Wisps cooling << 3 (I-P at 0x09601000 + 0x100 * i)
   for (let i = 0; i < 8; i++) TABS.push(0x09601000 + 0x100 * i);
   const CD_TICKS = 600, BASE_DRAIN = 4, STUN_R = 80, STUN_T = 120;
+  // v230 cast pose (Jordan: "an animation of Gandalf raising his staff to summon the wisp out the top of it"): the game's own
+  // spell cast (the one Blinding Aura plays: state 0x0A, animation set WISP_CAST_SET, animation 0), cut short after the raise.
+  // The wisp leaves the staff top WISP_POP ticks in and he stands again at WISP_END.
+  const WISP_STAND_SET = 0x0805B324, WISP_CAST_SET = 0x0805B5A4, WISP_CAST_GFX = 0x080621E0, WISP_POP = 4, WISP_END = 7, WISP_TIP = 34, WISP_DROP = 10;
   const WISP_COST = 10, WISP_NO_STATE = [6, 0x0A, 0x22, 0x23, 0x30, 0x31, 0x32, 0x60];   // hero states the game won't cast from (0x08043484)
-  const WISP_GAP = 15, WISP_TURNS = 7, WISP_TURN = 20, WISP_R0 = 6, WISP_R1 = 84, WISP_SQ = 0.62, WISP_HIT = 15, WISP_REHIT = 15;
+  const WISP_GAP = 21, WISP_TURNS = 2.5, WISP_TURN = 57.6, WISP_R0 = 6, WISP_R1 = 84, WISP_SQ = 0.62, WISP_HIT = 15, WISP_REHIT = 15;
   const BA_CD = 450, DASH_CD = 120, DASH_T = 8, DASH_V = 9, DASH_F = 3, BA_R0 = 60, BA_R1 = 120, BA_UPD = 0x08020C05;
   const st = [{}, {}];
   let lastView = null;
@@ -112,6 +118,8 @@
     const a = w.a0 + w.dir * 2 * Math.PI * u / WISP_TURN;
     return [w.x + Math.cos(a) * r, w.y + Math.sin(a) * r * WISP_SQ];
   };
+  // how high it floats: out of the staff top (WISP_TIP px up), settling to 14 px over WISP_DROP ticks
+  const wispH = (u) => u >= WISP_DROP ? 14 : 14 + (WISP_TIP - 14) * (1 - u / WISP_DROP) * (1 - u / WISP_DROP);
   const segD2 = (ax, ay, bx, by, px, py) => {   // squared distance from p to the segment a-b
     const dx = bx - ax, dy = by - ay, l = dx * dx + dy * dy, t = l ? Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / l)) : 0;
     const qx = ax + dx * t - px, qy = ay + dy * t - py; return qx * qx + qy * qy;
@@ -272,7 +280,7 @@
         const fa = 0x0203FFC0 + 4 * p;
         const ang = (c.r8(fa) & 2) ? c.r8(fa + 1) / 256 * Math.PI * 2 : (c.r8(hero + 0xF8) & 7) / 8 * Math.PI * 2;   // 0 up, clockwise
         const L = Math.max(1, c.r8(P + 0x171) << 24 >> 24);
-        (s.wisps || (s.wisps = [])).push({ x: hx, y: hy, t0: now, a0: ang - Math.PI / 2, dir: (s.wispN = (s.wispN || 0) + 1) & 1 ? 1 : -1, L, last: now, hit: new Map() });
+        (s.wisps || (s.wisps = [])).push({ x: hx, y: hy, t0: now, a0: ang - Math.PI / 2, dir: 1, L, last: now, hit: new Map() });
         s.wispCd = (now + WISP_GAP) | 0;
         const want = wantTab(s, now); if (TABS.includes(c.r32(P + 0x1C)) && window.__gsTabB) c.wN(P + 0x1C, want, 4);
       };
@@ -291,9 +299,26 @@
       if (window.__gsWisp && (held & 0x200) && wSlot >= 0 && !(c.r8(P + 0x1A5) & 1)) {
         const st62 = c.r8(hero + 0x62), sp = c.s16(P + 0x17E);
         if ((c.r8(P + 0x171) << 24 >> 24) > 0 && !(((s.wispCd || 0) - now | 0) > 0) && sp >= WISP_COST &&
-            c.s16(P + 0x17C) > 0 && !WISP_NO_STATE.includes(st62) && !(s.dash)) {
+            c.s16(P + 0x17C) > 0 && !WISP_NO_STATE.includes(st62) && !(s.dash) && !s.raise) {
           c.wN(P + 0x17E, (sp - WISP_COST) & 0xffff, 2);
-          spawnWisp();
+          // v230: he raises his staff (the game's cast pose) and the wisp leaves its top WISP_POP ticks later
+          s.wispCd = (now + WISP_GAP) | 0;
+          s.raise = { t0: now, pose: c.r32(hero + 0x24) === WISP_STAND_SET };
+          if (s.raise.pose) {
+            c.wN(hero + 0x24, WISP_CAST_SET, 4); c.wN(hero + 0x84, WISP_CAST_GFX, 4); c.wN(hero + 0x88, WISP_CAST_GFX, 4);
+            c.wN(hero + 0x94, 0xff, 1); c.wN(hero + 0x95, 0, 1); c.wN(hero + 0x62, 0x0A, 1);
+            c.wN(hero + 0xB4, 0, 4); c.wN(hero + 0xB8, 0, 4);
+            c.wN(hero + 0xE8, c.r32(hero + 0xE8) & ~0x400000, 4);
+          }
+        }
+      }
+      if (s.raise) {
+        const r = s.raise, u = (now - r.t0) | 0, casting = c.r8(hero + 0x62) === 0x0A && c.r32(hero + 0x24) === WISP_CAST_SET;
+        if (u >= WISP_POP && !r.popped) { r.popped = true; if (c.s16(P + 0x17C) > 0 && c.r8(hero + 0x62) !== 6) { spawnWisp(); s.wispCd = (r.t0 + WISP_GAP) | 0; } }
+        // the raise is done: the game's own end of a cast (animation-over bit), so he stands again by himself
+        if (u >= WISP_END || u < 0 || !r.pose || !casting) {
+          if (r.pose && casting) c.wN(hero + 0xE8, c.r32(hero + 0xE8) | 0x400000, 4);
+          if (r.popped || u < 0) s.raise = null;
         }
       }
       if (s.wisps && s.wisps.length) {
@@ -582,19 +607,29 @@
           const [ax, ay] = wispAt(w, ua), [bx, by] = wispAt(w, ub), al = fade * (1 - (q - 1) / N);
           cx.strokeStyle = `rgba(255,${226 + 20 * (1 - q / N) | 0},${140 + 90 * (1 - q / N) | 0},${0.55 * al})`;
           cx.lineWidth = Math.max(1, (1 + 4 * (1 - q / N)) * k);
-          cx.beginPath(); cx.moveTo(X(ax - cam[0]), Y(ay - cam[1] - 14)); cx.lineTo(X(bx - cam[0]), Y(by - cam[1] - 14)); cx.stroke();
+          cx.beginPath(); cx.moveTo(X(ax - cam[0]), Y(ay - cam[1] - wispH(ua))); cx.lineTo(X(bx - cam[0]), Y(by - cam[1] - wispH(ub))); cx.stroke();
         }
         // the wisp: a bright core in a soft gold glow that flickers
-        const [wx, wy] = wispAt(w, uu), ex = X(wx - cam[0]), ey = Y(wy - cam[1] - 14 + 1.5 * Math.sin(pn / 90 + w.t0));
+        const [wx, wy] = wispAt(w, uu), ex = X(wx - cam[0]), hh = wispH(uu), ey = Y(wy - cam[1] - hh + 1.5 * Math.sin(pn / 90 + w.t0));
         const r = (7 + 1.5 * Math.sin(pn / 55 + w.t0 * 3)) * k;
         const rg = cx.createRadialGradient(ex, ey, 0, ex, ey, r * 2.4);
         rg.addColorStop(0, `rgba(255,255,250,${fade})`); rg.addColorStop(0.18, `rgba(255,248,205,${0.9 * fade})`);
         rg.addColorStop(0.45, `rgba(255,214,110,${0.38 * fade})`); rg.addColorStop(1, "rgba(255,190,80,0)");
         cx.fillStyle = rg; cx.fillRect(ex - r * 2.4, ey - r * 2.4, r * 4.8, r * 4.8);
         // its light on the ground
-        const sg = cx.createRadialGradient(ex, ey + 14 * k, 0, ex, ey + 14 * k, 10 * k);
+        const sg = cx.createRadialGradient(ex, ey + hh * k, 0, ex, ey + hh * k, 10 * k);
         sg.addColorStop(0, `rgba(255,220,140,${0.22 * fade})`); sg.addColorStop(1, "rgba(255,220,140,0)");
-        cx.fillStyle = sg; cx.beginPath(); cx.ellipse(ex, ey + 14 * k, 10 * k, 5 * k, 0, 0, Math.PI * 2); cx.fill();
+        cx.fillStyle = sg; cx.beginPath(); cx.ellipse(ex, ey + hh * k, 10 * k, 5 * k, 0, 0, Math.PI * 2); cx.fill();
+        // v230: a burst of light at the staff top as it comes out
+        if (u < 8) {
+          const bx = X(w.x - cam[0]), by = Y(w.y - cam[1] - WISP_TIP), e = u / 8, br = (6 + 16 * e) * k;
+          const bg = cx.createRadialGradient(bx, by, 0, bx, by, br);
+          bg.addColorStop(0, `rgba(255,255,240,${0.85 * (1 - e)})`); bg.addColorStop(0.4, `rgba(255,230,150,${0.45 * (1 - e)})`); bg.addColorStop(1, "rgba(255,210,110,0)");
+          cx.fillStyle = bg; cx.fillRect(bx - br, by - br, br * 2, br * 2);
+          cx.strokeStyle = `rgba(255,240,180,${0.7 * (1 - e)})`; cx.lineWidth = Math.max(1, 1.5 * k);
+          for (let q = 0; q < 6; q++) { const a = q * Math.PI / 3 + w.t0, r0 = br * 0.35, r1 = br * 0.95;
+            cx.beginPath(); cx.moveTo(bx + Math.cos(a) * r0, by + Math.sin(a) * r0); cx.lineTo(bx + Math.cos(a) * r1, by + Math.sin(a) * r1); cx.stroke(); }
+        }
       }
       for (let i = wispHits.length - 1; i >= 0; i--) {
         const h = wispHits[i], e = (pn - h.t) / 380;
