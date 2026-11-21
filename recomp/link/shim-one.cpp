@@ -54,3 +54,16 @@ extern "C" EMSCRIPTEN_KEEPALIVE const unsigned char* rotk_pal() {
 // Debug (one engine bring-up): guest PC and the runtime's frame count.
 #include "runtime_arm.h"
 extern "C" EMSCRIPTEN_KEEPALIVE unsigned rotk_dbg_pc() { return g_cpu.R[15]; }
+// Engine speed test hook (2026-11-21): on = 1 draws every margin row twice (old and new path) and compares.
+// Returns rows compared * 65536 + rows that differed (both capped).
+extern "C" EMSCRIPTEN_KEEPALIVE unsigned rotk_ppu_verify(int on) {
+    if (on >= 0) gba::g_ws_ppu_verify = on;
+    const unsigned r = gba::g_ws_ppu_verify_rows < 65535u ? gba::g_ws_ppu_verify_rows : 65535u, b = gba::g_ws_ppu_verify_bad < 65535u ? gba::g_ws_ppu_verify_bad : 65535u;
+    return r * 65536u + b;
+}
+#include "frame_smooth.h"
+// Smoothing level (2026-11-21, see frame_smooth.h): 2 full, 1 no double-drawn odd steps, 0 off. -1 only reads it.
+extern "C" EMSCRIPTEN_KEEPALIVE int rotk_smooth(int level) {
+    if (level >= 0) gbarecomp::g_rotk_smooth_level = level > 2 ? 2 : level;
+    return gbarecomp::g_rotk_smooth_level;
+}

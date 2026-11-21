@@ -208,6 +208,12 @@ void install(std::uint32_t, std::uint32_t) {
     gba::g_ws_bg_xy_provider = hud_provider;
     gba::g_ws_bg_xy_provider_layers = 1;
     gba::g_ws_pillarbox = 1;
+    // Engine speed (2026-11-21): tile_provider answers per 8x8 tile, so the renderer may reuse a tile's answer for its
+    // next pixels. ROTK_TILE_CACHE=0 turns it off.
+    { const char* e = std::getenv("ROTK_TILE_CACHE"); gba::g_ws_tilemap_tile_invariant = (e && e[0] == '0') ? 0 : 1; }
+    // Same speed-up: the providers above only read game memory, so the renderer may draw the wide rows front to back
+    // (hidden pixels skipped) and whole tiles at a time. ROTK_ORDERED=0 turns it off.
+    { const char* e = std::getenv("ROTK_ORDERED"); if (e && e[0] == '0') gba::clear_read_only_wide_bg_providers(); else gba::publish_read_only_wide_bg_providers(nullptr, true); }
 }
 
 void frame(const gbarecomp::ExtendedViewFrameInfo* f) {

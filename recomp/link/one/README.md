@@ -33,3 +33,16 @@ it from the running page (/data/game.gba, first 16 MB). Page engine key ?v=199. 
 stops with "unreachable" as soon as a hero runs the wrapper (v194). Build box rebuilt from scratch on 2026-11-19 with the
 steps above (newest emsdk; rtmix = runtime.cpp.o rebuilt without -fwasm-exceptions + `emar r`). Built files:
 /mnt/project-files/engine-build/feel-v199/.
+
+## v236 (2026-11-21): faster Moria (engine speed)
+Measured in Moria (level 82, headless Chromium with the CPU profiler on so the box is CPU bound like an iPhone):
+the 320x240 wide compositor was ~40% of engine time and the 60 fps FrameSmoother (in-between pictures, odd steps drawn
+twice and averaged) ~40% more; the game's own code is a few percent. -O2 instead of -O1 gave nothing measurable.
+- ../engine-speed-v236.patch (apply last, `patch -p1` in gbarecomp): gba_ppu.cpp turns on the front-to-back ordered
+  wide rows (hidden pixels skipped, whole tiles at a time) and adds a per-layer tile cache in the per-pixel BG loop
+  (g_ws_tilemap_tile_invariant); render_scanline_wide has a verify mode (g_ws_ppu_verify) that draws every row both ways
+  and counts differences. frame_smooth.h adds g_rotk_smooth_level: 2 full, 1 in-between pictures drawn once, 0 off.
+- link_main.cpp install(): tile cache and ordered rows on (ROTK_TILE_CACHE=0 / ROTK_ORDERED=0 turn them off natively).
+- shim-one.cpp: rotk_ppu_verify(on) -> rows*65536 + bad rows, rotk_smooth(level) (-1 reads). relink.sh exports both.
+- Checked pixel-identical (verify mode, 0 bad rows) in Moria, Fangorn and Helm's Deep. ~15% less engine time per picture.
+- Page: recomp/playroom/engine-v236.py (cache key ?v=236 and the smoothing step-down controller).

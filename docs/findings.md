@@ -394,3 +394,10 @@ Built by `tools/siege/build.py ROM OUT --base 0x1500000`, put in the page by `re
   one pass (5-tap Catmull-Rom + CAS-style sharpening, 4 taps, clamped) draws it at the screen's own pixels (cap 2880).
   Slow check is a trial ladder (full res -> 3x -> Low -> raw): a step that doesn't raise the picture rate 10% (or to 40/s)
   is undone, so an engine-bound level (Moria on iPhone) no longer throws HD away.
+- 2026-11-21 v236 (engine-v236.py, recomp/link/one/README.md "v236"): Moria on iPhone was engine CPU bound. Engine time
+  was ~40% wide compositor + ~40% the 60 fps in-between pictures. New engine: ordered wide rows + tile cache (~15% less per
+  picture, pixel-identical) and rotk_smooth(0..2). The page steps the in-between pictures down while the screen's refresh
+  count (rotk_tick_stats[0]+[1]+[2] a second) is under 52 for 3 s in a level, and tries back up after 20 s at 55+
+  (backs off up to 160 s). Headless loaded test: level 0 held ~55-60 pictures/s where full smoothing gave ~40-45.
+  Note: rotk_tick_stats[4] (timing resets) climbs when rAF intervals pass 66 ms, e.g. SwiftShader at full res; use
+  GbrHost.plain = true in headless speed tests.
