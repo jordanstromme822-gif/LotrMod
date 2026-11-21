@@ -293,7 +293,6 @@
       // the page reads the Quick Skill press itself as 0x08043350 does: L held (0x0300407C + 2 * player, bit 0x200) and A / B / R
       // newly down picks slot 0 / 1 / 2 (player + 0x191). It makes the game's own checks and takes the Spirit.
       const held = c.r16(0x0300407C + 2 * p), fresh = held & ~(s.held | 0); s.held = held;
-      const wispMoving = (hb) => (hb & 0xF0) !== 0 || (c.r8(0x0203FFC0 + 4 * p) & 2) !== 0;
       // v227 (Jordan: "Holding down the whisp button should keep casting wisps given the delay"): any held A / B / R whose
       // slot holds Wisps casts again each time the half-second gate opens, as long as L stays down and Spirit lasts.
       const wSlot = (held & 1) && c.r8(P + 0x191) === 1 ? 0 : (held & 2) && c.r8(P + 0x192) === 1 ? 1 : (held & 0x100) && c.r8(P + 0x193) === 1 ? 2 : -1;
@@ -304,9 +303,9 @@
           c.wN(P + 0x17E, (sp - WISP_COST) & 0xffff, 2);
           // v231: he raises his staff (the game's cast pose) and the wisp leaves its top WISP_POP ticks later
           s.wispCd = (now + WISP_GAP) | 0;
-          // v232 (Jordan: "Gandalf can't move and cast whisp at the same time"): walking (d-pad, or the stick's free angle at
-          // 0x0203FFC0 + 4 * player bit 1) skips the pose, so he keeps going and the wisp leaves the staff top at once
-          s.raise = { t0: now, pose: !wispMoving(held) && c.r32(hero + 0x24) === WISP_STAND_SET };
+          // v233 (Jordan: "Wisps should stop and do the animation to cast them, you can't move and cast wisps at the same
+          // time"): every cast stops him for the pose, walking or not (state 1 standing, 2 walking)
+          s.raise = { t0: now, pose: st62 === 1 || st62 === 2 };
           if (s.raise.pose) {
             c.wN(hero + 0x24, WISP_CAST_SET, 4); c.wN(hero + 0x84, WISP_CAST_GFX, 4); c.wN(hero + 0x88, WISP_CAST_GFX, 4);
             c.wN(hero + 0x94, 0xff, 1); c.wN(hero + 0x95, 0, 1); c.wN(hero + 0x62, 0x0A, 1);
@@ -316,11 +315,10 @@
         }
       }
       if (s.raise) {
-        const r = s.raise, u = (now - r.t0) | 0, casting = c.r8(hero + 0x62) === 0x0A && c.r32(hero + 0x24) === WISP_CAST_SET;
-        const mv = wispMoving(held);
-        if ((u >= WISP_POP || mv || !r.pose) && !r.popped) { r.popped = true; if (c.s16(P + 0x17C) > 0 && c.r8(hero + 0x62) !== 6) { spawnWisp(); s.wispCd = (r.t0 + WISP_GAP) | 0; } }
+        const r = s.raise, u = (now - r.t0) | 0, casting = c.r8(hero + 0x62) === 0x0A && Math.abs(c.r32(hero + 0x24) - WISP_CAST_SET) < 0x80;   // + 0x24 moves with his facing (16 bytes a step)
+        if ((u >= WISP_POP || !r.pose) && !r.popped) { r.popped = true; if (c.s16(P + 0x17C) > 0 && c.r8(hero + 0x62) !== 6) { spawnWisp(); s.wispCd = (r.t0 + WISP_GAP) | 0; } }
         // the raise is done: the game's own end of a cast (animation-over bit), so he stands again by himself
-        if (u >= WISP_END || u < 0 || !r.pose || !casting || mv) {
+        if (u >= WISP_END || u < 0 || !r.pose || !casting) {
           if (r.pose && casting) c.wN(hero + 0xE8, c.r32(hero + 0xE8) | 0x400000, 4);
           if (r.popped || u < 0) s.raise = null;
         }
