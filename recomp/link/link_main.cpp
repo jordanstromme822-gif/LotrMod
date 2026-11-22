@@ -47,6 +47,17 @@ const std::uint8_t* ewram = nullptr;
 const std::uint8_t* iwram = nullptr;
 gba::GbaBus* bus = nullptr;
 int last_status = -1;
+// v246 (Jordan, 2026-11-22: "Replace the fallback to the wide screen"): inside a level the view never drops back to the
+// zoomed-in native picture. When the VRAM match fails, the margins are placed from the camera, using where each layer
+// sat relative to the camera at the last good match (learn[]); the current level's maps come from prepare (cur_*).
+struct Learn { bool have = false; int l = 0, dx = 0, dy = 0; };
+Learn learn[4];
+bool cur_valid = false;
+bool held = false;   // this frame's margins were placed from the camera (the page eases a slight zoom in, for depth)
+// Jordan 2026-11-22: only the area being developed for now (the joined Isengard map in level slot 51).
+inline bool camera_fallback_level() { return iwram && iwram[0x4174] == 51; }
+std::uint32_t cur_maps[2] = {0, 0}, cur_sets[2] = {0, 0};
+std::uint16_t cur_dispcnt = 0, cur_cnt[4] = {0, 0, 0, 0};
 std::uint64_t memo_gen = 0;  // bumped whenever the block map may have changed
 
 inline std::uint32_t rd32(const std::uint8_t* m, std::uint32_t o) {
@@ -86,6 +97,7 @@ inline bool level_entry(std::uint32_t map, std::uint32_t set, int tx, int ty, st
 void prepare(const std::uint8_t* io) {
     ++memo_gen;
     ready = false;
+    cur_valid = false;
     for (auto& l : layers) l.ok = false;
     bus = gbarecomp::active_bus();
     if (!bus || !io) return;
@@ -104,6 +116,9 @@ void prepare(const std::uint8_t* io) {
     const std::uint32_t maps[2] = {mapA, mapB};
     const std::uint32_t sets[2] = {setA, setB};
     const std::uint16_t dispcnt = rd16(io, 0);
+    cur_valid = true; cur_dispcnt = dispcnt;
+    for (int i = 0; i < 2; ++i) { cur_maps[i] = maps[i]; cur_sets[i] = sets[i]; }
+    for (int bg = 2; bg < 4; ++bg) cur_cnt[bg] = rd16(io, 0x08 + bg * 2);
     for (int bg = 2; bg < 4; ++bg) {
         if (!(dispcnt & (0x100 << bg))) continue;
         const std::uint16_t cnt = rd16(io, 0x08 + bg * 2);
@@ -138,6 +153,29 @@ void prepare(const std::uint8_t* io) {
         }
     }
     ready = layers[3].ok;
+    if (ready) {
+        for (int bg = 2; bg < 4; ++bg) {
+            if (!layers[bg].ok) continue;
+            learn[bg] = {true, layers[bg].map == mapA ? 0 : 1, layers[bg].ox - (camx >> 3), layers[bg].oy - (camy >> 3)};
+        }
+    }
+}
+
+// Inside a level with no VRAM match: place each shown layer from the camera (v246).
+bool place_from_camera(int cx, int cy) {
+    if (!cur_valid || !learn[3].have) return false;
+    bool any = false;
+    for (int bg = 2; bg < 4; ++bg) {
+        layers[bg].ok = false;
+        if (!learn[bg].have || !(cur_dispcnt & (0x100 << bg)) || (cur_cnt[bg] >> 14)) continue;
+        layers[bg].ok = true;
+        layers[bg].map = cur_maps[learn[bg].l];
+        layers[bg].set = cur_sets[learn[bg].l];
+        layers[bg].ox = cx + learn[bg].dx;
+        layers[bg].oy = cy + learn[bg].dy;
+        any |= bg == 3;
+    }
+    return any;
 }
 
 int tile_provider(int bg, int x, int y, std::uint16_t* entry) {
@@ -229,31 +267,26 @@ void install(std::uint32_t, std::uint32_t) {
 void frame(const gbarecomp::ExtendedViewFrameInfo* f) {
     if (!enabled || !f) return;
     prepare(f->io);
+    held = false;
     // Steady view (phone report 2026-11-07: shop screen kept changing size and the edges flickered). The block-map
-    // match can drop out for a frame or two over menus drawn on top of a level; keep the last good match (moved with
-    // the camera) for up to 30 frames, and only switch to the wide view after 10 good frames in a row.
-    static Layer last[4];
-    static int good = 0, bad = 0, last_cx = 0, last_cy = 0;
+    // match can drop out over menus drawn on top of a level or near map edges. Outside levels the wide view needs 10
+    // good frames in a row; in the joined Isengard level it shows at once and never falls back (v246, place_from_camera).
+    static int good = 0;
     static bool shown = false;
     const bool in_level = iwram && rd32(iwram, 0x41B0) == 1;
     const int cx = iwram ? static_cast<int>(rd32(iwram, 0x5880)) >> 3 : 0;
     const int cy = iwram ? static_cast<int>(rd32(iwram, 0x5884)) >> 3 : 0;
     if (ready) {
-        ++good; bad = 0;
-        for (int i = 0; i < 4; ++i) last[i] = layers[i];
-        last_cx = cx; last_cy = cy;
-        if (!shown && good >= 10) shown = true;
+        ++good;
+        if (!shown && (good >= 10 || (in_level && camera_fallback_level()))) shown = true;
         if (!shown) ready = false;
     } else {
-        good = 0; ++bad;
-        if (shown && in_level && bad <= 30 && last[3].ok) {
-            for (int i = 0; i < 4; ++i) {
-                layers[i] = last[i];
-                layers[i].ox += cx - last_cx;
-                layers[i].oy += cy - last_cy;
-            }
+        good = 0;
+        // v246: in the joined Isengard level never the zoomed-in picture. Layers are placed from the camera with the offsets of the
+        // last good match and the level's current maps (big maps swap tile sets as the hero walks).
+        if (in_level && camera_fallback_level() && place_from_camera(cx, cy)) {
             ++memo_gen;
-            ready = true;
+            ready = true; shown = true; held = true;
         } else {
             shown = false;
         }
@@ -287,6 +320,7 @@ void frame(const gbarecomp::ExtendedViewFrameInfo* f) {
 }
 
 }  // namespace rotk_view
+extern "C" int rotk_view_held() { return rotk_view::held ? 1 : 0; }
 
 
 // ---- P2 partner: two linked games in one process (Jordan, 2026-11-08) ----
