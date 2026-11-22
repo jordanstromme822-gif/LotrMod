@@ -48,6 +48,7 @@ for b in CFG['blocks']:
                 for k in range(16): A8[y * 4 + k // 4][x * 4 + k % 4] = c[0][k]; B8[y * 4 + k // 4][x * 4 + k % 4] = c[1][k]; C8[y * 4 + k // 4][x * 4 + k % 4] = c[2][k]
     else:
         d = pickle.load(open(b['pkl'], 'rb')); A8, B8, C8 = d['GA'], d['GB'], d['GC']; w, h = d['W'], d['H']
+        pixels.update(d.get('newpix', {}))          # tiles drawn for this block (Orthanc's ledge)
     blocks.append(dict(b, A8=A8, B8=B8, C8=C8, w=w, h=h))
     bx0, by0 = min(bx0, b['cell'][0]), min(by0, b['cell'][1]); bx1, by1 = max(bx1, b['cell'][0] + w), max(by1, b['cell'][1] + h)
 W, H = bx1 - bx0, by1 - by0
@@ -70,11 +71,15 @@ H8, W8 = H * 4, W * 4
 VOID = (BLANK, 0)
 GA = [[VOID] * W8 for _ in range(H8)]; GB = [[VOID] * W8 for _ in range(H8)]; GC = [[1] * W8 for _ in range(H8)]
 fixed8 = np.zeros((H8, W8), bool)
+overlay = []                                   # (y8, x8, B tile, collision) drawn over the new ground at the end
 for b in blocks:
     for y in range(b['h'] * 4):
         for x in range(b['w'] * 4):
-            GA[b['y'] * 4 + y][b['x'] * 4 + x] = b['A8'][y][x]; GB[b['y'] * 4 + y][b['x'] * 4 + x] = b['B8'][y][x]; GC[b['y'] * 4 + y][b['x'] * 4 + x] = b['C8'][y][x]
-    fixed8[b['y'] * 4:(b['y'] + b['h']) * 4, b['x'] * 4:(b['x'] + b['w']) * 4] = True
+            yy, xx = b['y'] * 4 + y, b['x'] * 4 + x
+            if b['A8'][y][x] is None:                  # a block spot left open: ground grows there, B (and collision) on top
+                if b['B8'][y][x][0] != BLANK or b['C8'][y][x] is not None: overlay.append((yy, xx, b['B8'][y][x], b['C8'][y][x]))
+                continue
+            GA[yy][xx] = b['A8'][y][x]; GB[yy][xx] = b['B8'][y][x]; GC[yy][xx] = b['C8'][y][x]; fixed8[yy, xx] = True
 land8 = np.kron(land, np.ones((4, 4), bool))
 # notches (8 px): void beyond a block side span, for things that run off the edge and can't be ended there (Orthanc's
 # top): straight on from the span, closing in a half ellipse. A 'water' notch is a pool instead (the flood water of
@@ -227,6 +232,9 @@ for b in blocks:
 for b, side, a0, a1, depth in water_notch:      # what stands against a water notch stays whole (Orthanc's top)
     x0_, x1_ = b['x'] * 4 + int(a0 * 4) - 2, b['x'] * 4 + int(a1 * 4) + 2
     cutobj = {p for p in cutobj if not (x0_ <= p[1] < x1_ and p[0] < b['y'] * 4 + 16)}
+for b in blocks:                                # 'keep': [x0, y0, x1, y1] block 8 px rects the edge cleanup leaves whole
+    for x0_, y0_, x1_, y1_ in b.get('keep', []):
+        cutobj = {p for p in cutobj if not (b['x'] * 4 + x0_ <= p[1] < b['x'] * 4 + x1_ and b['y'] * 4 + y0_ <= p[0] < b['y'] * 4 + y1_)}
 print('cut edge pieces cleared', len(cutobj))
 for p in cutobj: fixed8[p] = False; open8[p] = True
 
@@ -387,6 +395,10 @@ for k in skeys: col_of.setdefault(k, col_votes[k].most_common(1)[0][0])
 fixed_for_shore = ~open8
 n8 = shore8.synth(GA, GB, GC, DW, fixed_for_shore, pixels, rgb, skeys, col_of, grav_col, lip=CFG.get('lip', 1.5), shape=CFG.get('shape', 20.0))
 print('shore tiles', n8)
+
+for y, x, bt, cv in overlay:
+    if bt[0] != BLANK: GB[y][x] = bt
+    if cv is not None: GC[y][x] = cv
 
 # ---- save + pictures ------------------------------------------------------------------------------------------------
 GB = [[(t if t != VOID else (BLANK, 0)) for t in row] for row in GB]
