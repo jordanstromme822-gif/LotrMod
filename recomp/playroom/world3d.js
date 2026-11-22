@@ -197,7 +197,8 @@
     if (jg && Array.isArray(jg)) { JG = jg; joinCur = Math.min(joinCur, Math.max(0, JG.length - 1)); try { localStorage.setItem(JOIN_KEY, JSON.stringify(JG)); } catch (e) {} if (cur && cur.api && cur.api.joinDraw) cur.api.joinDraw(); }
     if (d && d.moves) {
       let m = {}; try { m = JSON.parse(d.moves) || {}; } catch (e) {}
-      if (JSON.stringify(m) !== JSON.stringify(OFF)) { OFF = m; try { localStorage.setItem(ARR_KEY, d.moves); } catch (e) {} if (cur && cur.api && lastMount) remount(); }
+      if (offHist.length) docSave();
+      else if (JSON.stringify(m) !== JSON.stringify(OFF)) { OFF = m; try { localStorage.setItem(ARR_KEY, d.moves); } catch (e) {} if (cur && cur.api && lastMount) remount(); }
       else if (!jg && JG.some((g) => g.length)) docSave();
     } else if (Object.keys(OFF).length || JG.some((g) => g.length)) docSave();
   })().catch(() => {});
@@ -210,7 +211,7 @@
   }
   function remount() {
     const v = cur; if (!v || !v.api || !lastMount) return;
-    const a = v.api; keep = { cam: Object.assign({}, a.cam), hero: a.hero ? a.hero() : -1 };
+    const a = v.api; keep = { cam: Object.assign({}, a.cam), hero: a.hero ? a.hero() : -1, ty: a.ty ? a.ty() : 0 };
     mount(lastMount[0], lastMount[1]);
   }
 
@@ -627,14 +628,18 @@
       if (ps.length === 1 && arrOn && ps[0].btn !== 2 && !ps[0].shift) {
         const l = pickAt(ps[0].x, ps[0].y), k = tiles[l];
         if (k) { const hit = groundAt(ps[0].x, ps[0].y); plane.constant = -k.y; const hitTop = groundAt(ps[0].x, ps[0].y); plane.constant = 0;
-          g0 = { mode: "drag", l, k, hit: hitTop || hit, cx: k.cx, cz: k.cz, dx: 0, dz: 0 }; dragVis(k, true); return; }
+          g0 = { mode: "drag", pid: ps[0].id, t0: performance.now(), l, k, hit: hitTop || hit, cx: k.cx, cz: k.cz, dx: 0, dz: 0 }; dragVis(k, true); return; }
       }
       if (ps.length === 1) g0 = { mode: ps[0].btn === 2 || ps[0].shift ? "orbit" : "pan", x: ps[0].x, y: ps[0].y, cam: Object.assign({}, cam), hit: groundAt(ps[0].x, ps[0].y) };
       else if (ps.length >= 2) { const [a, b] = ps; g0 = { mode: "two", d: Math.hypot(a.x - b.x, a.y - b.y), ang: Math.atan2(b.y - a.y, b.x - a.x), my: (a.y + b.y) / 2, mx: (a.x + b.x) / 2, cam: Object.assign({}, cam) }; }
     }
     cvs.addEventListener("pointerdown", (e) => {
       e.preventDefault(); touched = true; cvs.setPointerCapture && cvs.setPointerCapture(e.pointerId);
-      ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY, btn: e.button, shift: e.shiftKey });
+      ptrs.set(e.pointerId, { id: e.pointerId, x: e.clientX, y: e.clientY, btn: e.button, shift: e.shiftKey });
+      if (g0 && g0.mode === "drag") {   // a second finger right away = pinch/turn, not a drag; later, it waits
+        if (performance.now() - g0.t0 < 300 && !g0.dx && !g0.dz) { const g = g0; g0 = null; g.dx = g.dz = 0; dragEnd(g); }
+        else { tap = null; return; }
+      }
       tap = ptrs.size === 1 ? { x: e.clientX, y: e.clientY, t: performance.now() } : null;
       flying = false; Object.assign(goal, cam); gestureStart();
     });
@@ -643,7 +648,8 @@
       if (tap && Math.hypot(e.clientX - tap.x, e.clientY - tap.y) > 8) tap = null;
       const ps = [...ptrs.values()];
       if (!g0) return;
-      if (g0.mode === "drag" && ps.length === 1) {
+      if (g0.mode === "drag") {
+        if (e.pointerId !== g0.pid) return;
         plane.constant = -g0.k.y; const now = groundAt(p.x, p.y); plane.constant = 0;
         if (now && g0.hit) { const SN = 8 / U; g0.dx = Math.round((now.x - g0.hit.x) / SN) * SN; g0.dz = Math.round((now.z - g0.hit.z) / SN) * SN; dragMove(g0); }
         dirty(); return;
@@ -681,7 +687,7 @@
     }
     const up = (e) => {
       if (!ptrs.has(e.pointerId)) return; ptrs.delete(e.pointerId);
-      if (g0 && g0.mode === "drag") { const g = g0; g0 = null; tap = null; ptrs.clear(); dragEnd(g); return; }
+      if (g0 && g0.mode === "drag") { if (e.pointerId !== g0.pid) return; const g = g0; g0 = null; tap = null; ptrs.clear(); dragEnd(g); return; }
       if (tap && ptrs.size === 0 && performance.now() - tap.t < 450) { const l = pickAt(e.clientX, e.clientY); if (joinOn) joinTap(l); else showCard(l === selL ? -1 : l); }
       tap = null; gestureStart(); if (!ptrs.size) g0 = null;
     };
@@ -760,8 +766,8 @@
       bridges.forEach((br) => { br.tx && br.tx.dispose(); br.mat && br.mat.dispose(); });
       renderer.dispose(); if (renderer.forceContextLoss) renderer.forceContextLoss(); root.remove();
     };
-    view.api = { pickHero, showCard, fitTo, cam, goal, tiles, layout: L, dirty, bridges, hero: () => hero, moves: () => JSON.parse(JSON.stringify(OFF)), arrange: (on) => { arrOn = !!on; arrUi(); }, joins: () => JSON.parse(JSON.stringify(JG.filter((g) => g.length))), join: (on) => { if (!!on !== joinOn) ctl.querySelector('[data-c="join"]').click(); }, joinTap, joinDraw };
-    if (keep) { const kp = keep; keep = null; touched = true; Object.assign(cam, kp.cam); Object.assign(goal, kp.cam); if (kp.hero >= 0) pickHero(kp.hero); }
+    view.api = { pickHero, showCard, fitTo, cam, goal, tiles, layout: L, dirty, bridges, hero: () => hero, ty: () => ty, moves: () => JSON.parse(JSON.stringify(OFF)), arrange: (on) => { arrOn = !!on; arrUi(); }, joins: () => JSON.parse(JSON.stringify(JG.filter((g) => g.length))), join: (on) => { if (!!on !== joinOn) ctl.querySelector('[data-c="join"]').click(); }, joinTap, joinDraw };
+    if (keep) { const kp = keep; keep = null; touched = true; ty = kp.ty || 0; Object.assign(cam, kp.cam); Object.assign(goal, kp.cam); if (kp.hero >= 0) pickHero(kp.hero); }
     else fitTo(sel(-1), true);
     arrUi(); joinDraw(); applyCam(); dirty();
   }
