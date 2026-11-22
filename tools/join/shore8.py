@@ -18,7 +18,7 @@ def tile_px(k, pixels, rgb):
     return rgb[(k[1] >> 12) * 16 + p].astype(np.float32), p == 0
 
 
-def synth(GA, GB, GC, DW, fixed8, pixels, rgb, cand_keys, col_of, grav_col, reach=2, log=print, seed=9):
+def synth(GA, GB, GC, DW, fixed8, pixels, rgb, cand_keys, col_of, grav_col, reach=2, log=print, seed=9, lip=1.5, shape=20.0):
     H8, W8 = len(GA), len(GA[0])
     rng = np.random.default_rng(seed)
     keys = list(cand_keys)
@@ -49,10 +49,10 @@ def synth(GA, GB, GC, DW, fixed8, pixels, rgb, cand_keys, col_of, grav_col, reac
     used = collections.Counter()
     for y, x in sorted(zip(ys.tolist(), xs.tolist())):
         tgt = DW[y * 8:y * 8 + 8, x * 8:x * 8 + 8].reshape(64).astype(np.float32)
-        cost = 20.0 * np.abs(TRf - tgt[None]).sum(1)                          # follow the water shape
+        cost = shape * np.abs(TRf - tgt[None]).sum(1)                          # follow the water shape
         nr = near[y * 8:y * 8 + 8, x * 8:x * 8 + 8].reshape(64)
         cost += 12.0 * (RIM & ~nr[None]).sum(1)                                # the dark lip only right at the water
-        cost += 1.5 * (~TR.reshape(len(keys), 64) & ~RIM & nr[None]).sum(1)  # and a lip all along it
+        cost += lip * (~TR.reshape(len(keys), 64) & ~RIM & nr[None]).sum(1)  # and a lip all along it
         for dy, dx, mine, theirs in ((0, -1, (slice(None), 0), (slice(None), 7)), (-1, 0, (0, slice(None)), (7, slice(None))),
                                      (0, 1, (slice(None), 7), (slice(None), 0)), (1, 0, (7, slice(None)), (0, slice(None)))):
             yy, xx = y + dy, x + dx

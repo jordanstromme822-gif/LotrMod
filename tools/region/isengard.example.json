@@ -1,0 +1,6 @@
+{"name":"Isengard","own":"SCRATCH/isen/own.npy","grid":[100,-2500,-2500],"index":0,"origin_px":[1888,16768],
+ "blocks":[{"name":"Flooded Field + Tower Base","pkl":"SCRATCH/jn3/world.pkl","cell":[0,0],"tone":"grey","clean":"nsew","notch":[["n",59.5,78,7,"water"]]},
+           {"name":"Campsite","level":50,"cell":[16,-179],"tone":"purple","clean":"","caps":false}],
+ "source_levels":[51,55],
+ "tones":{"grey":{"levels":[51,55],"top":12},"purple":{"levels":[50],"top":12,"radius":7}},
+ "blend":3,"pool":40,"seed":3}
