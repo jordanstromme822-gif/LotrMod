@@ -156,6 +156,8 @@
   #w3d .w-arr.on{display:flex}
   #w3d .w-arr button{height:28px;padding:0 11px;border-radius:14px;border:1.5px solid #c99a46;background:linear-gradient(#1c1a1f,#0d0c10);color:#f3d27a;font:700 11.5px/1 var(--display,Georgia,serif);cursor:pointer}
   #w3d .w-arr button:disabled{opacity:.4}
+  #w3d .w-arr button.grp{display:inline-flex;align-items:center;gap:6px}
+  #w3d .w-arr button.grp i{width:10px;height:10px;border-radius:50%;box-shadow:0 0 0 1.5px #0d0b09,0 0 6px currentColor}
   #storyMap .sm-scroll.w3d-sc{overflow:hidden;display:flex;flex-direction:column}
   #storyMap .sm-tabs button{white-space:nowrap}
   @media (max-width:440px){#storyMap .sm-tabs{gap:4px}#storyMap .sm-tabs button{padding:0 9px;font-size:12.5px}}
@@ -173,9 +175,17 @@
   const ARR_KEY = "w3d-arrange-v1";
   let OFF = {}; try { OFF = JSON.parse(localStorage.getItem(ARR_KEY) || "{}") || {}; } catch (e) { OFF = {}; }
   let offHist = [], arrDoc = null, arrOn = false, keep = null, lastMount = null;
+  const JOIN_KEY = "w3d-joins-v1";   // v241: groups of screens the player wants connected
+  let JG = []; try { JG = JSON.parse(localStorage.getItem(JOIN_KEY) || "[]") || []; } catch (e) { JG = []; }
+  let joinOn = false, joinCur = 0;
+  function docSave() { if (arrDoc) arrDoc.set({ moves: JSON.stringify(OFF), joins: JSON.stringify(JG.filter((g) => g.length)), at: Date.now() }).catch(() => {}); }
   function offSave() {
     try { localStorage.setItem(ARR_KEY, JSON.stringify(OFF)); } catch (e) {}
-    if (arrDoc) arrDoc.set({ moves: JSON.stringify(OFF), at: Date.now() }).catch(() => {});
+    docSave();
+  }
+  function joinSave() {
+    try { localStorage.setItem(JOIN_KEY, JSON.stringify(JG)); } catch (e) {}
+    docSave();
   }
   (async () => {
     const use = window.claude && window.claude.use; if (!use) return;
@@ -183,10 +193,13 @@
     const id = await user.id(); if (!id) return;
     arrDoc = db.doc("data/users/" + id + "/world3d-arrange");
     const snap = await arrDoc.get().catch(() => null), d = snap && (snap.data ? snap.data() : snap);
+    let jg = null; if (d && d.joins) { try { jg = JSON.parse(d.joins); } catch (e) {} }
+    if (jg && Array.isArray(jg)) { JG = jg; joinCur = Math.min(joinCur, Math.max(0, JG.length - 1)); try { localStorage.setItem(JOIN_KEY, JSON.stringify(JG)); } catch (e) {} if (cur && cur.api && cur.api.joinDraw) cur.api.joinDraw(); }
     if (d && d.moves) {
       let m = {}; try { m = JSON.parse(d.moves) || {}; } catch (e) {}
       if (JSON.stringify(m) !== JSON.stringify(OFF)) { OFF = m; try { localStorage.setItem(ARR_KEY, d.moves); } catch (e) {} if (cur && cur.api && lastMount) remount(); }
-    } else if (Object.keys(OFF).length) offSave();
+      else if (!jg && JG.some((g) => g.length)) docSave();
+    } else if (Object.keys(OFF).length || JG.some((g) => g.length)) docSave();
   })().catch(() => {});
   function shifted(L0) {   // the layout with the player's moves applied (copies; World3D.layout stays as the game uses it)
     const T = {}; Object.keys(L0.T).forEach((k) => { const t = Object.assign({}, L0.T[k]), o = OFF[k]; if (o) { t.x += o[0]; t.y += o[1]; } T[k] = t; });
@@ -479,9 +492,47 @@
     });
     hud.addEventListener("click", (e) => { const b = e.target.closest("[data-h]"); if (!b) return; e.preventDefault(); pickHero(+b.dataset.h); });
     const ctl = document.createElement("div"); ctl.className = "w-ctl"; root.appendChild(ctl);
-    ctl.innerHTML = '<button type="button" data-c="in" aria-label="Zoom in">+</button><button type="button" data-c="out" aria-label="Zoom out">−</button><button type="button" data-c="rl" aria-label="Turn left">⟲</button><button type="button" data-c="rr" aria-label="Turn right">⟳</button><button type="button" data-c="tilt" class="wide" aria-label="Tilt">3D</button><button type="button" data-c="all" class="wide" aria-label="Whole campaign">ALL</button><button type="button" data-c="move" class="wide" aria-label="Arrange screens">MOVE</button>';
+    ctl.innerHTML = '<button type="button" data-c="in" aria-label="Zoom in">+</button><button type="button" data-c="out" aria-label="Zoom out">−</button><button type="button" data-c="rl" aria-label="Turn left">⟲</button><button type="button" data-c="rr" aria-label="Turn right">⟳</button><button type="button" data-c="tilt" class="wide" aria-label="Tilt">3D</button><button type="button" data-c="all" class="wide" aria-label="Whole campaign">ALL</button><button type="button" data-c="move" class="wide" aria-label="Arrange screens">MOVE</button><button type="button" data-c="join" class="wide" aria-label="Pick maps to connect">JOIN</button>';
     const arrBar = document.createElement("div"); arrBar.className = "w-arr"; root.appendChild(arrBar);
     arrBar.innerHTML = '<span>Drag a screen to slide it</span><button type="button" data-r="undo">UNDO</button><button type="button" data-r="reset">RESET</button><button type="button" data-r="done">DONE</button>';
+    const joinBar = document.createElement("div"); joinBar.className = "w-arr"; root.appendChild(joinBar);
+    const JCOL = ["#ffd24a", "#4aa8ff", "#5ee07a", "#ff6a5a", "#c07bff", "#3fe0e0", "#ff9a3a", "#ff7ac8"];
+    let joinMarks = [];
+    function joinDraw() {   // a coloured glow and outline on every screen picked to be connected
+      joinMarks.forEach((o) => { scene.remove(o); o.geometry.dispose(); o.material.dispose(); }); joinMarks = [];
+      if (joinOn || JG.some((g) => g.length)) JG.forEach((g, gi) => g.forEach((l) => {
+        const k = tiles[l]; if (!k) return; const col = new THREE.Color(JCOL[gi % JCOL.length]), cur = joinOn && gi === joinCur;
+        const glow = new THREE.Mesh(new THREE.PlaneGeometry(k.w, k.d), new THREE.MeshBasicMaterial({ color: col, transparent: true, opacity: joinOn ? (cur ? 0.42 : 0.22) : 0.16, depthWrite: false }));
+        glow.rotation.x = -Math.PI / 2; glow.position.set(k.cx, k.y + 0.12, k.cz); scene.add(glow); joinMarks.push(glow);
+        const box = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.BoxGeometry(k.w + 0.6, 0.4, k.d + 0.6)), new THREE.LineBasicMaterial({ color: col }));
+        box.position.set(k.cx, k.y + 0.2, k.cz); scene.add(box); joinMarks.push(box);
+      }));
+      joinUi(); dirty();
+    }
+    function joinUi() {
+      ctl.querySelector('[data-c="join"]').classList.toggle("on", joinOn); joinBar.classList.toggle("on", joinOn);
+      if (!JG.length) JG.push([]); if (joinCur >= JG.length) joinCur = JG.length - 1;
+      const g = JG[joinCur] || [], c = JCOL[joinCur % JCOL.length];
+      joinBar.innerHTML = '<span>Tap maps to connect</span><button type="button" class="grp" data-j="grp" style="color:' + c + '"><i style="background:' + c + '"></i><b style="color:#f3d27a">Group ' + (joinCur + 1) + " · " + g.length + (g.length === 1 ? " map" : " maps") + '</b></button><button type="button" data-j="new">NEW</button><button type="button" data-j="clear">CLEAR</button><button type="button" data-j="done">DONE</button>';
+      joinBar.querySelector('[data-j="grp"]').disabled = JG.length < 2;
+      joinBar.querySelector('[data-j="new"]').disabled = !g.length;
+      joinBar.querySelector('[data-j="clear"]').disabled = !g.length;
+    }
+    function joinTap(l) {
+      if (l < 0 || !tiles[l]) return;
+      const g = JG[joinCur], had = g.indexOf(l) >= 0;
+      JG.forEach((o) => { const i = o.indexOf(l); if (i >= 0) o.splice(i, 1); });
+      if (!had) g.push(l);
+      joinSave(); joinDraw();
+    }
+    joinBar.addEventListener("click", (e) => {
+      const b = e.target.closest("[data-j]"); if (!b || b.disabled) return; e.preventDefault(); const r = b.dataset.j;
+      if (r === "done") { joinOn = false; JG = JG.filter((g) => g.length); joinCur = 0; joinSave(); joinDraw(); return; }
+      if (r === "grp") { JG = JG.filter((g, i) => g.length || i === joinCur); joinCur = (joinCur + 1) % JG.length; }
+      else if (r === "new") { JG = JG.filter((g) => g.length); JG.push([]); joinCur = JG.length - 1; }
+      else if (r === "clear") { JG[joinCur] = []; joinSave(); }
+      joinDraw();
+    });
     function arrUi() {
       const mb = ctl.querySelector('[data-c="move"]'); mb.classList.toggle("on", arrOn); arrBar.classList.toggle("on", arrOn);
       labLayer.style.display = arrOn ? "none" : "";
@@ -499,7 +550,8 @@
       else if (c === "rl") goal.az += Math.PI / 4; else if (c === "rr") goal.az -= Math.PI / 4;
       else if (c === "tilt") { goal.pol = goal.pol > 0.3 ? 0.02 : 0.95; b.textContent = goal.pol > 0.3 ? "TOP" : "3D"; }
       else if (c === "all") { goal.az = 0; goal.pol = 0.5; fitTo(sel(hero)); }
-      else if (c === "move") { arrOn = !arrOn; arrUi(); if (arrOn) { showCard(-1); help.style.display = "none"; } return; }
+      else if (c === "move") { arrOn = !arrOn; if (arrOn && joinOn) { joinOn = false; joinDraw(); } arrUi(); if (arrOn) { showCard(-1); help.style.display = "none"; } return; }
+      else if (c === "join") { joinOn = !joinOn; if (joinOn && arrOn) { arrOn = false; arrUi(); } if (joinOn) { showCard(-1); help.style.display = "none"; JG = JG.filter((g) => g.length); JG.push([]); joinCur = JG.length - 1; } else { JG = JG.filter((g) => g.length); joinCur = 0; } joinDraw(); return; }
       flying = true; dirty();
     });
     const help = document.createElement("div"); help.className = "w-help"; help.textContent = "Drag to move · pinch to zoom · twist to turn · two fingers up/down to tilt · tap a screen"; root.appendChild(help);
@@ -630,7 +682,7 @@
     const up = (e) => {
       if (!ptrs.has(e.pointerId)) return; ptrs.delete(e.pointerId);
       if (g0 && g0.mode === "drag") { const g = g0; g0 = null; tap = null; ptrs.clear(); dragEnd(g); return; }
-      if (tap && ptrs.size === 0 && performance.now() - tap.t < 450) { const l = pickAt(e.clientX, e.clientY); showCard(l === selL ? -1 : l); }
+      if (tap && ptrs.size === 0 && performance.now() - tap.t < 450) { const l = pickAt(e.clientX, e.clientY); if (joinOn) joinTap(l); else showCard(l === selL ? -1 : l); }
       tap = null; gestureStart(); if (!ptrs.size) g0 = null;
     };
     cvs.addEventListener("pointerup", up); cvs.addEventListener("pointercancel", up);
@@ -708,10 +760,10 @@
       bridges.forEach((br) => { br.tx && br.tx.dispose(); br.mat && br.mat.dispose(); });
       renderer.dispose(); if (renderer.forceContextLoss) renderer.forceContextLoss(); root.remove();
     };
-    view.api = { pickHero, showCard, fitTo, cam, goal, tiles, layout: L, dirty, bridges, hero: () => hero, moves: () => JSON.parse(JSON.stringify(OFF)), arrange: (on) => { arrOn = !!on; arrUi(); } };
+    view.api = { pickHero, showCard, fitTo, cam, goal, tiles, layout: L, dirty, bridges, hero: () => hero, moves: () => JSON.parse(JSON.stringify(OFF)), arrange: (on) => { arrOn = !!on; arrUi(); }, joins: () => JSON.parse(JSON.stringify(JG.filter((g) => g.length))), join: (on) => { if (!!on !== joinOn) ctl.querySelector('[data-c="join"]').click(); }, joinTap, joinDraw };
     if (keep) { const kp = keep; keep = null; touched = true; Object.assign(cam, kp.cam); Object.assign(goal, kp.cam); if (kp.hero >= 0) pickHero(kp.hero); }
     else fitTo(sel(-1), true);
-    arrUi(); applyCam(); dirty();
+    arrUi(); joinDraw(); applyCam(); dirty();
   }
 
   window.World3D = { mount, unmount, layout, get view() { return cur; } };
