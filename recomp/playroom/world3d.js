@@ -484,6 +484,7 @@
     arrBar.innerHTML = '<span>Drag a screen to slide it</span><button type="button" data-r="undo">UNDO</button><button type="button" data-r="reset">RESET</button><button type="button" data-r="done">DONE</button>';
     function arrUi() {
       const mb = ctl.querySelector('[data-c="move"]'); mb.classList.toggle("on", arrOn); arrBar.classList.toggle("on", arrOn);
+      labLayer.style.display = arrOn ? "none" : "";
       arrBar.querySelector('[data-r="undo"]').disabled = !offHist.length; arrBar.querySelector('[data-r="reset"]').disabled = !Object.keys(OFF).length;
     }
     arrBar.addEventListener("click", (e) => {
@@ -498,7 +499,7 @@
       else if (c === "rl") goal.az += Math.PI / 4; else if (c === "rr") goal.az -= Math.PI / 4;
       else if (c === "tilt") { goal.pol = goal.pol > 0.3 ? 0.02 : 0.95; b.textContent = goal.pol > 0.3 ? "TOP" : "3D"; }
       else if (c === "all") { goal.az = 0; goal.pol = 0.5; fitTo(sel(hero)); }
-      else if (c === "move") { arrOn = !arrOn; arrUi(); if (arrOn) showCard(-1); return; }
+      else if (c === "move") { arrOn = !arrOn; arrUi(); if (arrOn) { showCard(-1); help.style.display = "none"; } return; }
       flying = true; dirty();
     });
     const help = document.createElement("div"); help.className = "w-help"; help.textContent = "Drag to move · pinch to zoom · twist to turn · two fingers up/down to tilt · tap a screen"; root.appendChild(help);
