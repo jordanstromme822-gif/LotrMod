@@ -1,13 +1,13 @@
 # Recolor tools (2026-11-22)
 
-Lore colours for the purple lands and the 8-minute sky cycle (Play Room v246).
+Lore colours for the purple lands and the 8-minute sky cycle (Play Room v247).
 
 - `render.py`: renders every level to palette-index images (`idx/L.npy`, `meta.pkl`) from the ROM (needs `tools/siege/romlib.py` + unicorn).
 - `lib.py`, `recolor.py`, `mats.py`: OKLab/OKLCH helpers, hue-window rules, material ramps (earth, turf, granite, soot, night-haze ...).
-- `plans.py`: colour plans per area. `X_O` = round 2 "organic" plans that went live in v246.
+- `plans.py`: colour plans per area. `X_O` = round 2 "organic" plans that went live in v247.
 - `compose.py`: `new_palette(pal, plan, palp)` -> 256 BGR555 colours; `render2` before/after pictures; `sky_bank(L)`.
 - `sky.py`: morning/noon/dusk/night sky keyframes (FREE lands, SHADOW for Mordor/Isengard, MORGULSKY for Morgul).
-- `gen.py`: writes the page data (`recomp/playroom/lore-colors-v246.json`): new palettes per ROM address and each outside level's sky bank keyframes.
+- `gen.py`: writes the page data (`recomp/playroom/lore-colors-v247.json`): new palettes per ROM address and each outside level's sky bank keyframes.
 - `resid.py`: leftover-purple check per level.
 
 Palette groups (ROM address: levels): Dunharrow 0x88b9a9c (30-35), Morgul 0x89f1464 (74-80), Isengard 0x894722c (50,51,55)

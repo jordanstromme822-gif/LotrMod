@@ -1,9 +1,9 @@
-# Play Room v246: lore colours and the 8-minute day (Jordan, 2026-11-22).
+# Play Room v247: lore colours and the 8-minute day (Jordan, 2026-11-22).
 #  - "Why do so many maps use purple ... render those areas in colors more fitting to the landscape from the lore"
 #    + "keep going with the organic detailed look": the round-2 ground palettes (Dunharrow, Morgul, Isengard,
 #    Gorgoroth, Shelob's Lair, Ice Caves, Paths of the Dead, Denethor's balcony, White Mountains) replace the
 #    level palettes in the ROM at load. Art is the game's own; only colours change. Built by the recolor tools
-#    (project files recolor/tools: plans.py *_O plans, compose.new_palette), data in lore-colors-v246.json.
+#    (project files recolor/tools: plans.py *_O plans, compose.new_palette), data in lore-colors-v247.json.
 #  - "give the sky ... morning noon and dusk and add in a night option cycled in two minute intervals slowly fading
 #    between them": play time runs morning, noon, dusk, night, 2 minutes each with 1-minute fades (was 4 min day +
 #    4 min night). Each outside level's sky palette bank moves between four keyframes (recolor sky.py: FREE lands,
@@ -11,7 +11,7 @@
 #    (torches start to glow at dusk) before the old night. Mordor's fixed look gets a little darker at night.
 #    Levels whose ground shares the sky bank (Crack of Doom, Sammath Naur, the Beacons, Fork, Mindolluin, Tower
 #    Door) and anything underground keep their sky still.
-# Usage: python3 daycycle-v246.py in.html lore-colors-v246.json out.html
+# Usage: python3 daycycle-v247.py in.html lore-colors-v247.json out.html
 import json, sys
 p, data, out = sys.argv[1], sys.argv[2], sys.argv[3]; s = open(p, encoding='utf-8').read()
 D = json.load(open(data))
@@ -22,7 +22,7 @@ def rep(a, b, n=1):
 lore = json.dumps({'pals': D['pals'], 'sky': D['sky']}, separators=(',', ':'))
 rep('        game = g; }\n',
     '        game = g; }\n'
-    '      // v246 lore colours (Jordan 2026-11-22): new level palettes for the purple lands, and each outside level\'s sky\n'
+    '      // v247 lore colours (Jordan 2026-11-22): new level palettes for the purple lands, and each outside level\'s sky\n'
     '      // keyframes (bank, own colours, morning/noon/dusk/night as BGR555 hex) for the day cycle below.\n'
     '      window.__LORE = ' + lore + ';\n'
     '      for (const [a, h] of window.__LORE.pals) game.set(hexBytes(h), parseInt(a, 16) - 0x8000000);\n')
@@ -34,7 +34,7 @@ rep('''    const nightness = () => {
       let n = t < r / 2 ? 1 - up(t + r / 2) : t < h + r / 2 ? up(t - (h - r / 2)) : 1 - up(t - (T - r / 2));
       return n * n * (3 - 2 * n);
     };
-''', '''    // v246: morning, noon, dusk and night, 2 minutes each of play, fading over a minute into the next
+''', '''    // v247: morning, noon, dusk and night, 2 minutes each of play, fading over a minute into the next
     // (Jordan 2026-11-22). Weights for the four, adding up to 1. window.__dayT (seconds) pins the clock for tests.
     const dayT = () => { const t = typeof window.__dayT === "number" ? window.__dayT : playT; return ((t % 480) + 480) % 480; };
     const phaseW = () => {
@@ -53,14 +53,14 @@ rep('''    const nightness = () => {
     const INSIDE = { 16: 1, 17: 1, 18: 1, 28: 1 };   // Mount Doom's insides: no clock
 ''')
 rep('''      const t = ((typeof window.__sunT === "number" ? window.__sunT : playT) + 15) % 480, day = t < 255, u = day ? Math.min(1, t / 255) : Math.min(1, (t - 240) / 240);
-''', '''      const t = typeof window.__sunT === "number" ? ((window.__sunT % 480) + 480) % 480 : dayT(), day = t < 360, u = day ? t / 360 : (t - 360) / 120;   // v246: sun over morning-dusk, moon at night
+''', '''      const t = typeof window.__sunT === "number" ? ((window.__sunT % 480) + 480) % 480 : dayT(), day = t < 360, u = day ? t / 360 : (t - 360) / 120;   // v247: sun over morning-dusk, moon at night
 ''')
 rep('''      if (FIXED[g]) return Object.assign({}, looks[g], { SunDX: 0.25, SunDY: 0.32, Warm: 0 });
       const k = nightness(); const lk = k <= 0 ? day : blend(day, g === "Helm's Deep" ? looks["Helm's Deep"] : NIGHT, k);
       return Object.assign({}, lk, sunNow(k));
 ''', '''      const w = phaseW();
       if (FIXED[g]) {
-        const f = looks[g], out = !INSIDE[n] && g !== "Caves" && g !== "Dwarf halls";   // v246: outside Mordor is a little darker at dusk and night
+        const f = looks[g], out = !INSIDE[n] && g !== "Caves" && g !== "Dwarf halls";   // v247: outside Mordor is a little darker at dusk and night
         return Object.assign({}, f, out ? { Night: Math.min(0.95, f.Night + 0.1 * w[2] + 0.3 * w[3]) } : {}, { SunDX: 0.25, SunDY: 0.32, Warm: 0 });
       }
       const lk = mixW([[Object.assign({}, day, MORN), w[0]], [day, w[1]], [Object.assign({}, day, DUSK), w[2]], [Object.assign({}, day, g === "Helm's Deep" ? looks["Helm's Deep"] : NIGHT), w[3]]]);
@@ -70,7 +70,7 @@ rep('''    return { looks, sunNow, forLevel: (n) => looks[byLevel[n]] || looks.l
 ''', '''    return { looks, sunNow, forLevel: (n) => looks[byLevel[n]] || looks.level, cycled, nightness, phaseW, names: byLevel, tick, playTime: () => playT, under };
 ''')
 # Sky palette writer.
-rep('''  // Graphics High/Low (2026-11-12)''', '''  // v246 sky through the day: each outside level's sky colours (its sky palette bank) move between its morning, noon,
+rep('''  // Graphics High/Low (2026-11-12)''', '''  // v247 sky through the day: each outside level's sky colours (its sky palette bank) move between its morning, noon,
   // dusk and night keyframes, written into palette RAM; outside online play also into the game's own palette copy
   // (EWRAM 0x1B090, which screen fades read) so a level fades in with the right sky. Online leaves EWRAM alone (the two
   // pages compare it). Written only while the bank still holds the level's own colours or ours, never during a fade
@@ -106,4 +106,4 @@ rep('''  // Graphics High/Low (2026-11-12)''', '''  // v246 sky through the day:
     requestAnimationFrame(step);
   })();
   // Graphics High/Low (2026-11-12)''')
-open(out, 'w', encoding='utf-8').write(s); print('ok v246 day cycle')
+open(out, 'w', encoding='utf-8').write(s); print('ok v247 day cycle')
