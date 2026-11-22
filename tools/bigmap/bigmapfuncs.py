@@ -10,7 +10,7 @@ _, syms = assemble()
 t = open(toml).read()
 if MARK in t: t = t[:t.index(MARK)].rstrip() + "\n"
 t = t.rstrip() + "\n\n" + MARK + "\n"
-for n in sorted(k for k in syms if k.startswith('stub_')):
+for n in sorted(k for k in syms if (k.startswith('stub_') or k in ('bm_frame', 'call_r4'))):
     t += "\n[[extra_func]]\naddr = 0x%08X\nmode = \"thumb\"\n" % syms[n]
 open(toml, "w").write(t)
-print("big map stubs", ' '.join(hex(syms[k]) for k in sorted(syms) if k.startswith('stub_')))
+print("big map stubs", ' '.join(hex(syms[k]) for k in sorted(syms) if (k.startswith('stub_') or k in ('bm_frame', 'call_r4'))))

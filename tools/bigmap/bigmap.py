@@ -14,6 +14,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 BASE = 0x284C00
 DECOMP = 0x08019D54
 SITES = {'stub_mapA': 0x3EEC6, 'stub_mapB': 0x3F04E, 'stub_metaA': 0x3EF8A, 'stub_metaB': 0x3F0CA, 'stub_col': 0x3411C}
+# the gameplay tick's call of 0x080016F8 goes through bm_frame (tile set swap on joined levels)
+FRAME = (0x31ED4, 0x080016F8, 'bm_frame')
 
 
 def thumb_bl(src, dst):
@@ -39,6 +41,8 @@ def patches():
     out = [(BASE, bytes(len(code)), code)]
     for name, at in SITES.items():
         out.append((at, thumb_bl(0x08000000 + at, DECOMP), thumb_bl(0x08000000 + at, syms[name])))
+    at, old, name = FRAME
+    out.append((at, thumb_bl(0x08000000 + at, old), thumb_bl(0x08000000 + at, syms[name])))
     return out, syms
 
 
