@@ -35,7 +35,7 @@ namespace rotk_view {
 
 struct Layer {
     bool ok = false;
-    std::uint32_t map = 0, set = 0;  // EWRAM offsets
+    std::uint32_t map = 0, set = 0;  // CPU addresses (EWRAM, or ROM for big maps read straight from the cartridge)
     int ox = 0, oy = 0;              // level tile at VRAM map (0,0)
 };
 
@@ -58,19 +58,28 @@ inline std::uint16_t rd16(const std::uint8_t* m, std::uint32_t o) {
 inline bool ewram_ptr_ok(std::uint32_t p, std::uint32_t len) {
     return p >= 0x02000000u && p + len <= 0x02040000u;
 }
+// Big maps (v243, tools/bigmap): the block map and block set can live in ROM (0x08000000-0x09FFFFFF) instead of EWRAM.
+inline const std::uint8_t* level_mem(std::uint32_t p, std::uint32_t len) {
+    if (ewram_ptr_ok(p, len)) return ewram + (p - 0x02000000u);
+    if (bus && p >= 0x08000000u && p < 0x0A000000u) {
+        const std::uint32_t o = p - 0x08000000u;
+        if (o + len <= bus->rom_size()) return bus->rom_ptr() + o;
+    }
+    return nullptr;
+}
 
 // Tile entry of level layer (map,set) at level tile (tx,ty); false if outside.
 inline bool level_entry(std::uint32_t map, std::uint32_t set, int tx, int ty, std::uint16_t* out) {
     if (tx < 0 || ty < 0) return false;
     const int bx = tx >> 2, by = ty >> 2;
     if (bx >= W || by >= H) return false;
-    const std::uint32_t mo = map + static_cast<std::uint32_t>(by * W + bx) * 2u;
-    if (mo + 2 > 0x40000u) return false;
-    const std::uint16_t block = rd16(ewram, mo);
-    const std::uint32_t so = set + static_cast<std::uint32_t>(block) * 32u +
-                             static_cast<std::uint32_t>((ty & 3) * 8 + (tx & 3) * 2);
-    if (so + 2 > 0x40000u) return false;
-    *out = rd16(ewram, so);
+    const std::uint8_t* mp = level_mem(map + static_cast<std::uint32_t>(by * W + bx) * 2u, 2);
+    if (!mp) return false;
+    const std::uint16_t block = rd16(mp, 0);
+    const std::uint8_t* sp = level_mem(set + static_cast<std::uint32_t>(block) * 32u +
+                                       static_cast<std::uint32_t>((ty & 3) * 8 + (tx & 3) * 2), 2);
+    if (!sp) return false;
+    *out = rd16(sp, 0);
     return true;
 }
 
@@ -88,11 +97,12 @@ void prepare(const std::uint8_t* io) {
     if (W <= 0 || W > 256) return;
     const std::uint32_t mapA = rd32(iwram, 0x5FB4), mapB = rd32(iwram, 0x586C);
     const std::uint32_t setA = rd32(iwram, 0x5FBC), setB = rd32(iwram, 0x5FC0);
-    if (!ewram_ptr_ok(mapA, 2) || !ewram_ptr_ok(mapB, 2) || !ewram_ptr_ok(setA, 32) || !ewram_ptr_ok(setB, 32)) return;
-    H = 0x2800 / (2 * W);
+    if (!level_mem(mapA, 2) || !level_mem(mapB, 2) || !level_mem(setA, 32) || !level_mem(setB, 32)) return;
+    H = rd16(iwram, 0x5864);                               // the level's height in cells (v243: maps can be taller than
+    if (H <= 0 || H > 1024) H = 0x2800 / (2 * W);          // the old 0x2800-byte buffer); old rule as a fallback
     const int camx = static_cast<int>(rd32(iwram, 0x5880)), camy = static_cast<int>(rd32(iwram, 0x5884));
-    const std::uint32_t maps[2] = {mapA - 0x02000000u, mapB - 0x02000000u};
-    const std::uint32_t sets[2] = {setA - 0x02000000u, setB - 0x02000000u};
+    const std::uint32_t maps[2] = {mapA, mapB};
+    const std::uint32_t sets[2] = {setA, setB};
     const std::uint16_t dispcnt = rd16(io, 0);
     for (int bg = 2; bg < 4; ++bg) {
         if (!(dispcnt & (0x100 << bg))) continue;
@@ -257,11 +267,12 @@ void frame(const gbarecomp::ExtendedViewFrameInfo* f) {
         if (ready && ewram) {
             std::uint32_t done[4]; int nd = 0;
             for (const auto& l : layers) {
-                if (!l.ok || l.map + 0x2800u > 0x40000u) continue;
+                if (!l.ok || !ewram_ptr_ok(l.map, 0x2800u)) continue;   // a map in ROM never changes: its address is enough
                 bool seen = false; for (int i = 0; i < nd; ++i) seen |= done[i] == l.map;
                 if (seen) continue; done[nd++] = l.map;
-                const std::uint32_t* m = reinterpret_cast<const std::uint32_t*>(ewram + l.map);
-                if (reinterpret_cast<std::uintptr_t>(m) & 3u) { for (std::uint32_t o = 0; o < 0x2800u; ++o) mix(ewram[l.map + o]); }
+                const std::uint32_t off = l.map - 0x02000000u;
+                const std::uint32_t* m = reinterpret_cast<const std::uint32_t*>(ewram + off);
+                if (reinterpret_cast<std::uintptr_t>(m) & 3u) { for (std::uint32_t o = 0; o < 0x2800u; ++o) mix(ewram[off + o]); }
                 else for (std::uint32_t o = 0; o < 0x2800u / 4u; ++o) mix(m[o]);
             }
         }
