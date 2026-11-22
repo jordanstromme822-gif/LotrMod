@@ -13,6 +13,7 @@ P
 python3 /home/user/lotrmod/recomp/orcslots/linkfuncs.py /home/user/lotrmod/tools/orcslots/orcslots.sym game-link$T.toml
 python3 /home/user/lotrmod/recomp/link/turn16funcs.py /home/user/lotrmod/tools/turn16/turn16.sym game-link$T.toml
 python3 /home/user/lotrmod/recomp/link/feelfuncs.py game-link$T.toml
+python3 /home/user/lotrmod/tools/bigmap/bigmapfuncs.py game-link$T.toml
 rm -rf gen$T && gbarecomp/build/gba_recompile --rom link$T.gba --config game-link$T.toml --codegen-shards 8 --out gen$T > gen$T.log 2>&1
 python3 /home/user/lotrmod/recomp/orcslots/genpatch.py gen$T /home/user/lotrmod/tools/orcslots/orcslots.sym | tail -1
 rm -rf one$T && mkdir one$T
