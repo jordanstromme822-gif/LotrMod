@@ -401,3 +401,11 @@ Built by `tools/siege/build.py ROM OUT --base 0x1500000`, put in the page by `re
   (backs off up to 160 s). Headless loaded test: level 0 held ~55-60 pictures/s where full smoothing gave ~40-45.
   Note: rotk_tick_stats[4] (timing resets) climbs when rAF intervals pass 66 ms, e.g. SwiftShader at full res; use
   GbrHost.plain = true in headless speed tests.
+
+## Big maps and joined levels (2026-11-22, v243/v244)
+
+- Maps, metatiles and collision can stay in ROM: the five loader calls to decomp 0x08019D54 (mapA 0x0803EEC6, mapB 0x0803F04E, metaA 0x0803EF8A, metaB 0x0803F0CA, collision 0x0803411C) go through stubs (tools/bigmap). A blob whose first byte is 0x01 is "ROM-backed": only the data alias pointers (base+4: 0x03005fb4, 0x0300586c, 0x03005fbc, 0x03005fc0, 0x0300206c) are pointed at ROM. The base buffers stay in RAM because the menu VRAM save (0x08032170) and the tile loader use [0x03005f8c] as scratch.
+- New ROM code is only seen after an engine regen from the page ROM (recomp/link/one/regen.sh runs bigmapfuncs.py for the extra functions).
+- Water-mode levels keep BG1 water at char 0 slots 944-1007, so layer A tile sets must stay under 944 and B under 512. A joined map bigger than that swaps tile sets by hero y: bm_frame (hooked at 0x08031ED4, 0x08031ED2 belongs to orcslots) reads the 'BMAP' table at 0x09700000 and reloads both lists with 0x080324C8 when a check halfword in VRAM is not the expected one. Tile lists must be in ascending tileset order.
+- Flooded Field (51) + Tower Base (55) = level slot 51, 83x129 cells, data at ROM 0x1700000 (tools/join: fill.py -> level.py -> recomp/playroom/join-v244.py). Ground between maps: gravel8.py (8 px tiles chosen from the pairs seen in the maps), shore8.py (water closes in a curved shore), objects cut by the old edges cleared, Flooded Field's wall gets the end it has at its own gap. 8 px drawing makes most cells unique (about 10,000 layer A metatiles); that is fine from ROM.
+- Headless test runs about 3 fps, so walking tests barely move. Check walking data by comparing collision classes (land/water/shore) of the new ground with the original maps instead.

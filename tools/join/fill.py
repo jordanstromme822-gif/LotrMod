@@ -319,6 +319,31 @@ def edge_objs(edge, d, lo, hi):
                 if r_ in seen or r_ in out or not (0 <= r_[0] < H * 4 and 0 <= r_[1] < W * 4) or not fixed8[r_] or not is_obj(*r_): continue
                 seen.add(r_); st += [(r_[0] + 1, r_[1]), (r_[0] - 1, r_[1]), (r_[0], r_[1] + 1), (r_[0], r_[1] - 1)]
             if len(seen) <= 120: rest |= seen
+    # ground-layer pieces left touching the cut that belong to no big ground-layer shape (a ruin sliver next to a tower
+    # drawn on the top layer): looked at on the ground layer alone
+    done_ = out | rest
+    def bare(q): return (0 <= q[0] < H * 4 and 0 <= q[1] < W * 4) and fixed8[q] and q not in done_ and a_obj(*q) and (GB[q[0]][q[1]] is None or GB[q[0]][q[1]][0] == BLANK)
+    for p in list(done_):
+        for q in ((p[0] + 1, p[1]), (p[0] - 1, p[1]), (p[0], p[1] + 1), (p[0], p[1] - 1)):
+            if q in rest or not bare(q): continue
+            seen = set(); st = [q]
+            while st and len(seen) <= 40:
+                r_ = st.pop()
+                if r_ in seen or not bare(r_): continue
+                seen.add(r_); st += [(r_[0] + 1, r_[1]), (r_[0] - 1, r_[1]), (r_[0], r_[1] + 1), (r_[0], r_[1] - 1)]
+            if len(seen) <= 40: rest |= seen
+    # and the same for loose top-layer pieces (a stump sitting on plain ground) cut by the edge
+    done_ = out | rest
+    def loose(q): return (0 <= q[0] < H * 4 and 0 <= q[1] < W * 4) and fixed8[q] and q not in done_ and GB[q[0]][q[1]] is not None and GB[q[0]][q[1]][0] != BLANK and not a_obj(*q)
+    for p in list(done_):
+        for q in ((p[0] + 1, p[1]), (p[0] - 1, p[1]), (p[0], p[1] + 1), (p[0], p[1] - 1)):
+            if q in rest or not loose(q): continue
+            seen = set(); st = [q]
+            while st and len(seen) <= 40:
+                r_ = st.pop()
+                if r_ in seen or not loose(r_): continue
+                seen.add(r_); st += [(r_[0] + 1, r_[1]), (r_[0] - 1, r_[1]), (r_[0], r_[1] + 1), (r_[0], r_[1] - 1)]
+            if len(seen) <= 40: rest |= seen
     return out | rest
 tbh8, tx8, ffy8 = len(gt) * 4, TX * 4, FY * 4
 ffw8, tbw8 = len(gb[0]) * 4, len(gt[0]) * 4
@@ -358,9 +383,6 @@ def end_caps(cutobj, W_=3):
         print('wall end for rows', g[0], g[-1], 'from column', xc, 'rows with an end', best, 'of', len(g))
 end_caps(cutobj)
 print('cut edge pieces cleared', len(cutobj))
-if os.environ.get('DBG'):
-    for y in range(ffy8 + 100, ffy8 + 160, 2):
-        print(y, ''.join('X' if p in cutobj else ('o' if is_obj(*p) else ('t' if GB[p[0]][p[1]] is not None and GB[p[0]][p[1]][0] != BLANK else '.')) for x in range(ffw8 - 30, ffw8 + 2) for p in [(y, x)]))
 for p in cutobj: fixed8[p] = False
 gspots = sorted(set(gspots) | cutobj)
 gravel8.synth(GA, GB, GC, gspots, gkeys, srcA8, col_of, (0, 0))
