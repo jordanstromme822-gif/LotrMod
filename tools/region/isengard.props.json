@@ -220,27 +220,83 @@
 "scatter": [
 {
 "ids": [
-0,
-9,
-16,
-44,
-4,
-12,
-70
+120,
+67
 ],
-"count": 45,
-"spacing": 110,
-"seed": 3
+"count": 20,
+"spacing": 150,
+"same_spacing": 800,
+"max_each": 1,
+"seed": 11
 },
 {
 "ids": [
-20,
-114,
-109
+20
 ],
-"count": 10,
-"spacing": 180,
-"seed": 4
+"count": 4,
+"spacing": 200,
+"same_spacing": 500,
+"seed": 13
+},
+{
+"ids": [
+0,
+9,
+16,
+49,
+54,
+56,
+72,
+109,
+111,
+117,
+8,
+46,
+17,
+18,
+24,
+80,
+116,
+32,
+37,
+14,
+21,
+28,
+41,
+23,
+29,
+34,
+83,
+81,
+10,
+31,
+118,
+4,
+12,
+44,
+70
+],
+"count": 150,
+"spacing": 70,
+"same_spacing": 450,
+"max_each": 8,
+"seed": 12
 }
+],
+"zones": [
+[
+250,
+302
+],
+[
+302,
+334
+],
+[
+334,
+366
 ]
+],
+"zone_margin": 8,
+"zone_region": "REGION_WITH_HAND_PROPS/region.pkl"
 }

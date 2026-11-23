@@ -26,7 +26,8 @@ for i, dx, dy, *note in C['props']:
             assert 0 <= yy < H * 4 and 0 <= xx < W * 4, (i, 'off the block')
             assert (yy, xx) not in used, ('overlap', i, used.get((yy, xx)))
             used[(yy, xx)] = i
-            GA[yy][xx] = a; GB[yy][xx] = p['B'][y][x]; GC[yy][xx] = p['C'][y][x]
+            if p.get('tmask') and p['tmask'][y][x]: a = None    # see-through lower tile: let the ground grow there instead
+            GA[yy][xx] = a; GB[yy][xx] = p['B'][y][x]; GC[yy][xx] = p['C'][y][x] if a is not None or p['B'][y][x][0] else None
 def getp(i): return P[i] if isinstance(i, int) else next(q for q in P if q.get('name') == i)
 if C.get('scatter'):
     R = pickle.load(open(C['region'], 'rb')); RA, RB, RC = R['GA'], R['GB'], R['GC']
@@ -41,6 +42,20 @@ if C.get('scatter'):
         y, x = by + yy, bx + xx
         return 0 <= y < len(RA) and 0 <= x < len(RA[0]) and RB[y][x][0] == 0 and RC[y][x] == 0 and RA[y][x] in walk and (yy, xx) not in used
     centres = [(y, x) for (y, x) in used]
+    # "zones" (+ "zone_margin", "zone_region": a region.pkl built WITH the hand-placed props): a scattered prop may only
+    # use tiles each tile-set zone it shows in already loads, so scatter never costs VRAM (pack.py's per-zone budget)
+    zsets = []
+    if C.get('zones'):
+        ZR = pickle.load(open(C['zone_region'], 'rb')); ZM = C.get('zone_margin', 8)
+        for a_, b_ in C['zones']:
+            rows = range(max(0, (a_ - ZM) * 4), min(len(ZR['GA']), (b_ + ZM) * 4))
+            zsets.append((a_ - ZM, b_ + ZM, {ZR['GA'][y][x][0] for y in rows for x in range(len(ZR['GA'][0]))},
+                          {ZR['GB'][y][x][0] for y in rows for x in range(len(ZR['GA'][0]))}))
+    def free(p, y0):
+        ta = {t[0] for r in p['A'] for t in r if t}; tb = {t[0] for r in p['B'] for t in r if t[0]}
+        c0, c1 = (by + y0) // 4, (by + y0 + len(p['A']) - 1) // 4
+        return all(ta <= za and tb <= zb for lo, hi, za, zb in zsets if c0 < hi and c1 >= lo)
+    placed_at = collections.defaultdict(list)
     def far(y, x, d8): return all((y - a) ** 2 + (x - b) ** 2 >= d8 * d8 for a, b in centres)
     for grp in C['scatter']:
         rnd = random.Random(grp.get('seed', 1)); d8 = grp['spacing'] / 8; r8 = C['radius'] / 8; n = 0
@@ -51,10 +66,16 @@ if C.get('scatter'):
             if (y0 + h / 2 - cy8) ** 2 + (x0 + w / 2 - cx8) ** 2 > r8 * r8: continue
             if not far(y0 + h // 2, x0 + w // 2, d8): continue
             if not all(plain(y0 + y, x0 + x) for y in range(-1, h + 1) for x in range(-1, w + 1)): continue
+            if zsets and not free(p, y0): continue
+            sd = grp.get('same_spacing', 0) / 8                  # the same prop no nearer than this to itself
+            if any((y0 - a) ** 2 + (x0 - b) ** 2 < sd * sd for a, b in placed_at[i]): continue
+            if len(placed_at[i]) >= grp.get('max_each', 1 << 30): continue
+            placed_at[i].append((y0, x0))
             for y in range(h):
                 for x in range(w):
                     if p['A'][y][x] is None and p['B'][y][x][0] == 0: continue
-                    GA[y0 + y][x0 + x] = p['A'][y][x]; GB[y0 + y][x0 + x] = p['B'][y][x]; GC[y0 + y][x0 + x] = p['C'][y][x]; used[(y0 + y, x0 + x)] = i
+                    a = None if p.get('tmask') and p['tmask'][y][x] else p['A'][y][x]
+                    GA[y0 + y][x0 + x] = a; GB[y0 + y][x0 + x] = p['B'][y][x]; GC[y0 + y][x0 + x] = p['C'][y][x] if a is not None or p['B'][y][x][0] else None; used[(y0 + y, x0 + x)] = i
             centres.append((y0 + h // 2, x0 + w // 2)); n += 1
         print('scatter', grp['ids'], n)
 print('props placed', len(C['props']), 'spots', len(used))

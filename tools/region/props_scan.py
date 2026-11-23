@@ -74,6 +74,10 @@ for name, (L, x0, y0, x1, y1, *how) in (json.load(open(sys.argv[3])) if len(sys.
                       A=[[a[y][x] if odd(y, x) else None for x in range(x0, x1)] for y in range(y0, y1)],
                       B=[[b[y][x] if odd(y, x) else (0, 0) for x in range(x0, x1)] for y in range(y0, y1)],
                       C=[[c[y][x] if odd(y, x) else None for x in range(x0, x1)] for y in range(y0, y1)]))
+# a prop whose lower layer has see-through pixels shows the backdrop colour (bright blue) through them off its map
+for p in props:
+    p['tmask'] = [[a is not None and bool((pix(pixels[a[0]]) == 0).any()) for a in r] for r in p['A']]
+    p['transp'] = any(any(r) for r in p['tmask'])
 # drop exact duplicates (same tiles), keep the first
 uniq, keys = [], set()
 for p in props:
