@@ -474,6 +474,15 @@ if CFG.get('walkfix'):
                 if GC[y][x] & 7 in (1, 2) and (GB[y][x][0] == BLANK or GB[y][x] == VOID) and GA[y][x] in walk:
                     GC[y][x] = 0; nfix += 1
     print('walkfix', nfix)
+# ---- open: px rects made plain walkable ground by hand (tiles copied from just below, upper layer removed, walkable): a gap in a fence or
+# a map's edge where a road goes through (the Campsite's south fence across its road).
+for x0, y0, x1, y1, *how in CFG.get('open', []):
+    for y in range(max(0, y0 // 8), min(H8, y1 // 8)):
+        for x in range(max(0, x0 // 8), min(W8, x1 // 8)):
+            # ground: the same spot's tiles one rect height below (default), above ('up') or one rect width right ('right')
+            k = (y1 - y0) // 8 * (-1 if how == ['up'] else 0 if how == ['right'] else 1); j = (x1 - x0) // 8 if how == ['right'] else 0
+            sy, sx = min(H8 - 1, max(0, y + k)), min(W8 - 1, x + j)
+            GA[y][x] = GA[sy][sx]; GB[y][x] = VOID; GC[y][x] = GC[sy][sx] & ~7
 
 # ---- save + pictures ------------------------------------------------------------------------------------------------
 GB = [[(t if t != VOID else (BLANK, 0)) for t in row] for row in GB]

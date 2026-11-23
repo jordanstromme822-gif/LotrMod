@@ -1,0 +1,50 @@
+{
+ "Gate (outside)": [
+  5768,
+  11620
+ ],
+ "Gate (inside)": [
+  5768,
+  11420
+ ],
+ "Orthanc stairs top": [
+  5745,
+  10420
+ ],
+ "Ring centre south": [
+  5760,
+  10900
+ ],
+ "Flooded Field road top": [
+  4125,
+  13080
+ ],
+ "Orc ambush spot": [
+  4313,
+  13997
+ ],
+ "South edge (Fords road)": [
+  4290,
+  15930
+ ],
+ "Campsite east exit": [
+  4818,
+  4560
+ ],
+ "Campsite south": [
+  4380,
+  5270
+ ],
+ "Fangorn road end": [
+  6010,
+  5870
+ ],
+ "West road": [
+  4150,
+  7800
+ ],
+ "North open ground": [
+  3500,
+  2000
+ ]
+}
