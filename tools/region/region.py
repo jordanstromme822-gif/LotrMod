@@ -16,6 +16,9 @@ How the ground is made:
   edge tiles best continue its neighbours' (the same pair statistics), never the same cell twice in a row. The pool keeps
   the number of different cells (and the game file) small while the ground never shows a grid or a repeat pattern.
 - Ground tone per area: each block's own gravel near it, blended over a wide, irregular band between tones.
+- Roads (optional "road_src" + "roads", example tools/region/isengard.roads.json, 2026-11-23): the game's own paved road
+  copied piece by piece down each polyline (see the roads step); region.pkl keeps a "road" mask so props.py's scatter
+  leaves roads clear.
 """
 import collections, json, os, pickle, sys
 import numpy as np
@@ -405,6 +408,52 @@ fixed_for_shore = ~open8
 n8 = shore8.synth(GA, GB, GC, DW, fixed_for_shore, pixels, rgb, skeys, col_of, grav_col, lip=CFG.get('lip', 1.5), shape=CFG.get('shape', 20.0))
 print('shore tiles', n8)
 
+# ---- roads: paved ways copied from the game's own road (straight stretches of the Flooded Field's road, given as
+# source rects [level, x0, y0, x1, y1] in 8 px spots), laid down the road's polyline (region px, y going down) piece by
+# piece. Each region row takes one source row, centred on the path; the path only steps sideways every second row so
+# the slabs (16 px tall) stay whole, and a road that slants is a staircase of pieces like the game's own road. Only the
+# source's paving is copied (its plain gravel is left to the ground already there), so the edges break up like the
+# source's do. Paving goes only on plain open ground (new ground, or the plain margin of a block), never on water.
+road8 = np.zeros((H8, W8), bool)
+if CFG.get('roads'):
+    gk = set().union(*[t['keys'] for t in tones.values()])
+    plain8 = np.array([[(not fixed8[y, x] and open8[y, x]) or (fixed8[y, x] and GA[y][x] in gk and GB[y][x][0] == BLANK and GC[y][x] == 0)
+                        for x in range(W8)] for y in range(H8)])
+    plain8 &= ~DW.reshape(H8, 8, W8, 8).any(axis=(1, 3))
+    pieces = []
+    for Ls, x0, y0, x1, y1 in CFG['road_src']:
+        sA = src8(Ls); pieces.append([[sA[y][x] for x in range(x0, x1)] for y in range(y0, y1)])
+    # keep a tile only if it is paving: not plain gravel, no see-through pixels (they'd show the backdrop), and seen at
+    # least twice in the pieces (one-off bits at a piece's edge are a rock or a crack, not road); then drop rows
+    # with less than 4 paving tiles (a gap in the source road would be a gap in ours)
+    seen = collections.Counter(t for pc in pieces for r in pc for t in r)
+    def pave(t): return t is not None and t not in gk and seen[t] >= 2 and not (pix(pixels[t[0]]) == 0).any()
+    pieces = [[[t if pave(t) else None for t in r] for r in pc] for pc in pieces]
+    pieces = [[r for r in pc if sum(t is not None for t in r) >= 4] for pc in pieces]
+    def flip(pc): return [[(t[0], t[1] ^ 0x400) if t else None for t in r[::-1]] for r in pc]
+    pieces += [flip(pc) for pc in pieces]
+for ri, rd in enumerate(CFG.get('roads', [])):
+    rng_ = np.random.default_rng(300 + ri)
+    pts = np.array(rd['pts'], float) / 8
+    assert all(b[1] > a[1] for a, b in zip(pts[:-1], pts[1:])), ('road', ri, 'must run down the map')
+    ys = np.arange(int(pts[0][1]), int(pts[-1][1]))
+    xc = np.interp(ys + 0.5, pts[:, 1], pts[:, 0])
+    n = 0; pc = None; r = 0; last = -1; cx = None
+    for k, y in enumerate(ys):
+        if pc is None or r >= len(pc):
+            j = rng_.integers(len(pieces))
+            while j == last or j % (len(pieces) // 2) == last % (len(pieces) // 2) and len(pieces) > 2: j = rng_.integers(len(pieces))
+            last = j; pc = pieces[j]; r = 0
+        if cx is None or r % 2 == 0: cx = int(round(xc[k]))
+        row = pc[r]; x0 = cx - len(row) // 2; r += 1
+        if not (0 <= y < H8): continue
+        for i, t in enumerate(row):
+            x = x0 + i
+            if t is None or t in gk or not (0 <= x < W8) or not plain8[y, x]: continue
+            GA[y][x] = t; GB[y][x] = VOID; GC[y][x] = col_of.get(t, 0) & ~7 if col_of.get(t, 0) & 7 else col_of.get(t, 0)
+            road8[y, x] = True; n += 1
+    print('road', ri, 'spots', n)
+
 for y, x, bt, cv in overlay:
     if bt[0] != BLANK: GB[y][x] = bt
     if cv is not None: GC[y][x] = cv
@@ -429,7 +478,7 @@ if CFG.get('walkfix'):
 # ---- save + pictures ------------------------------------------------------------------------------------------------
 GB = [[(t if t != VOID else (BLANK, 0)) for t in row] for row in GB]
 info = dict(name=CFG['name'], W=int(W), H=int(H), origin_cell=[int(bx0), int(by0)], blocks=[dict(name=b['name'], x=int(b['x']), y=int(b['y']), w=int(b['w']), h=int(b['h'])) for b in blocks])
-pickle.dump(dict(info, GA=GA, GB=GB, GC=GC, land=land), open(os.path.join(out, 'region.pkl'), 'wb'))
+pickle.dump(dict(info, GA=GA, GB=GB, GC=GC, land=land, road=road8), open(os.path.join(out, 'region.pkl'), 'wb'))
 json.dump(info, open(os.path.join(out, 'region.json'), 'w'), indent=1)
 build.BLANK = BLANK
 rgb_v = rgb.copy(); rgb_v[::16] = (70, 104, 118)

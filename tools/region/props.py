@@ -30,7 +30,7 @@ for i, dx, dy, *note in C['props']:
             GA[yy][xx] = a; GB[yy][xx] = p['B'][y][x]; GC[yy][xx] = p['C'][y][x] if a is not None or p['B'][y][x][0] else None
 def getp(i): return P[i] if isinstance(i, int) else next(q for q in P if q.get('name') == i)
 if C.get('scatter'):
-    R = pickle.load(open(C['region'], 'rb')); RA, RB, RC = R['GA'], R['GB'], R['GC']
+    R = pickle.load(open(C['region'], 'rb')); RA, RB, RC = R['GA'], R['GB'], R['GC']; RR = R.get('road')   # keep roads clear
     bx, by = C['cell'][0] * 4, C['cell'][1] * 4
     import collections
     use = collections.defaultdict(collections.Counter)
@@ -40,7 +40,7 @@ if C.get('scatter'):
     walk = {k for k, c in use.items() if sum(c.values()) >= 50 and c[0] > 0.95 * sum(c.values())}
     def plain(yy, xx):
         y, x = by + yy, bx + xx
-        return 0 <= y < len(RA) and 0 <= x < len(RA[0]) and RB[y][x][0] == 0 and RC[y][x] == 0 and RA[y][x] in walk and (yy, xx) not in used
+        return 0 <= y < len(RA) and 0 <= x < len(RA[0]) and not (RR is not None and RR[y][x]) and RB[y][x][0] == 0 and RC[y][x] == 0 and RA[y][x] in walk and (yy, xx) not in used
     centres = [(y, x) for (y, x) in used]
     # "zones" (+ "zone_margin", "zone_region": a region.pkl built WITH the hand-placed props): a scattered prop may only
     # use tiles each tile-set zone it shows in already loads, so scatter never costs VRAM (pack.py's per-zone budget)
