@@ -247,6 +247,8 @@ info = dict(slot=SLOT, base=BASE, size=len(out), cells=[W, H], zones=ZONES, slot
             tower_base_px=[TBX, TBY], flooded_field_px=[FFX, FFY], campsite_px=[CPX, CPY],
             entries=[struct.unpack('<HH', e[:4]) + (e[4:].hex(),) for e in ents], tb_items=len(tb_items),
             camp_items=sum(len(g['items']) for g in camp_groups), checks=[[hex(a), hex(v)] for a, v in checks],
+            doors=[[i, struct.unpack('<HH', it[4:8]), it[0xB], it[0xA]] for i, part in enumerate(newparts[1:], 1) for g in split_part(part)[0] for it in g['items'] if it[0] == 3],
+            triggers=[[i, struct.unpack('<HH', it[4:8])] for i, part in enumerate(newparts[1:], 1) for g in split_part(part)[0] for it in g['items'] if it[0] == 0x12],
             level_entry=[hex(x) for x in entry], object_entry=[hex(x) for x in obj])
 json.dump(info, open(os.path.join(out_dir, 'region.json'), 'w'), indent=1)
 print(json.dumps({k: v for k, v in info.items() if k not in ('level_entry',)}))
