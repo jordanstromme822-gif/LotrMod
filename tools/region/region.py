@@ -409,6 +409,23 @@ for y, x, bt, cv in overlay:
     if bt[0] != BLANK: GB[y][x] = bt
     if cv is not None: GC[y][x] = cv
 
+# ---- walkfix: blocked spots in these px rects that are plain ground (blank B, an A tile that is walkable >90% of the
+# time elsewhere) become walkable. Clears leftover map-edge collision (e.g. beside Orthanc, where the Tower Base map
+# ended), without touching walls, props or anything with an upper layer.
+if CFG.get('walkfix'):
+    use = collections.defaultdict(collections.Counter)
+    for y in range(H8):
+        for x in range(W8):
+            if GB[y][x][0] in (BLANK,) or GB[y][x] == VOID: use[GA[y][x]][GC[y][x] & 7] += 1
+    walk = {k for k, c in use.items() if sum(c.values()) >= 50 and c[0] > 0.9 * sum(c.values())}
+    nfix = 0
+    for x0, y0, x1, y1 in CFG['walkfix']:
+        for y in range(max(0, y0 // 8), min(H8, y1 // 8)):
+            for x in range(max(0, x0 // 8), min(W8, x1 // 8)):
+                if GC[y][x] & 7 in (1, 2) and (GB[y][x][0] == BLANK or GB[y][x] == VOID) and GA[y][x] in walk:
+                    GC[y][x] = 0; nfix += 1
+    print('walkfix', nfix)
+
 # ---- save + pictures ------------------------------------------------------------------------------------------------
 GB = [[(t if t != VOID else (BLANK, 0)) for t in row] for row in GB]
 info = dict(name=CFG['name'], W=int(W), H=int(H), origin_cell=[int(bx0), int(by0)], blocks=[dict(name=b['name'], x=int(b['x']), y=int(b['y']), w=int(b['w']), h=int(b['h'])) for b in blocks])
