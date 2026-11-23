@@ -90,7 +90,12 @@ class Rom:
     def entry(self, L): return list(struct.unpack('<19I', self.rom[LEVELS - 0x08000000 + 0x4C * L:][:0x4C]))
 
     def tiles(self, tileset, idx_list):
-        """Pixels (32 bytes, 4bpp) of tileset entries, loaded by the game's own routine."""
+        """Pixels (32 bytes, 4bpp) of tileset entries, loaded by the game's own routine (in runs of 1024: the scratch
+        VRAM holds 2048 tiles, so longer lists used to come back black past that point)."""
+        if len(idx_list) > 1024:
+            out = []
+            for i in range(0, len(idx_list), 1024): out += self.tiles(tileset, idx_list[i:i + 1024])
+            return out
         lst = struct.pack('<H', len(idx_list)) + struct.pack('<%dH' % len(idx_list), *idx_list)
         self.mu.mem_write(0x02020000, lst)
         self.mu.mem_write(0x06000000, bytes(0x10000))

@@ -16,6 +16,9 @@ DECOMP = 0x08019D54
 SITES = {'stub_mapA': 0x3EEC6, 'stub_mapB': 0x3F04E, 'stub_metaA': 0x3EF8A, 'stub_metaB': 0x3F0CA, 'stub_col': 0x3411C}
 # the gameplay tick's call of 0x080016F8 goes through bm_frame (tile set swap on joined levels)
 FRAME = (0x31ED4, 0x080016F8, 'bm_frame')
+# v247: a level's height in cells is read from its map header as a halfword (ldrh r0, [r1, #2]) instead of a byte, so a big
+# map can be over 255 cells tall (layer A and B loads, each stores the height in cells and in 8 px tiles)
+HEIGHT = (0x3EF9C, 0x3EFAA, 0x3F0DC, 0x3F0EA)
 
 
 def thumb_bl(src, dst):
@@ -43,6 +46,8 @@ def patches():
         out.append((at, thumb_bl(0x08000000 + at, DECOMP), thumb_bl(0x08000000 + at, syms[name])))
     at, old, name = FRAME
     out.append((at, thumb_bl(0x08000000 + at, old), thumb_bl(0x08000000 + at, syms[name])))
+    for at in HEIGHT:
+        out.append((at, b'\x88\x78', b'\x48\x88'))
     return out, syms
 
 
