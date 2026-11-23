@@ -49,6 +49,7 @@ for b in CFG['blocks']:
     else:
         d = pickle.load(open(b['pkl'], 'rb')); A8, B8, C8 = d['GA'], d['GB'], d['GC']; w, h = d['W'], d['H']
         pixels.update(d.get('newpix', {}))          # tiles drawn for this block (Orthanc's ledge)
+        if 'CLR' in d: b = dict(b, CLR=d['CLR'])   # spots this block clears of what earlier blocks put there (the Ring)
     blocks.append(dict(b, A8=A8, B8=B8, C8=C8, w=w, h=h))
     bx0, by0 = min(bx0, b['cell'][0]), min(by0, b['cell'][1]); bx1, by1 = max(bx1, b['cell'][0] + w), max(by1, b['cell'][1] + h)
 W, H = bx1 - bx0, by1 - by0
@@ -73,6 +74,14 @@ GA = [[VOID] * W8 for _ in range(H8)]; GB = [[VOID] * W8 for _ in range(H8)]; GC
 fixed8 = np.zeros((H8, W8), bool)
 overlay = []                                   # (y8, x8, B tile, collision) drawn over the new ground at the end
 for b in blocks:
+    if 'CLR' in b:
+        for y in range(b['h'] * 4):
+            for x in range(b['w'] * 4):
+                if b['CLR'][y][x]:
+                    yy, xx = b['y'] * 4 + y, b['x'] * 4 + x
+                    GA[yy][xx] = VOID; GB[yy][xx] = VOID; GC[yy][xx] = 1; fixed8[yy, xx] = False
+        cl = {(b['y'] * 4 + y, b['x'] * 4 + x) for y in range(b['h'] * 4) for x in range(b['w'] * 4) if b['CLR'][y][x]}
+        overlay[:] = [o for o in overlay if (o[0], o[1]) not in cl]
     for y in range(b['h'] * 4):
         for x in range(b['w'] * 4):
             yy, xx = b['y'] * 4 + y, b['x'] * 4 + x
