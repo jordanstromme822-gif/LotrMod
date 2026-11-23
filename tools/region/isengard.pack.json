@@ -8,7 +8,28 @@
  "join_TX": 58,
  "join_FY": 89,
  "campsite_block": "Campsite",
- "zones": [[0, 250], [250, 365], [365, 500]],
- "margin": 12,
- "first_zone": 2
+ "zones": [
+  [
+   0,
+   250
+  ],
+  [
+   250,
+   302
+  ],
+  [
+   302,
+   334
+  ],
+  [
+   334,
+   366
+  ],
+  [
+   366,
+   500
+  ]
+ ],
+ "margin": 8,
+ "first_zone": 4
 }

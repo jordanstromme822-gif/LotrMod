@@ -64,8 +64,26 @@ assert slotB[BLANK] == 0
 nA = [max(u) + 1 for u in usedA]; nB = [max(u) + 1 for u in usedB]
 print('zones', ZONES, 'tiles A', [len(s) for s in setsA], 'slots', nA, ' B', [len(s) for s in setsB], 'slots', nB)
 assert max(nA) <= P.get('max_a', 944) and max(nB) <= 512, (nA, nB)
+# zone markers: when some zone has no layer A tile whose VRAM halfword tells it apart from every other zone (a zone
+# whose tiles all also sit in its neighbours), every zone gets one extra A slot past the last, holding a tile drawn
+# only for this: all pixels = zone number + 1. The map never shows it; bm_frame checks it.
+NZ = len(ZONES)
+def natural_check(s):
+    for k in range(min(nA)):
+        ts = [usedA[t].get(k) for t in range(NZ)]
+        if ts[s] is not None and all(ts[t] is not None and ts[t] != ts[s] for t in range(NZ) if t != s): return True
+    return False
+MARK = None
+if not all(natural_check(s) for s in range(NZ)):
+    MARK = max(nA)
+    assert MARK + 1 <= P.get('max_a', 944), 'no room for zone markers'
+    for s in range(NZ):
+        slotA[('mark', s)] = MARK; usedA[s][MARK] = ('mark', s)
+    nA = [MARK + 1] * NZ
+    print('zone markers at A slot', MARK)
 # custom tileset: A tiles by slot, then B tiles by slot, so every set's list ascends
-ordA = sorted(slotA, key=lambda t: (slotA[t], t)); ordB = sorted(slotB, key=lambda t: (slotB[t], t))
+skey = lambda t: (0, t, 0) if isinstance(t, int) else (1, t[1], 0)
+ordA = sorted(slotA, key=lambda t: (slotA[t], skey(t))); ordB = sorted(slotB, key=lambda t: (slotB[t], t))
 idxA = {t: i for i, t in enumerate(ordA)}; idxB = {t: len(ordA) + i for i, t in enumerate(ordB)}
 firstA = {}; firstB = {}
 for t in ordA: firstA.setdefault(slotA[t], idxA[t])
@@ -74,8 +92,9 @@ def lists(used, n, idx, first):
     return [[idx[u[k]] if k in u else first[k] for k in range(n[s])] for s, u in enumerate(used)]
 listsA = lists(usedA, nA, idxA, firstA); listsB = lists(usedB, nB, idxB, firstB)
 for l in listsA + listsB: assert all(a < b for a, b in zip(l, l[1:]))
-uniq = sorted(set(ordA) | set(ordB))
+uniq = sorted(t for t in set(ordA) | set(ordB) if isinstance(t, int))
 pix_of = dict(zip(uniq, R.tiles(R.entry(FF)[14], uniq)))
+for s_ in range(NZ): pix_of[('mark', s_)] = bytes([((s_ + 1) & 15) * 0x11]) * 32
 order = ordA + ordB
 pixels = [pix_of[t] for t in order]
 
@@ -221,6 +240,8 @@ for s in range(NZ):
             if all(hw(listsA[t][k], h) != v for t in range(NZ) if t != s):
                 chk = (0x06000000 + cbA * 0x4000 + k * 32 + 2 * h, v); break
         if chk: break
+    if MARK is not None:                      # the marker slot: halfword 0 of zone s's marker tile
+        chk = (0x06000000 + cbA * 0x4000 + MARK * 32, hw(listsA[s][MARK], 0))
     assert chk, s
     checks.append(chk)
 tab = bytearray(b'BMP2' + struct.pack('<I', NZ))
