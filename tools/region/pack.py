@@ -133,9 +133,14 @@ def move(it, dx, dy):
 fsub, fents, fparts = obj_parts(FF)
 tsub, tents, tparts = obj_parts(TB)
 csub, cents, cparts = obj_parts(CAMP)
-KEEP_TB = {0x1A, 0x0B, 0x08, 0x03}           # orc spawns, enemies, ladders/markers, the door to 57
+KEEP_TB = {0x1A, 0x0B, 0x08, 0x03}           # orc spawns, enemies, ladders/markers, the door to 57 (+ its 0x12 trigger below)
 tb_items = [move(it, TBX, TBY) for g in split_part(tparts[1])[0] for it in g['items'] if it[0] in KEEP_TB]
-tb_items += [move(it, TBX, TBY) for g in split_part(tparts[2])[0] for it in g['items'] if it[0] == 3 and it[0xB] == P['tunnel']]
+tb_items += [move(it, TBX, TBY) for g in split_part(tparts[1])[0] for it in g['items'] if it[0] in (0x12, 0x02)]   # the door's trigger marker and frame
+tun = [it for g in split_part(tparts[2])[0] for it in g['items'] if it[0] == 3 and it[0xB] == P['tunnel']]
+def near(it, d, r=40):
+    (x, y), (a, b) = struct.unpack('<HH', it[4:8]), struct.unpack('<HH', d[4:8]); return abs(x - a) <= r and abs(y - b) <= r
+tb_items += [move(it, TBX, TBY) for it in tun]
+tb_items += [move(it, TBX, TBY) for g in split_part(tparts[2])[0] for it in g['items'] if it[0] == 0x12 and any(near(it, d) for d in tun)]
 KEEP_CAMP = set(P.get('campsite_types', [0x0B, 0x0C, 0x11, 0x12, 0x03]))
 camp_groups = [dict(b1=g['b1'], items=[move(it, CPX, CPY) for it in g['items'] if it[0] in KEEP_CAMP]) for g in split_part(cparts[1])[0]]
 camp_groups = [g for g in camp_groups if g['items']]
@@ -149,8 +154,8 @@ def merged(part):
             if it[0] == 0x12 and struct.unpack('<HH', it[4:8]) == (568, 9): continue   # its marker
             items.append(move(it, FFX, FFY))
         out.append(dict(b1=g['b1'], items=items))
-    out.append(dict(b1=0, items=tb_items))
-    out += camp_groups
+    # into the first group (always live; later groups are switched on by the part's scripts)
+    out[0]['items'] += tb_items + [it for g in camp_groups for it in g['items']]
     p = bytearray(8) + build_groups(out)
     o_paths = len(p); p += paths
     o_scripts = len(p); p += scripts
