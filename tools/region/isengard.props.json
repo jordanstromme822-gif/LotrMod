@@ -1,0 +1,246 @@
+{
+"w": 80,
+"h": 86,
+"centre8": [
+160,
+160
+],
+"props": [
+[
+"road_n",
+-36,
+704,
+"the stone road from the Gate to Orthanc"
+],
+[
+"road_gate",
+-32,
+928,
+"the road through the Gate"
+],
+[
+74,
+-200,
+-1000,
+"great stump: the trees Saruman felled"
+],
+[
+3,
+150,
+-960,
+"stone dome over a shaft"
+],
+[
+76,
+330,
+-900,
+"stone dome over a shaft"
+],
+[
+110,
+-600,
+-320,
+"cut timber and a barrel"
+],
+[
+109,
+-760,
+-160,
+"broken branches"
+],
+[
+113,
+420,
+-600,
+"smashed workshop: wreck"
+],
+[
+114,
+560,
+-480,
+"smashed workshop: rubble"
+],
+[
+115,
+600,
+140,
+"barrels and branches"
+],
+[
+20,
+-700,
+300,
+"a barrel"
+],
+[
+68,
+-720,
+740,
+"wrecked machine"
+],
+[
+71,
+-560,
+840,
+"felled trunk"
+],
+[
+100,
+-380,
+760,
+"dead tree"
+],
+[
+94,
+-300,
+900,
+"stones"
+],
+[
+5,
+300,
+740,
+"wrecked siege frame"
+],
+[
+50,
+520,
+720,
+"wrecked machine"
+],
+[
+101,
+500,
+860,
+"dead tree"
+],
+[
+6,
+650,
+780,
+"wrecked cart"
+],
+[
+121,
+200,
+1060,
+"broken beams"
+],
+[
+61,
+760,
+720,
+"burnt brush"
+],
+[
+53,
+-840,
+720,
+"burnt brush"
+],
+[
+58,
+-250,
+950,
+"fallen stones by the Gate"
+],
+[
+85,
+110,
+960,
+"fallen stones by the Gate"
+],
+[
+40,
+-68,
+712,
+"pillar by the road"
+],
+[
+42,
+44,
+720,
+"pillar by the road"
+],
+[
+42,
+-68,
+792,
+"pillar by the road"
+],
+[
+40,
+44,
+800,
+"pillar by the road"
+],
+[
+40,
+-68,
+872,
+"pillar by the road"
+],
+[
+42,
+44,
+880,
+"pillar by the road"
+],
+[
+42,
+-68,
+952,
+"pillar by the road"
+],
+[
+40,
+60,
+960,
+"pillar by the road"
+],
+[
+40,
+-68,
+1032,
+"pillar by the road"
+],
+[
+42,
+60,
+1040,
+"pillar by the road"
+]
+],
+"region": "REGION_WITHOUT_PROPS/region.pkl",
+"cell": [
+140,
+280
+],
+"radius": 1000,
+"scatter": [
+{
+"ids": [
+0,
+9,
+16,
+44,
+4,
+12,
+70
+],
+"count": 45,
+"spacing": 110,
+"seed": 3
+},
+{
+"ids": [
+20,
+114,
+109
+],
+"count": 10,
+"spacing": 180,
+"seed": 4
+}
+]
+}
