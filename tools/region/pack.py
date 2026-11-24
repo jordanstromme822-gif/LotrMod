@@ -51,7 +51,7 @@ def colour(sets, first=None):
         for t in ts: member[t].add(s)
     used = [dict() for _ in sets]            # set -> {slot: tile}
     slot = {}
-    order = sorted(member, key=lambda t: (t != first, min(member[t]), -len(member[t]), t))
+    order = sorted(member, key=lambda t: (t != first, min(member[t]), -len(member[t]), (0, t, '') if isinstance(t, int) else (1, 0, str(t))))
     for t in order:
         k = 0
         while any(k in used[s] for s in member[t]): k += 1
@@ -95,6 +95,8 @@ for l in listsA + listsB: assert all(a < b for a, b in zip(l, l[1:]))
 uniq = sorted(t for t in set(ordA) | set(ordB) if isinstance(t, int))
 pix_of = dict(zip(uniq, R.tiles(R.entry(FF)[14], uniq)))
 for s_ in range(NZ): pix_of[('mark', s_)] = bytes([((s_ + 1) & 15) * 0x11]) * 32
+for t in ordA:                                # tools/region/mountains.py's key tile: every pixel one colour index
+    if isinstance(t, tuple) and t[0] == 'key': pix_of[t] = bytes([(t[1] & 15) * 0x11]) * 32
 order = ordA + ordB
 pixels = [pix_of[t] for t in order]
 
