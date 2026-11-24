@@ -24,7 +24,7 @@ road_gap (spots kept clear around roads), block_gap, open [[x0, y0, x1, y1] px r
 {palette index: [r, g, b]} for the source rock palette, seed, key [palette row, index].
 
 OUT_DIR: region.pkl (the map with key tiles), region.png (preview with the mountains drawn), mountains.bin (zlib:
-'MTN1', W8, H8, then rock u16[H8*W8], ground u16[H8*W8], shade u8[H8*W8]), mountains.json (rock atlas size, ground
+'MTN1', W8, H8, then rock u16[H8*W8], ground u16[H8*W8] (0xFFFF: drop), shade u8[H8*W8]), mountains.json (rock atlas size, ground
 tiles' palette rows, key colour), mountains-rock.png (RGBA, 8x8 rock tiles in rows of 64, tile 0 = none),
 mountains-ground.png (palette index 0-15 per pixel, same layout).
 """
@@ -226,6 +226,26 @@ RK = np.zeros((H8, W8), np.uint16); GR = np.zeros((H8, W8), np.uint16); SH = np.
 for y, x in zip(*np.nonzero(M)):
     RK[y, x] = rock_ids[int(rock[y, x])]; GR[y, x] = gtile(under[(y, x)])
     SH[y, x] = int(round(15 * min(1.0, max(0.0, (dM[y, x] - s0) / s1))))
+# the drop (CONFIG 'drop', tools/region/drop.py): every void spot left (past the mountains, the open south) shows the far
+# valley below; ground 0xFFFF marks it, shade = how many drop spots lie above it in its column (0 = right under the edge,
+# 255 = none above), so the page hangs the earth bank under the edge
+P = void & ~M & ~passes if CFG.get('drop') else np.zeros_like(void)
+if P.any():   # only the void outside the region (joined to the map's border); holes inside blocks stay see-through
+    lab, _ = ndimage.label(void); outer = np.unique(np.concatenate([lab[0], lab[-1], lab[:, 0], lab[:, -1]]))
+    P &= np.isin(lab, outer[outer > 0])
+if P.any():   # the land's outline is 32 px cells: its stairs next to the drop are cut back along a smooth, slightly wobbling curve (8 px)
+    DC = CFG['drop']; nz3 = ndimage.gaussian_filter(np.random.default_rng(CFG.get('seed', 5) + 2).standard_normal((H8, W8)), 2)
+    sm = ndimage.gaussian_filter(land.astype(np.float32), DC.get('smooth', 3)) + nz3 / nz3.std() * DC.get('wobble', 0.12) > 0.5
+    keep = np.array([[bool(GB[y][x][0]) or bool(GC[y][x] & 7) for x in range(W8)] for y in range(H8)])
+    if road is not None: keep |= ndimage.binary_dilation(road, iterations=3)
+    cut = land & ~sm & ~M & ~keep & ndimage.binary_dilation(P, iterations=6)
+    P |= cut; print('drop: edge spots cut', int(cut.sum()))
+k = np.full(W8, 255, np.int32)
+for y in range(H8):
+    solid_above = ~P[y - 1] if y else np.zeros(W8, bool)
+    k = np.where(P[y], np.where(solid_above, 0, np.minimum(k + 1, 255)), 255)
+    GR[y][P[y]] = 0xFFFF; SH[y][P[y]] = k[P[y]]
+print('drop spots', int(P.sum()))
 print('rock tiles', len(rock_tiles) - 1, 'ground tiles', len(ground_tiles) - 1)
 def atlas(tiles, mode):
     n = len(tiles); rows_ = (n + 63) // 64
@@ -238,12 +258,12 @@ KR, KI = CFG.get('key', [8, 1])
 blob = b'MTN1' + struct.pack('<HH', W8, H8) + RK.tobytes() + GR.tobytes() + SH.tobytes()
 open(os.path.join(out, 'mountains.bin'), 'wb').write(zlib.compress(blob, 9))
 info = dict(W8=W8, H8=H8, rock=len(rock_tiles), ground=len(ground_tiles), ground_rows=ground_rows, key=[KR, KI],
-            shade=smax, spots=int(M.sum()))
+            shade=smax, spots=int(M.sum()), drop=int(P.sum()))
 json.dump(info, open(os.path.join(out, 'mountains.json'), 'w'))
 
 # ---- the map: key tiles, blocked ---------------------------------------------------------------------------------------
 KEY = (('key', KI), KR << 12)
-for y, x in zip(*np.nonzero(M)):
+for y, x in zip(*np.nonzero(M | P)):
     GA[y][x] = KEY; GB[y][x] = (0, 0); GC[y][x] = 1
 R['GA'], R['GB'], R['GC'] = GA, GB, GC; R['mountains'] = M
 pickle.dump(R, open(os.path.join(out, 'region.pkl'), 'wb'))
@@ -259,6 +279,7 @@ for y, x in zip(*np.nonzero(M)):
     c = r[..., :3] * a + c * (1 - a)
     c *= 1 - smax * SH[y, x] / 15.0
     im[y * 8:y * 8 + 8, x * 8:x * 8 + 8] = c.clip(0, 255).astype(np.uint8)
+im[np.kron(P, np.ones((8, 8), bool))] = CFG.get('drop', {}).get('haze', [128, 128, 124])
 for y, x in zip(*np.nonzero(passes & void)):
     t = GA[y][x]; p = pix(rpixels[t[0]])
     if t[1] & 0x400: p = p[:, ::-1]
