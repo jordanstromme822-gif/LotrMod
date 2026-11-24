@@ -9,7 +9,7 @@ VRAM slot in all sets (slots are shared between tiles that never meet in one set
 
 Objects: the joined Flooded Field + Tower Base block keeps what tools/join/level.py kept (Flooded Field's parts, Tower
 Base's orcs, enemies, ladders and door to the tower levels) plus Tower Base's tunnel door (to the Orthanc Tunnel); the
-Campsite block adds its own props and doors.
+Campsite block adds its own props and doors; PACK.json 'orc_bands' adds orc spawns along the roads.
 
 OUT_DIR gets region.bin (for ROM BASE = 0x1C80000, CPU 0x09C80000, past the 32-facing pictures that end at 0x1C22FBC, starts with the BMP2 table), tables.bin (level and
 object table entries for the slot) and region.json.
@@ -165,6 +165,25 @@ tb_items += [move(it, TBX, TBY) for g in split_part(tparts[2])[0] for it in g['i
 KEEP_CAMP = set(P.get('campsite_types', [0x0B, 0x0C, 0x11, 0x12, 0x03]))
 camp_groups = [dict(b1=g['b1'], items=[move(it, CPX, CPY) for it in g['items'] if it[0] in KEEP_CAMP]) for g in split_part(cparts[1])[0]]
 camp_groups = [g for g in camp_groups if g['items']]
+# orc bands placed for the story (PACK.json 'orc_bands': [[x, y, orcs], ...] region px): the game's own Isengard orc
+# spawn record (type 0x1A, as Flooded Field's and Tower Base's: +8 orcs, +9 = 4), each moved to the nearest open,
+# walkable spot off the roads within 96 px
+road8 = reg.get('road')
+def open_spot(x, y):
+    best = None
+    for dy in range(-12, 13):
+        for dx in range(-12, 13):
+            sx, sy = x // 8 + dx, y // 8 + dy
+            if not (0 <= sy < len(GA) and 0 <= sx < len(GA[0])): continue
+            if any(not GA[sy + j][sx + i][0] or (GC[sy + j][sx + i] & 7) or GB[sy + j][sx + i][0] or (road8 is not None and road8[sy + j, sx + i])
+                   for j in (-1, 0, 1) for i in (-1, 0, 1) if 0 <= sy + j < len(GA) and 0 <= sx + i < len(GA[0])): continue
+            d = dx * dx + dy * dy
+            if best is None or d < best[0]: best = (d, sx * 8 + 4, sy * 8 + 4)
+    assert best, ('no open spot near', x, y)
+    return best[1:]
+orc_bands = []
+for x, y, n in P.get('orc_bands', []):
+    bx, by = open_spot(x, y); orc_bands.append(struct.pack('<4sHHBBH', b'\x1a\0\0\0', bx, by, n, 4, 0))
 def merged(part):
     groups, paths, scripts, tail, cnt = split_part(part)
     out = []
@@ -176,7 +195,7 @@ def merged(part):
             items.append(move(it, FFX, FFY))
         out.append(dict(b1=g['b1'], items=items))
     # into the first group (always live; later groups are switched on by the part's scripts)
-    out[0]['items'] += tb_items + [it for g in camp_groups for it in g['items']]
+    out[0]['items'] += tb_items + [it for g in camp_groups for it in g['items']] + orc_bands
     p = bytearray(8) + build_groups(out)
     o_paths = len(p); p += paths
     o_scripts = len(p); p += scripts
@@ -269,7 +288,7 @@ info = dict(slot=SLOT, base=BASE, size=len(out), cells=[W, H], zones=ZONES, slot
             metasA=len(metaA), metasB=len(metaB), walk_defs=len(defs), defs_remapped=len(remap), spots_changed=changed,
             tower_base_px=[TBX, TBY], flooded_field_px=[FFX, FFY], campsite_px=[CPX, CPY],
             entries=[struct.unpack('<HH', e[:4]) + (e[4:].hex(),) for e in ents], tb_items=len(tb_items),
-            camp_items=sum(len(g['items']) for g in camp_groups), checks=[[hex(a), hex(v)] for a, v in checks],
+            camp_items=sum(len(g['items']) for g in camp_groups), orc_bands=[list(struct.unpack('<HHB', b[4:9])) for b in orc_bands], checks=[[hex(a), hex(v)] for a, v in checks],
             doors=[[i, struct.unpack('<HH', it[4:8]), it[0xB], it[0xA]] for i, part in enumerate(newparts[1:], 1) for g in split_part(part)[0] for it in g['items'] if it[0] == 3],
             triggers=[[i, struct.unpack('<HH', it[4:8])] for i, part in enumerate(newparts[1:], 1) for g in split_part(part)[0] for it in g['items'] if it[0] == 0x12],
             level_entry=[hex(x) for x in entry], object_entry=[hex(x) for x in obj])
