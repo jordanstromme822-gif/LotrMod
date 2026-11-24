@@ -124,8 +124,10 @@ d_void = ndimage.distance_transform_edt(land)          # land spots: distance to
 yb, xb = np.mgrid[0:H8, 0:W8]
 d_border = np.minimum(np.minimum(yb, H8 - 1 - yb), np.minimum(xb, W8 - 1 - xb)).astype(np.float64)
 nz = ndimage.gaussian_filter(np.random.default_rng(CFG.get('seed', 5)).standard_normal((H8, W8)), 10)
+# the land's own edge wobbles too (long straight stretches of rock read as a ruler line): up to edge_wobble spots more
+nz2 = ndimage.gaussian_filter(np.random.default_rng(CFG.get('seed', 5) + 1).standard_normal((H8, W8)), 6)
 d_border += nz / nz.std() * CFG.get('border_wobble', 5)      # a wavy line, not a ruler's
-M = ((void & (d_land <= CFG.get('band_out', 64))) | (land & (d_void <= CFG.get('band_in', 2))) | (d_border < CFG.get('border', 40))) & ~excl
+M = ((void & (d_land <= CFG.get('band_out', 64))) | (land & (d_void <= CFG.get('band_in', 2) + np.clip(nz2 / nz2.std() * CFG.get('edge_wobble', 4), 0, None))) | (d_border < CFG.get('border', 40))) & ~excl
 dM = ndimage.distance_transform_edt(M)                 # how deep into the mountains
 per, first = CFG.get('terrace', [12, 7])
 yy, xx = np.mgrid[0:H8, 0:W8]
