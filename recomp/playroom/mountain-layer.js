@@ -4,7 +4,7 @@
   // Works in 1-player, P2 and online (all draw through WideHost). Data: maps/x/M51.bin (zlib), rock and ground atlases.
   (() => {
     const O = __MOUNTAINS__;
-    let RK = null, GR = null, SH = null, W8 = 0, H8 = 0, rock = null, ground = null, last = [0, 0], miss = 0, dbg = {};
+    let RK = null, GR = null, SH = null, W8 = 0, H8 = 0, rock = null, ground = null, plain = null, PW = 0, PH = 0, face = null, FW = 0, FH = 0, last = [0, 0], miss = 0, dbg = {};
     const img = (url, cb) => { try { const im = new Image(); im.onload = () => { try { const c = document.createElement("canvas"); c.width = im.width; c.height = im.height; const x = c.getContext("2d"); x.drawImage(im, 0, 0); cb(x.getImageData(0, 0, im.width, im.height).data, im.width); } catch (e) {} }; im.src = url; } catch (e) {} };
     // atlases: 8x8 tiles in rows of 64; tile i -> flat arrays (rock: rgba 256 bytes, ground: 64 palette indices)
     img(O.rock, (d, w) => { const n = O.nRock, a = new Uint8Array(n * 256);
@@ -13,6 +13,10 @@
     img(O.ground, (d, w) => { const n = O.nGround, a = new Uint8Array(n * 64);
       for (let i = 0; i < n; i++) for (let y = 0; y < 8; y++) for (let x = 0; x < 8; x++) a[i * 64 + y * 8 + x] = d[(((i >> 6) * 8 + y) * w + (i & 63) * 8 + x) * 4] & 15;
       ground = a; });
+    // v257 the drop (tools/region/drop.py): ground 0xFFFF spots show the far valley below, scrolled at half speed, with the
+    // earth bank hung under the edge (shade = drop spots above, 255 none)
+    if (O.plain) img(O.plain, (d, w) => { PW = w; PH = d.length / 4 / w; plain = d; });
+    if (O.face) img(O.face, (d, w) => { FW = w; FH = d.length / 4 / w; face = d; });
     (async () => { try {
       const r = await fetch(O.bin); const ds = r.body.pipeThrough(new DecompressionStream("deflate"));
       const b = new Uint8Array(await new Response(ds).arrayBuffer());
@@ -22,9 +26,9 @@
     } catch (e) { dbg.err = String(e); } })();
     const RG = O.rows;
     const conv = (c) => [(c & 31) << 3 | (c & 31) >> 2, (c >> 5 & 31) << 3 | (c >> 5 & 31) >> 2, (c >> 10 & 31) << 3 | (c >> 10 & 31) >> 2];
-    window.__mountainsDbg = { info: () => Object.assign({ data: !!RK, rock: !!rock, ground: !!ground, last, miss }, dbg) };
+    window.__mountainsDbg = { info: () => Object.assign({ data: !!RK, rock: !!rock, ground: !!ground, plain: !!plain, face: !!face, last, miss }, dbg) };
     window.__mountains = (u8, off, w, h) => {
-      const M = window.__wideM; if (!M || !RK || !rock || !ground || !M._rotk_iwram || !M._rotk_ewram || w < 240 || h < 160) return;
+      const M = window.__wideM; if (!M || !RK || !rock || !ground || (O.plain && (!plain || !face)) || !M._rotk_iwram || !M._rotk_ewram || w < 240 || h < 160) return;
       // the shown game: online = this page's player, otherwise game 0; 2-player engines keep the palette RAM 0x48000
       // after the game's EWRAM (rotk_pal only knows the 1-player game)
       const mp = window.__mp, link = !!(M._rotk_link_on && M._rotk_link_on()), on = !!(mp && mp.online && mp.ewram);
@@ -62,9 +66,22 @@
       let tags = null; try { const sp = M._rotk_skin_slot ? M._rotk_skin_slot(window.GbrHost.front) : 0; if (sp) tags = new Uint32Array(M.HEAPU8.buffer, sp, w * h); } catch (e) {}
       const PC = new Uint8Array(768); for (let i = 0; i < 256; i++) { const c = conv(pal[i]); PC[i * 3] = c[0]; PC[i * 3 + 1] = c[1]; PC[i * 3 + 2] = c[2]; }
       let drawn = 0;
+      const pu = ((fx >> 1) % PW + PW) % PW, pv = (((fy >> 1) - (O.plainY || 0)) % PH + PH) % PH;
       const sx0 = Math.max(0, fx >> 3), sx1 = Math.min(W8 - 1, (fx + w - 1) >> 3), sy0 = Math.max(0, fy >> 3), sy1 = Math.min(H8 - 1, (fy + h - 1) >> 3);
       for (let sy = sy0; sy <= sy1; sy++) for (let sx = sx0; sx <= sx1; sx++) {
         const i = sy * W8 + sx, g = GR[i]; if (!g) continue;
+        if (g === 0xFFFF) {   // the drop
+          const k = SH[i], px0 = sx * 8 - fx, py0 = sy * 8 - fy;
+          for (let y = 0; y < 8; y++) { const py = py0 + y; if (py < 0 || py >= h) continue; const du = k * 8 + y, pr = ((py + pv) % PH) * PW;
+            for (let x = 0; x < 8; x++) { const px = px0 + x; if (px < 0 || px >= w) continue;
+              const kk = off + (py * w + px) * 3; if (u8[kk] !== k0 || u8[kk + 1] !== k1 || u8[kk + 2] !== k2) continue;
+              let q = -1;
+              if (k < 255 && du < FH) { const c = (((sx * 8 + x) % FW) + FW) % FW, fq = (du * FW + c) * 4; if (face[fq + 3]) { u8[kk] = face[fq]; u8[kk + 1] = face[fq + 1]; u8[kk + 2] = face[fq + 2]; q = 0; } }
+              if (q < 0) { const pq = (pr + (px + pu) % PW) * 4; u8[kk] = plain[pq]; u8[kk + 1] = plain[pq + 1]; u8[kk + 2] = plain[pq + 2]; }
+              if (tags) tags[py * w + px] = 0; drawn++;
+            } }
+          continue;
+        }
         const r = RK[i], f = 1 - O.shade * SH[i] / 15, row = RG[g] * 16, gb = g * 64, rb = r * 256;
         const px0 = sx * 8 - fx, py0 = sy * 8 - fy;
         for (let y = 0; y < 8; y++) { const py = py0 + y; if (py < 0 || py >= h) continue;
