@@ -454,6 +454,55 @@ for ri, rd in enumerate(CFG.get('roads', [])):
             road8[y, x] = True; n += 1
     print('road', ri, 'spots', n)
 
+# ---- cliffs: the region's outline walled by the game's own crags (Tower Base's west map edge: dark jagged rock units
+# stacked down the edge). A cliff config copies a source strip [level, x0, y0, x1, y1] (8 px spots, rows cycling)
+# along one side of the land: 'w' / 'e' strips run down the side, the strip's outer column on the land's outermost spot,
+# held at one x for 'hold' rows so whole crags stay whole (the outline steps like the game's own edges); 'n' lays the
+# strip's rows across the top as a row of crag units. 'flip' mirrors the strip (east side). 'gaps' = [a, b] px ranges
+# along the side left open (a road leaving the region). Spots past the cliff become void; blocks and roads are kept.
+cliff8 = np.zeros((H8, W8), bool)
+def lvl8(L):
+    g = grids[L]; h, w = len(g) * 4, len(g[0]) * 4
+    return [[[g[y // 4][x // 4][i][(y % 4) * 4 + x % 4] for x in range(w)] for y in range(h)] for i in (0, 1, 2)]
+for cf in CFG.get('cliffs', []):
+    L, x0, y0, x1, y1 = cf['src']; sA, sB, sC = lvl8(L)
+    piece = [[(sA[y][x], sB[y][x], sC[y][x]) for x in range(x0, x1)] for y in range(y0, y1)]
+    if cf.get('flip'): piece = [[((a[0], a[1] ^ 0x400), (b[0], b[1] ^ 0x400), c) for a, b, c in r[::-1]] for r in piece]
+    PH, PW = len(piece), len(piece[0]); hold = cf.get('hold', PH); side = cf['side']
+    land_ = np.array([[t != VOID for t in r] for r in GA])
+    def put(y, x, t):
+        if not (0 <= y < H8 and 0 <= x < W8) or road8[y, x] or (fixed8[y, x] and land_[y, x] and not cliff8[y, x]): return
+        a, b, c = t; GA[y][x] = a; GB[y][x] = b if b[0] != BLANK else VOID; GC[y][x] = c; cliff8[y, x] = True
+    gaps = cf.get('gaps', [])
+    if side in ('w', 'e'):
+        rows = [y for y in range(H8) if land_[y].any()]
+        for i0 in range(0, len(rows), hold):
+            run = rows[i0:i0 + hold]
+            xs = [np.nonzero(land_[y])[0] for y in run]
+            xe = max(v[0] for v in xs) if side == 'w' else min(v[-1] for v in xs)   # on land in every row of the run
+            layers = cf.get('layers', 1)                  # strips piled outward, each half a strip lower: a crag band
+            for k, y in enumerate(run):
+                if any(a <= y * 8 < b for a, b in gaps): continue
+                for li in range(layers - 1, -1, -1):
+                    r = piece[(i0 + k + li * PH // 2) % PH]; off = li * (PW - 1)
+                    for i, t in enumerate(r):
+                        put(y, xe - off + i if side == 'w' else xe + off - (PW - 1) + i, t)
+                xo = xe - (layers - 1) * (PW - 1) if side == 'w' else xe + (layers - 1) * (PW - 1)
+                beyond = range(0, xo) if side == 'w' else range(xo + 1, W8)
+                for x in beyond:
+                    if not fixed8[y, x] and not road8[y, x]: GA[y][x] = VOID; GB[y][x] = VOID; GC[y][x] = 1
+    else:
+        cols = [x for x in range(W8) if land_[:, x].any()]
+        for i0 in range(0, len(cols), PW):
+            run = cols[i0:i0 + PW]
+            if any(a <= run[0] * 8 < b for a, b in gaps): continue
+            ye = min(np.nonzero(land_[:, x])[0][0] for x in run)
+            for k, x in enumerate(run):
+                for j in range(PH): put(ye + j, x, piece[j][k % PW])
+                for y in range(0, ye):
+                    if not fixed8[y, x]: GA[y][x] = VOID; GB[y][x] = VOID; GC[y][x] = 1
+    print('cliff', side, int(cliff8.sum()))
+
 for y, x, bt, cv in overlay:
     if bt[0] != BLANK: GB[y][x] = bt
     if cv is not None: GC[y][x] = cv
