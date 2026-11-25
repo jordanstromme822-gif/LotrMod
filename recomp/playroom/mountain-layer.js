@@ -44,6 +44,7 @@
       const K = conv(pal[O.key[0] * 16 + O.key[1]]), k0 = K[0], k1 = K[1], k2 = K[2];
       const isKey = (x, y) => { const k = off + (y * w + x) * 3; return u8[k] === k0 && u8[k + 1] === k1 && u8[k + 2] === k2; };
       const ex = r32(0x20F8) - ((w - 240) >> 1), ey = r32(0x20FC) - ((h - 160) >> 1);   // camera (0x030020F8/FC, as the hit effects use): level px of the picture's (0, 0)
+      window.__mtnView = { x: ex + (w >> 1), y: ey + (h >> 1), t: performance.now() };   // the ambience's listener
       const inM = (px, py) => { const sx = px >> 3, sy = py >> 3; return sx >= 0 && sy >= 0 && sx < W8 && sy < H8 && GR[sy * W8 + sx] !== 0; };
       // samples: every 6th pixel on a coarse grid; does the picture's key agree with the map's mountain spots?
       const S = []; let anyKey = false, anyM = false;
@@ -130,4 +131,72 @@
         }
       }
     };
+
+    // v266 Isengard's sound (plan step 8, "life"): wind over the plain, water lapping and bubbling in the drowned pits,
+    // steam hissing from the vents and, now and then, a warg pack howling in the distance. Made in WebAudio on the game's
+    // own sound player (window.__preAudio, so it starts from the same Play tap on phones); it follows the camera
+    // (window.__mtnView, set each frame while Isengard is shown) and fades out within half a second of leaving it.
+    (() => {
+      let A = null, out = null, wind = null, water = null, steam = null, nextHowl = 0, nextBub = 0;
+      const amb = { wind: 0, water: 0, steam: 0, howls: 0 }; window.__ambDbg = amb;
+      const noise = (ctx, brown) => { const n = ctx.sampleRate * 4, b = ctx.createBuffer(1, n, ctx.sampleRate), d = b.getChannelData(0); let l = 0;
+        for (let i = 0; i < n; i++) { const r = Math.random() * 2 - 1; if (brown) { l = (l + 0.02 * r) / 1.02; d[i] = l * 3.5; } else d[i] = r; }
+        const s = ctx.createBufferSource(); s.buffer = b; s.loop = true; return s; };
+      const chain = (ctx, src, nodes, g0) => { let n = src; for (const f of nodes) { n.connect(f); n = f; } const g = ctx.createGain(); g.gain.value = g0; n.connect(g); g.connect(out); src.start(); return g; };
+      const filt = (ctx, type, f, q) => { const b = ctx.createBiquadFilter(); b.type = type; b.frequency.value = f; if (q) b.Q.value = q; return b; };
+      const setup = () => {
+        const ctx = window.__preAudio; if (!ctx || ctx.state !== "running") return false;
+        A = ctx; out = ctx.createGain(); out.gain.value = 0; out.connect(ctx.destination);
+        const wl = filt(ctx, "lowpass", 520, 0.7); wind = { g: chain(ctx, noise(ctx, true), [wl], 0), f: wl, gust: 0.5 };
+        const wb = filt(ctx, "bandpass", 700, 0.9); water = { g: chain(ctx, noise(ctx, false), [wb, filt(ctx, "lowpass", 1600)], 0), f: wb };
+        steam = { g: chain(ctx, noise(ctx, false), [filt(ctx, "highpass", 2600), filt(ctx, "bandpass", 5200, 0.6)], 0) };
+        return true;
+      };
+      // a bubble: a short sine whose pitch rises as it closes (real bubbles ring upward), quiet and soft at both ends
+      const bubble = (t, vol) => { const o = A.createOscillator(), g = A.createGain(), f0 = 380 + Math.random() * 700;
+        o.type = "sine"; o.frequency.setValueAtTime(f0, t); o.frequency.exponentialRampToValueAtTime(f0 * (1.6 + Math.random() * 0.6), t + 0.06);
+        g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(vol, t + 0.008); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.09);
+        o.connect(g); g.connect(out); o.start(t); o.stop(t + 0.1); };
+      // a far howl: a breathy saw through two vowel formants, rising, held with a slow wobble, then sinking away; a
+      // second, quieter voice answers a moment later; a lowpass and a little echo put it far off
+      const howl = (t, vol) => {
+        const lp = filt(A, "lowpass", 1500), dl = A.createDelay(1), fb = A.createGain(); dl.delayTime.value = 0.23; fb.gain.value = 0.28;
+        lp.connect(out); lp.connect(dl); dl.connect(fb); fb.connect(dl); dl.connect(out);
+        const voice = (t0, f, v, len) => { const o = A.createOscillator(), vib = A.createOscillator(), vg = A.createGain(), g = A.createGain();
+          o.type = "sawtooth"; vib.frequency.value = 4.6; vg.gain.value = f * 0.012; vib.connect(vg); vg.connect(o.frequency);
+          o.frequency.setValueAtTime(f * 0.62, t0); o.frequency.exponentialRampToValueAtTime(f, t0 + 0.55); o.frequency.setValueAtTime(f, t0 + 0.55 + len);
+          o.frequency.exponentialRampToValueAtTime(f * 0.7, t0 + 1.4 + len);
+          g.gain.setValueAtTime(0.0001, t0); g.gain.exponentialRampToValueAtTime(v, t0 + 0.35); g.gain.setValueAtTime(v, t0 + 0.55 + len); g.gain.exponentialRampToValueAtTime(0.0001, t0 + 1.5 + len);
+          const f1 = filt(A, "bandpass", 760, 4), f2 = filt(A, "bandpass", 1150, 5), d = filt(A, "lowpass", 900), dg = A.createGain(), m = A.createGain(); dg.gain.value = 0.3;
+          o.connect(f1); o.connect(f2); o.connect(d); d.connect(dg); f1.connect(m); f2.connect(m); dg.connect(m); m.connect(g); g.connect(lp);
+          o.start(t0); vib.start(t0); o.stop(t0 + 1.6 + len); vib.stop(t0 + 1.6 + len); };
+        voice(t, 520 + Math.random() * 60, vol, 0.9 + Math.random() * 0.5);
+        if (Math.random() < 0.7) voice(t + 0.8 + Math.random() * 0.9, 600 + Math.random() * 80, vol * 0.6, 0.6 + Math.random() * 0.4);
+        amb.howls++; };
+      const near = (x, y) => {   // water and vent amounts round the listener, 0..1, nearer counts more
+        let wa = 0, st = 0; if (GR) { for (let dy = -22; dy <= 22; dy += 2) for (let dx = -26; dx <= 26; dx += 2) { const sx = (x >> 3) + dx, sy = (y >> 3) + dy;
+          if (sx < 0 || sy < 0 || sx >= W8 || sy >= H8 || GR[sy * W8 + sx] !== 0xFFFE) continue; wa += 1 / (1 + (dx * dx + dy * dy) / 60); } }
+        if (O.vents) for (const v of O.vents) { const d2 = (v[0] - x) ** 2 + (v[1] - y) ** 2; if (d2 < 260 * 260) st += 1 / (1 + d2 / (70 * 70)); }
+        return [Math.min(1, wa / 28), Math.min(1, st / 1.6)]; };
+      setInterval(() => { try {
+        if (!A && !setup()) return;
+        const v = window.__mtnView, on = !!(v && performance.now() - v.t < 400) && A.state === "running", t = A.currentTime;
+        out.gain.setTargetAtTime(on ? 1 : 0, t, on ? 0.6 : 0.12);
+        if (!on) return;
+        const [wa, st] = near(v.x, v.y);
+        // gusts: a slow random walk; the plain is windier than the pits' hollows
+        wind.gust = Math.max(0.15, Math.min(1, wind.gust + (Math.random() - 0.5) * 0.18));
+        const wv = 0.08 * (0.35 + 0.65 * wind.gust) * (1 - 0.5 * wa);
+        wind.g.gain.setTargetAtTime(wv, t, 0.5); wind.f.frequency.setTargetAtTime(320 + 520 * wind.gust, t, 0.6);
+        water.g.gain.setTargetAtTime(0.09 * wa * (0.6 + 0.4 * Math.random()), t, 0.15); water.f.frequency.setTargetAtTime(520 + Math.random() * 420, t, 0.2);
+        steam.g.gain.setTargetAtTime(0.07 * st * (0.75 + 0.25 * Math.random()), t, 0.12);
+        if (wa > 0.08 && t > nextBub) { bubble(t + Math.random() * 0.1, 0.04 + 0.06 * wa); nextBub = t + 0.12 + Math.random() * (1.4 - wa); }
+        if (O.wolves && t > nextHowl) {   // a pack 300-1100 px away: out of sight but near enough to hear
+          let best = 1e9; for (const w of O.wolves) { const d = Math.hypot(w[0] - v.x, w[1] - v.y); if (d > 300 && d < best) best = d; }
+          if (best < 1100 && Math.random() < 0.5) howl(t + 0.05, 0.12 * (1 - best / 1300));
+          nextHowl = t + 25 + Math.random() * 25;
+        }
+        amb.wind = +wv.toFixed(3); amb.water = +wa.toFixed(2); amb.steam = +st.toFixed(2);
+      } catch (e) { amb.err = String(e); } }, 250);
+    })();
   })();
