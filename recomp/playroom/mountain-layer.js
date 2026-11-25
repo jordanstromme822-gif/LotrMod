@@ -17,6 +17,9 @@
     // earth bank hung under the edge (shade = drop spots above, 255 none)
     if (O.plain) img(O.plain, (d, w) => { PW = w; PH = d.length / 4 / w; plain = d; });
     if (O.face) img(O.face, (d, w) => { FW = w; FH = d.length / 4 / w; face = d; });
+    // the flood (tools/region/water.py): ground 0xFFFE spots are Isengard's drowned pits and pools, the game's own 32 px
+    // water scrolled along its ripples with passing glints; steam rises from O.vents
+    let water = null; if (O.water) img(O.water, (d) => { water = d; });
     (async () => { try {
       const r = await fetch(O.bin); const ds = r.body.pipeThrough(new DecompressionStream("deflate"));
       const b = new Uint8Array(await new Response(ds).arrayBuffer());
@@ -28,7 +31,7 @@
     const conv = (c) => [(c & 31) << 3 | (c & 31) >> 2, (c >> 5 & 31) << 3 | (c >> 5 & 31) >> 2, (c >> 10 & 31) << 3 | (c >> 10 & 31) >> 2];
     window.__mountainsDbg = { info: () => Object.assign({ data: !!RK, rock: !!rock, ground: !!ground, plain: !!plain, face: !!face, last, miss }, dbg) };
     window.__mountains = (u8, off, w, h) => {
-      const M = window.__wideM; if (!M || !RK || !rock || !ground || (O.plain && (!plain || !face)) || !M._rotk_iwram || !M._rotk_ewram || w < 240 || h < 160) return;
+      const M = window.__wideM; if (!M || !RK || !rock || !ground || (O.plain && (!plain || !face)) || (O.water && !water) || !M._rotk_iwram || !M._rotk_ewram || w < 240 || h < 160) return;
       // the shown game: online = this page's player, otherwise game 0; 2-player engines keep the palette RAM 0x48000
       // after the game's EWRAM (rotk_pal only knows the 1-player game)
       const mp = window.__mp, link = !!(M._rotk_link_on && M._rotk_link_on()), on = !!(mp && mp.online && mp.ewram);
@@ -66,10 +69,25 @@
       let tags = null; try { const sp = M._rotk_skin_slot ? M._rotk_skin_slot(window.GbrHost.front) : 0; if (sp) tags = new Uint32Array(M.HEAPU8.buffer, sp, w * h); } catch (e) {}
       const PC = new Uint8Array(768); for (let i = 0; i < 256; i++) { const c = conv(pal[i]); PC[i * 3] = c[0]; PC[i * 3 + 1] = c[1]; PC[i * 3 + 2] = c[2]; }
       let drawn = 0;
+      const now = performance.now() / 1000, wx = Math.floor(now * 6), wy = -Math.floor(now * 6), wt = Math.floor(now * 4);   // ripples run down-left like the source's
       const pu = ((fx >> 1) % PW + PW) % PW, pv = (((fy >> 1) - (O.plainY || 0)) % PH + PH) % PH;
       const sx0 = Math.max(0, fx >> 3), sx1 = Math.min(W8 - 1, (fx + w - 1) >> 3), sy0 = Math.max(0, fy >> 3), sy1 = Math.min(H8 - 1, (fy + h - 1) >> 3);
       for (let sy = sy0; sy <= sy1; sy++) for (let sx = sx0; sx <= sx1; sx++) {
         const i = sy * W8 + sx, g = GR[i]; if (!g) continue;
+        if (g === 0xFFFE) {   // the flood
+          const px0 = sx * 8 - fx, py0 = sy * 8 - fy;
+          for (let y = 0; y < 8; y++) { const py = py0 + y; if (py < 0 || py >= h) continue; const Y = sy * 8 + y;
+            for (let x = 0; x < 8; x++) { const px = px0 + x; if (px < 0 || px >= w) continue;
+              const kk = off + (py * w + px) * 3; if (u8[kk] !== k0 || u8[kk + 1] !== k1 || u8[kk + 2] !== k2) continue;
+              const X = sx * 8 + x, q = ((((Y + wy) & 31) << 5) + ((X + wx) & 31)) * 4;
+              let R = water[q], G = water[q + 1], B = water[q + 2];
+              const hh = ((X * 73856093) ^ (Y * 19349663) ^ (wt * 83492791)) >>> 0;   // glints: a few bright pixels, new ones every 1/4 s
+              if (hh % 997 === 0) { R = R + 90 > 255 ? 255 : R + 90; G = G + 100 > 255 ? 255 : G + 100; B = B + 100 > 255 ? 255 : B + 100; }
+              u8[kk] = R; u8[kk + 1] = G; u8[kk + 2] = B;
+              if (tags) tags[py * w + px] = 0; drawn++;
+            } }
+          continue;
+        }
         if (g === 0xFFFF) {   // the drop
           const k = SH[i], px0 = sx * 8 - fx, py0 = sy * 8 - fy;
           for (let y = 0; y < 8; y++) { const py = py0 + y; if (py < 0 || py >= h) continue; const du = k * 8 + y, pr = ((py + pv) % PH) * PW;
@@ -95,5 +113,21 @@
           } }
       }
       dbg.drawn = drawn;
+      // steam from the drowned pits: soft puffs rise ~80 px, drift with the wind, swell and fade; drawn over everything
+      if (O.vents) for (let v = 0; v < O.vents.length; v++) {
+        const vx = O.vents[v][0] - fx, vy = O.vents[v][1] - fy;
+        if (vx < -60 || vx > w + 60 || vy < -20 || vy > h + 100) continue;
+        for (let n = 0; n < 12; n++) {
+          const ph = (now / 6 + n / 12 + v * 0.37) % 1, s = Math.sin(v * 12.9898 + n * 78.233) * 43758.5453, rj = s - Math.floor(s);
+          const cx = vx + (rj - 0.5) * 10 + ph * 16 + Math.sin(now * 0.8 + n + v) * 3 * ph, cy = vy - ph * 90, rad = 6 + ph * 18;
+          const a0 = 0.75 * Math.sin(Math.PI * Math.pow(ph, 0.75)) * (1 - ph * 0.5) * (0.7 + 0.3 * rj);
+          const xa = Math.max(0, Math.floor(cx - rad)), xb = Math.min(w - 1, Math.ceil(cx + rad)), ya = Math.max(0, Math.floor(cy - rad)), yb = Math.min(h - 1, Math.ceil(cy + rad));
+          for (let py = ya; py <= yb; py++) for (let px = xa; px <= xb; px++) {
+            const dd = ((px - cx) * (px - cx) + (py - cy) * (py - cy)) / (rad * rad); if (dd >= 1) continue;
+            const a = a0 * Math.sqrt(1 - dd), kk = off + (py * w + px) * 3;
+            u8[kk] += (222 - u8[kk]) * a; u8[kk + 1] += (224 - u8[kk + 1]) * a; u8[kk + 2] += (220 - u8[kk + 2]) * a;
+          }
+        }
+      }
     };
   })();
