@@ -19,6 +19,8 @@ cfg = dict(bin='maps/x/M51data.wasm?v=%d' % V, rock='maps/x/M51r.png?v=%d' % V, 
 if ddir:
     cfg.update(plain='maps/x/M51p.png?v=%d' % V, face='maps/x/M51f.png?v=%d' % V, plainY=7400)
     if os.path.exists(os.path.join(ddir, 'water.png')): cfg.update(water='maps/x/M51w.png?v=%d' % V, vents=info.get('vents', []))
+pinfo = json.load(open(os.path.join(pdir, 'region.json')))
+if pinfo.get('wolves'): cfg.update(wolves=[w[:2] for w in pinfo['wolves']])   # the ambience's distant howls
 js = open(os.path.join(HERE, 'mountain-layer.js'), encoding='utf-8').read().replace('__MOUNTAINS__', json.dumps(cfg, separators=(',', ':')))
 a = html.index("  // v255 Isengard's mountains"); b = html.index("  // v247 Orthanc's four horns (tools/region/orthanc)")
 assert a < b and html.count("  // v255 Isengard's mountains") == 1
