@@ -184,6 +184,14 @@ def open_spot(x, y):
 orc_bands = []
 for x, y, n in P.get('orc_bands', []):
     bx, by = open_spot(x, y); orc_bands.append(struct.pack('<4sHHBBH', b'\x1a\0\0\0', bx, by, n, 4, 0))
+# wolf packs (PACK.json 'wolves': [[x, y, n, mode], ...] region px): the game's own warg spawn record (type 0x22, as
+# Anduin's and Dimholt's: +8 species 0 = warg (kind 48), +9 mode), n wargs spread round the nearest open spot. Only
+# plain wargs: the great warg (+8 = 1, kind 49) draws with OBJ palette 11, which Isengard fills with the Uruk palette.
+wolves = []
+for x, y, n, mode in P.get('wolves', []):
+    for k in range(n):
+        dx, dy = [(0, 0), (40, 18), (-36, 24), (14, -34), (-20, -30), (44, -12)][k % 6]
+        bx, by = open_spot(x + dx, y + dy); wolves.append(struct.pack('<4sHHBBH', b'\x22\0\0\0', bx, by, 0, mode, 0))
 def merged(part):
     groups, paths, scripts, tail, cnt = split_part(part)
     out = []
@@ -195,7 +203,7 @@ def merged(part):
             items.append(move(it, FFX, FFY))
         out.append(dict(b1=g['b1'], items=items))
     # into the first group (always live; later groups are switched on by the part's scripts)
-    out[0]['items'] += tb_items + [it for g in camp_groups for it in g['items']] + orc_bands
+    out[0]['items'] += tb_items + [it for g in camp_groups for it in g['items']] + orc_bands + wolves
     p = bytearray(8) + build_groups(out)
     o_paths = len(p); p += paths
     o_scripts = len(p); p += scripts
@@ -288,7 +296,7 @@ info = dict(slot=SLOT, base=BASE, size=len(out), cells=[W, H], zones=ZONES, slot
             metasA=len(metaA), metasB=len(metaB), walk_defs=len(defs), defs_remapped=len(remap), spots_changed=changed,
             tower_base_px=[TBX, TBY], flooded_field_px=[FFX, FFY], campsite_px=[CPX, CPY],
             entries=[struct.unpack('<HH', e[:4]) + (e[4:].hex(),) for e in ents], tb_items=len(tb_items),
-            camp_items=sum(len(g['items']) for g in camp_groups), orc_bands=[list(struct.unpack('<HHB', b[4:9])) for b in orc_bands], checks=[[hex(a), hex(v)] for a, v in checks],
+            camp_items=sum(len(g['items']) for g in camp_groups), orc_bands=[list(struct.unpack('<HHB', b[4:9])) for b in orc_bands], wolves=[list(struct.unpack('<HHB', b[4:9])) for b in wolves], checks=[[hex(a), hex(v)] for a, v in checks],
             doors=[[i, struct.unpack('<HH', it[4:8]), it[0xB], it[0xA]] for i, part in enumerate(newparts[1:], 1) for g in split_part(part)[0] for it in g['items'] if it[0] == 3],
             triggers=[[i, struct.unpack('<HH', it[4:8])] for i, part in enumerate(newparts[1:], 1) for g in split_part(part)[0] for it in g['items'] if it[0] == 0x12],
             level_entry=[hex(x) for x in entry], object_entry=[hex(x) for x in obj])
