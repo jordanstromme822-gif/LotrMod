@@ -72,16 +72,47 @@
       let drawn = 0;
       const now = performance.now() / 1000, wx = Math.floor(now * 6), wy = -Math.floor(now * 6), wt = Math.floor(now * 4);   // ripples run down-left like the source's
       const pu = ((fx >> 1) % PW + PW) % PW, pv = (((fy >> 1) - (O.plainY || 0)) % PH + PH) % PH;
+      let KM = null;   // the picture's key pixels before this frame's drawing (the shore looks past them)
+      const keyAt = (qx, qy) => { if (!KM) { KM = new Uint8Array(w * h); for (let j = 0, k = off; j < w * h; j++, k += 3) KM[j] = u8[k] === k0 && u8[k + 1] === k1 && u8[k + 2] === k2 ? 1 : 0; } return KM[qy * w + qx] === 1; };
+      if (O.water) keyAt(0, 0);
       const sx0 = Math.max(0, fx >> 3), sx1 = Math.min(W8 - 1, (fx + w - 1) >> 3), sy0 = Math.max(0, fy >> 3), sy1 = Math.min(H8 - 1, (fy + h - 1) >> 3);
       for (let sy = sy0; sy <= sy1; sy++) for (let sx = sx0; sx <= sx1; sx++) {
         const i = sy * W8 + sx, g = GR[i]; if (!g) continue;
         if (g === 0xFFFE) {   // the flood
           const px0 = sx * 8 - fx, py0 = sy * 8 - fy;
+          // v267 shore: next to the game's own ground the 8 px steps become a wobbly, rounded waterline. A smooth field
+          // (spot centres: water or mountain 1, ground 0, bilinear, plus a slow wobble) cuts each pixel; ground-side pixels
+          // take the picture's own shore mirrored across the line, darkened where wet, and a pale foam line rims the water
+          let edge = false; for (let dy = -1; dy <= 1 && !edge; dy++) for (let dx = -1; dx <= 1; dx++) { const nx = sx + dx, ny = sy + dy; if (nx >= 0 && ny >= 0 && nx < W8 && ny < H8 && GR[ny * W8 + nx] === 0) { edge = true; break; } }
+          const wv = (ax, ay) => (ax < 0 || ay < 0 || ax >= W8 || ay >= H8 || GR[ay * W8 + ax] !== 0) ? 1 : 0;
           for (let y = 0; y < 8; y++) { const py = py0 + y; if (py < 0 || py >= h) continue; const Y = sy * 8 + y;
             for (let x = 0; x < 8; x++) { const px = px0 + x; if (px < 0 || px >= w) continue;
               const kk = off + (py * w + px) * 3; if (u8[kk] !== k0 || u8[kk + 1] !== k1 || u8[kk + 2] !== k2) continue;
               const X = sx * 8 + x, q = ((((Y + wy) & 31) << 5) + ((X + wx) & 31)) * 4;
+              let fv = 1;
+              if (edge) {
+                const u = (X + 0.5) / 8 - 0.5, v = (Y + 0.5) / 8 - 0.5, ix = Math.floor(u), iy = Math.floor(v), tx = u - ix, ty = v - iy;
+                fv = (wv(ix, iy) * (1 - tx) + wv(ix + 1, iy) * tx) * (1 - ty) + (wv(ix, iy + 1) * (1 - tx) + wv(ix + 1, iy + 1) * tx) * ty;
+                fv += 0.13 * Math.sin(X * 0.41 + Y * 0.17) * Math.sin(Y * 0.33 - X * 0.11) + 0.05 * Math.sin(X * 1.3 + Y * 0.9);
+                if (fv < 0.5) {   // shore: the nearest ground pixel's direction, mirrored a little further out
+                  let best = 99, bx = 0, by = 0;
+                  for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) for (let d = 1; d < Math.min(best, 12); d++) {
+                    const qx = px + dx * d, qy = py + dy * d; if (qx < 0 || qy < 0 || qx >= w || qy >= h) break;
+                    if (keyAt(qx, qy)) continue;
+                    if (d < best) { best = d; bx = dx; by = dy; } break; }
+                  if (best < 99) {
+                    let qx = px + bx * (2 * best - 1), qy = py + by * (2 * best - 1);
+                    if (qx < 0 || qy < 0 || qx >= w || qy >= h) { qx = px + bx * best; qy = py + by * best; }
+                    let qk = off + (qy * w + qx) * 3; if (keyAt(qx, qy)) qk = off + ((py + by * best) * w + px + bx * best) * 3;
+                    const wet = fv > 0.38 ? 0.72 + (0.5 - fv) * 2.3 : 1;
+                    u8[kk] = u8[qk] * wet; u8[kk + 1] = u8[qk + 1] * wet; u8[kk + 2] = u8[qk + 2] * wet;
+                    if (tags) tags[py * w + px] = 0; drawn++; continue;
+                  }
+                  fv = 0.5;
+                }
+              }
               let R = water[q], G = water[q + 1], B = water[q + 2];
+              if (fv < 0.58) { const a = 0.4 * (0.58 - fv) / 0.08; R += (196 - R) * a; G += (206 - G) * a; B += (200 - B) * a; }   // foam at the waterline
               const hh = ((X * 73856093) ^ (Y * 19349663) ^ (wt * 83492791)) >>> 0;   // glints: a few bright pixels, new ones every 1/4 s
               if (hh % 997 === 0) { R = R + 90 > 255 ? 255 : R + 90; G = G + 100 > 255 ? 255 : G + 100; B = B + 100 > 255 ? 255 : B + 100; }
               u8[kk] = R; u8[kk + 1] = G; u8[kk + 2] = B;
