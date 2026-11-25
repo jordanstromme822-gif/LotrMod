@@ -24,7 +24,7 @@ road_gap (spots kept clear around roads), block_gap, open [[x0, y0, x1, y1] px r
 {palette index: [r, g, b]} for the source rock palette, seed, key [palette row, index].
 
 OUT_DIR: region.pkl (the map with key tiles), region.png (preview with the mountains drawn), mountains.bin (zlib:
-'MTN1', W8, H8, then rock u16[H8*W8], ground u16[H8*W8] (0xFFFF: drop), shade u8[H8*W8]), mountains.json (rock atlas size, ground
+'MTN1', W8, H8, then rock u16[H8*W8], ground u16[H8*W8] (0xFFFF: drop, 0xFFFE: water), shade u8[H8*W8]), mountains.json (rock atlas size, ground
 tiles' palette rows, key colour), mountains-rock.png (RGBA, 8x8 rock tiles in rows of 64, tile 0 = none),
 mountains-ground.png (palette index 0-15 per pixel, same layout).
 """
@@ -246,6 +246,29 @@ for y in range(H8):
     k = np.where(P[y], np.where(solid_above, 0, np.minimum(k + 1, 255)), 255)
     GR[y][P[y]] = 0xFFFF; SH[y][P[y]] = k[P[y]]
 print('drop spots', int(P.sum()))
+# the flood (CONFIG 'water'): holes inside the region (void not joined to the map's border) within 'rects', outside
+# 'skip' rects, are Isengard's flooded pits and pools: ground 0xFFFE, the page draws moving water there (the game's own
+# water, tools/region/water.py) with steam rising from 'vents' (one per pool, more in big ones, 'vent_gap' px apart).
+# The water replaces any mountain grown into them.
+Wt = np.zeros_like(void); vents = []
+if CFG.get('water'):
+    WC = CFG['water']; lab, nl = ndimage.label(void); outer = np.unique(np.concatenate([lab[0], lab[-1], lab[:, 0], lab[:, -1]]))
+    inr = np.zeros_like(void)
+    for x0, y0, x1, y1 in WC['rects']: inr[y0 // 8:y1 // 8, x0 // 8:x1 // 8] = True
+    for x0, y0, x1, y1 in WC.get('skip', []): inr[y0 // 8:y1 // 8, x0 // 8:x1 // 8] = False
+    Wt = void & ~np.isin(lab, outer) & inr & ~passes
+    rv = random.Random(CFG.get('seed', 5) + 3); gap = WC.get('vent_gap', 140) / 8
+    for i in np.unique(lab[Wt]):
+        ys, xs = np.nonzero((lab == i) & Wt)
+        if len(ys) < WC.get('vent_min', 30): continue
+        far = ndimage.distance_transform_edt(np.pad((lab == i) & Wt, 1))[1:-1, 1:-1]   # vents away from the shore
+        cand = [(far[y, x], rv.random(), x, y) for y, x in zip(ys, xs) if far[y, x] >= 3]; cand.sort(reverse=True)
+        mine = []
+        for _, _, x, y in cand:
+            if all((x - a) ** 2 + (y - b) ** 2 >= gap * gap for a, b in mine): mine.append((x, y))
+        vents += [[int(x * 8 + 4), int(y * 8 + 4)] for x, y in mine]
+    M &= ~Wt; RK[Wt] = 0; GR[Wt] = 0xFFFE; SH[Wt] = 0
+    print('water spots', int(Wt.sum()), 'vents', len(vents))
 print('rock tiles', len(rock_tiles) - 1, 'ground tiles', len(ground_tiles) - 1)
 def atlas(tiles, mode):
     n = len(tiles); rows_ = (n + 63) // 64
@@ -258,12 +281,12 @@ KR, KI = CFG.get('key', [8, 1])
 blob = b'MTN1' + struct.pack('<HH', W8, H8) + RK.tobytes() + GR.tobytes() + SH.tobytes()
 open(os.path.join(out, 'mountains.bin'), 'wb').write(zlib.compress(blob, 9))
 info = dict(W8=W8, H8=H8, rock=len(rock_tiles), ground=len(ground_tiles), ground_rows=ground_rows, key=[KR, KI],
-            shade=smax, spots=int(M.sum()), drop=int(P.sum()))
+            shade=smax, spots=int(M.sum()), drop=int(P.sum()), water=int(Wt.sum()), vents=vents)
 json.dump(info, open(os.path.join(out, 'mountains.json'), 'w'))
 
 # ---- the map: key tiles, blocked ---------------------------------------------------------------------------------------
 KEY = (('key', KI), KR << 12)
-for y, x in zip(*np.nonzero(M | P)):
+for y, x in zip(*np.nonzero(M | P | Wt)):
     GA[y][x] = KEY; GB[y][x] = (0, 0); GC[y][x] = 1
 R['GA'], R['GB'], R['GC'] = GA, GB, GC; R['mountains'] = M
 pickle.dump(R, open(os.path.join(out, 'region.pkl'), 'wb'))
@@ -280,6 +303,7 @@ for y, x in zip(*np.nonzero(M)):
     c *= 1 - smax * SH[y, x] / 15.0
     im[y * 8:y * 8 + 8, x * 8:x * 8 + 8] = c.clip(0, 255).astype(np.uint8)
 im[np.kron(P, np.ones((8, 8), bool))] = CFG.get('drop', {}).get('haze', [128, 128, 124])
+im[np.kron(Wt, np.ones((8, 8), bool))] = (60, 96, 100)
 for y, x in zip(*np.nonzero(passes & void)):
     t = GA[y][x]; p = pix(rpixels[t[0]])
     if t[1] & 0x400: p = p[:, ::-1]
