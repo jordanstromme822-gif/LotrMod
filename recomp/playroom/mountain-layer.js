@@ -74,7 +74,8 @@
       const pu = ((fx >> 1) % PW + PW) % PW, pv = (((fy >> 1) - (O.plainY || 0)) % PH + PH) % PH;
       let KM = null;   // the picture's key pixels before this frame's drawing (the shore looks past them)
       const keyAt = (qx, qy) => { if (!KM) { KM = new Uint8Array(w * h); for (let j = 0, k = off; j < w * h; j++, k += 3) KM[j] = u8[k] === k0 && u8[k + 1] === k1 && u8[k + 2] === k2 ? 1 : 0; } return KM[qy * w + qx] === 1; };
-      if (O.water) keyAt(0, 0);
+      if (O.water || O.plain) keyAt(0, 0);
+      const DE = [];   // drop spots near its rim, finished after the rock is drawn
       const sx0 = Math.max(0, fx >> 3), sx1 = Math.min(W8 - 1, (fx + w - 1) >> 3), sy0 = Math.max(0, fy >> 3), sy1 = Math.min(H8 - 1, (fy + h - 1) >> 3);
       for (let sy = sy0; sy <= sy1; sy++) for (let sx = sx0; sx <= sx1; sx++) {
         const i = sy * W8 + sx, g = GR[i]; if (!g) continue;
@@ -130,6 +131,8 @@
               if (q < 0) { const pq = (pr + (px + pu) % PW) * 4; u8[kk] = plain[pq]; u8[kk + 1] = plain[pq + 1]; u8[kk + 2] = plain[pq + 2]; }
               if (tags) tags[py * w + px] = 0; drawn++;
             } }
+          let near = false; for (let dy = -6; dy <= 6 && !near; dy++) for (let dx = -6; dx <= 6; dx++) { if (dx && dy) continue; const nx = sx + dx, ny = sy + dy; if (nx >= 0 && ny >= 0 && nx < W8 && ny < H8 && GR[ny * W8 + nx] !== 0xFFFF) { near = true; break; } }
+          if (near) DE.push(sx, sy);
           continue;
         }
         const r = RK[i], f = 1 - O.shade * SH[i] / 15, row = RG[g] * 16, gb = g * 64, rb = r * 256;
@@ -142,6 +145,43 @@
             else { const gi = ground[gb + y * 8 + x], p = (gi ? row + gi : 0) * 3; R = PC[p]; G = PC[p + 1]; B = PC[p + 2]; }
             u8[k] = R * f; u8[k + 1] = G * f; u8[k + 2] = B * f;
             if (tags) tags[py * w + px] = 0; drawn++;
+          } }
+      }
+      // v269 the drop's sides: the 8 px steps where rock or ground meets the far valley become a ragged rim (the same
+      // rock juts out 0-15 px along a rocky wobble; rim pixels copy the nearest rock or ground shifted by whole spots across
+      // the line), and the valley darkens towards the side and lower walls, so the drop reads as a deep cut, not a
+      // flat picture pasted beside the rock. The upper edge keeps its earth bank (face).
+      const isDrop = (X, Y) => { const ax = X >> 3, ay = Y >> 3; return ax < 0 || ay < 0 || ax >= W8 || ay >= H8 || GR[ay * W8 + ax] === 0xFFFF; };
+      for (let e = 0; e < DE.length; e += 2) {
+        const sx = DE[e], sy = DE[e + 1], k = SH[sy * W8 + sx], px0 = sx * 8 - fx, py0 = sy * 8 - fy;
+        const run = (dx, dy) => { for (let n = 1; n <= 6; n++) if (!isDrop((sx + dx * n) * 8, (sy + dy * n) * 8)) return n; return 99; };
+        const kr = run(1, 0), kl = run(-1, 0), kd = run(0, 1), ku = run(0, -1);
+        for (let y = 0; y < 8; y++) { const py = py0 + y; if (py < 0 || py >= h) continue; const Y = sy * 8 + y, du = k * 8 + y;
+          for (let x = 0; x < 8; x++) { const px = px0 + x; if (px < 0 || px >= w) continue;
+            if (!keyAt(px, py)) continue;
+            const X = sx * 8 + x;
+            if (k < 255 && du < FH) { const c = ((X % FW) + FW) % FW; if (face[(du * FW + c) * 4 + 3]) continue; }   // the earth bank stays
+            const kk = off + (py * w + px) * 3;
+            // how far the rock juts out here (0-15 px): slow swells plus a rockier small wobble
+            const R = 7 + 5 * Math.sin(Y * 0.11 + X * 0.05) * Math.sin(Y * 0.047 - X * 0.03 + 1.3) + 2.5 * Math.sin(Y * 0.37 + X * 0.21) + 1.2 * Math.sin(Y * 1.1 - X * 0.7);
+            // nearest rock or ground straight right, left, down or up, from the spot's own counts (cheap on a phone)
+            let best = 99, bx = 0, by = 0; const dR = (7 - x) + 8 * kr - 7, dL = x + 8 * kl - 7, dD = (7 - y) + 8 * kd - 7, dU = y + 8 * ku - 7;
+            if (dR < best) { best = dR; bx = 1; by = 0; } if (dL < best) { best = dL; bx = -1; by = 0; }
+            if (dD < best) { best = dD; bx = 0; by = 1; } if (dU < best) { best = dU; bx = 0; by = -1; }
+            if (best >= 44 || by < 0) continue;   // the upper edge has its earth bank
+            if (best <= R) {   // ragged rim: the rock (or ground) mirrored past the old straight line
+              // shifted whole spots (not mirrored), so the rock's own grain carries on unflipped
+              let m = Math.ceil(best / 8) * 8, qx = px + bx * m, qy = py + by * m;
+              if (qx < 0 || qy < 0 || qx >= w || qy >= h || isDrop(X + bx * m, Y + by * m)) { m += 8; qx = px + bx * m; qy = py + by * m; }
+              if (qx < 0 || qy < 0 || qx >= w || qy >= h || isDrop(X + bx * m, Y + by * m)) { qx = px + bx * best; qy = py + by * best; }
+              const qk = off + (qy * w + qx) * 3, lip = best > R - 1.5 ? 0.55 : 1;
+              u8[kk] = u8[qk] * lip; u8[kk + 1] = u8[qk + 1] * lip; u8[kk + 2] = u8[qk + 2] * lip;
+              continue;
+            }
+            const dd = best - R; if (dd >= 28) continue;
+            let f = 0.38 + 0.62 * Math.pow(dd / 28, 0.7);
+            if (dd < 2) f *= 0.6;   // a dark lip right under the rim
+            u8[kk] *= f; u8[kk + 1] *= f; u8[kk + 2] *= f;
           } }
       }
       dbg.drawn = drawn;
