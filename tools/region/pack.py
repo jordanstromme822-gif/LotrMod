@@ -185,13 +185,13 @@ orc_bands = []
 for x, y, n in P.get('orc_bands', []):
     bx, by = open_spot(x, y); orc_bands.append(struct.pack('<4sHHBBH', b'\x1a\0\0\0', bx, by, n, 4, 0))
 # wolf packs (PACK.json 'wolves': [[x, y, n, mode], ...] region px): the game's own warg spawn record (type 0x22, as
-# Anduin's and Dimholt's: +8 species 0 = warg (kind 48), +9 mode), n wargs spread round the nearest open spot. Only
-# plain wargs: the great warg (+8 = 1, kind 49) draws with OBJ palette 11, which Isengard fills with the Uruk palette.
+# Anduin's and Dimholt's: +8 species 0 = warg (kind 48), 1 = great warg (kind 49), +9 mode), n wargs led by one great
+# warg, spread round the nearest open spot (the great warg's palette is made silver by great-warg-v267.py)
 wolves = []
 for x, y, n, mode in P.get('wolves', []):
     for k in range(n):
         dx, dy = [(0, 0), (40, 18), (-36, 24), (14, -34), (-20, -30), (44, -12)][k % 6]
-        bx, by = open_spot(x + dx, y + dy); wolves.append(struct.pack('<4sHHBBH', b'\x22\0\0\0', bx, by, 0, mode, 0))
+        bx, by = open_spot(x + dx, y + dy); wolves.append(struct.pack('<4sHHBBH', b'\x22\0\0\0', bx, by, 1 if k == 0 else 0, mode, 0))
 def merged(part):
     groups, paths, scripts, tail, cnt = split_part(part)
     out = []
