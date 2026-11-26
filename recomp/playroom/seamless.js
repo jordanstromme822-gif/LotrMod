@@ -315,6 +315,95 @@
     requestAnimationFrame(tick);
   }
 
+  // v270 (plan Phase 2 step 1): doors to and from a big region (one level holding a whole region, such as Isengard in
+  // slot 51) have no map picture to scroll over, so they showed the game's black fade. Now they are covered instead:
+  // the last picture stays on screen while the next level loads behind it. Into or out of a cave, darkness closes in
+  // round the cave mouth ahead of the hero and opens again round the hero on the far side; through a building's door
+  // the outside picture fades straight into the inside (the roof giving way). Page only: 1-player, P2 and online.
+  const REGIONS = new Set(window.__regionLevels || [51]);
+  const CAVES = new Set(window.__caveLevels || [54]);
+  const covered = (from, to) => from !== to && (REGIONS.has(from) || REGIONS.has(to));
+  // The hero on screen (CSS px): the middle of the game's picture, ROW_Y down, a little up to the body (a big region's
+  // camera is not the small maps' one, so this does not go through origin())
+  const heroCss = (view, hero, lv) => {
+    const v = view.v, c = view.css, cam = view.cam;
+    if (!REGIONS.has(lv) && hero) return [c[0] + (hero[0] - cam[0]) / cam[2] * c[2], c[1] + (hero[1] - 10 - cam[1]) / cam[3] * c[3]];
+    return [c[0] + (v.w / 2 - v.sx) / v.sw * c[2], c[1] + (v.h * ROW_Y - 10 - v.sy) / v.sh * c[3]];
+  };
+  function startCover(m, from, to, hero, snap, view) {
+    let el = document.getElementById("seam");
+    if (!document.getElementById("seamCss")) { const st = document.createElement("style"); st.id = "seamCss"; st.textContent = CSS; document.head.appendChild(st); }
+    if (el) el.remove();
+    el = document.createElement("div"); el.id = "seam"; window.GbrHost.canvas.parentElement.appendChild(el);
+    const place = (c, css) => { c.style.position = "absolute"; c.style.left = css[0] + "px"; c.style.top = css[1] + "px"; c.style.width = css[2] + "px"; c.style.height = css[3] + "px"; el.appendChild(c); return c; };
+    // The game's fade may have begun before the door was seen: then the last steady picture stands in
+    const lum = luma();
+    if (good && good.lv === from && performance.now() - good.at < 1500 && lum >= 0 && lum < good.lum * 0.85) { const g = grabGood(view); if (g) snap = g; }
+    const dir = heading(hero, from), css = view.css, k = css[2] / view.v.sw;
+    const hc = heroCss(view, hero, from), focus = [hc[0] + (dir[0] === 0 ? 18 * dir[1] * k : 0), hc[1] + (dir[0] === 1 ? 18 * dir[1] * k : 0)];   // the mouth, a step ahead
+    place(snap, css); snap.style.transformOrigin = (focus[0] - css[0]).toFixed(1) + "px " + (focus[1] - css[1]).toFixed(1) + "px";
+    const shade = document.createElement("div"); shade.style.cssText = "position:absolute;inset:0"; el.appendChild(shade);
+    S = { cover: true, dark: CAVES.has(to) || CAVES.has(from), el, place, shade, snapA: snap, snapB: null, focus, from, to, view, m,
+      phase: 0, t: 0, last: performance.now(), born: performance.now(), loaded: false, pl: -1, steady: 0, wantB: false, online: m.online, paused: false };
+    if (!m.online) window.__seamTurbo = 1;
+    coverDraw(); requestAnimationFrame(coverTick);
+  }
+  // darkness: a soft-edged hole of radius r (CSS px) round point f, black outside it
+  const hole = (sh, f, r, W, H) => {
+    if (r <= 0.5) { sh.style.background = "#000"; return; }
+    const R = Math.max(1, r);
+    sh.style.background = "radial-gradient(circle at " + f[0].toFixed(1) + "px " + f[1].toFixed(1) + "px, rgba(0,0,0,0) " + (R * 0.55).toFixed(1) + "px, rgba(0,0,0,0.85) " + (R * 0.9).toFixed(1) + "px, #000 " + R.toFixed(1) + "px)";
+  };
+  const CLOSE = 0.55, OPEN = 0.65, FADE = 0.5;
+  function coverDraw() {
+    const s = S, W = s.el.clientWidth || 800, H = s.el.clientHeight || 400, far = Math.hypot(W, H) * 1.15;
+    if (s.phase === 0) {   // closing in (a cave) / holding the outside (a door)
+      const u = smooth(s.t / CLOSE);
+      s.snapA.style.transform = "scale(" + (1 + (s.dark ? 0.07 : 0.04) * u).toFixed(4) + ")";
+      if (s.dark) hole(s.shade, s.focus, far * (1 - u), W, H); else s.shade.style.background = "none";
+    } else {               // opening on the far side
+      const u = smooth(s.t / (s.dark ? OPEN : FADE));
+      s.snapB.style.transform = "scale(" + (1.04 - 0.04 * u).toFixed(4) + ")";
+      if (s.dark) { s.snapA.style.opacity = "0"; hole(s.shade, s.focusB, far * u, W, H); }
+      else { s.snapB.style.opacity = u.toFixed(3); s.shade.style.background = "none"; }
+    }
+  }
+  function coverTick() {
+    const s = S; if (!s || !s.cover) return;
+    const now = performance.now(), dt = Math.min(0.05, (now - s.last) / 1000); s.last = now;
+    if (now - s.born > 6000) { finish(false, "time"); return; }
+    if (pin === null) s.t += dt; else { s.t = pin * (s.phase ? OPEN : CLOSE); s.born = now; }
+    coverDraw();
+    if (s.phase === 1 && s.t >= (s.dark ? OPEN : FADE) && pin === null) { finish(true); return; }
+    requestAnimationFrame(coverTick);
+  }
+  function coverAfter(m, st, to, cur, ld, drew) {
+    const s = S, H = window.GbrHost;
+    if (s.phase === 1) return;
+    if (s.wantB) {
+      if (!drew) return;
+      const hero = heroAt(m), view = hero && viewNow(hero, s.to), snap = view && grab(view);
+      if (!snap) { finish(false, "picture"); return; }
+      const f = heroCss(view, hero, s.to);
+      s.focusB = f; snap.style.transformOrigin = (f[0] - view.css[0]).toFixed(1) + "px " + (f[1] - view.css[1]).toFixed(1) + "px";
+      if (!s.dark) snap.style.opacity = "0";
+      s.place(snap, view.css); s.el.appendChild(s.shade);
+      s.snapB = snap; s.wantB = false; window.__seamTurbo = 0;
+      // wait for the darkness to have closed before opening (a quick load), else open now
+      const go = () => { if (S !== s) return; s.phase = 1; s.t = 0; H.holdT = performance.now() + 2000; if (!s.online) { try { m.M._rotk_pause(1); s.paused = true; } catch (e) {} } };
+      if (s.t < CLOSE) { H.holdT = performance.now() + 2000; if (!s.online) { try { m.M._rotk_pause(1); s.paused = true; } catch (e) {} } setTimeout(go, (CLOSE - s.t) * 1000); } else go();
+      return;
+    }
+    H.holdT = performance.now() + 1000;
+    if (st !== 1) { if (performance.now() - s.born > 400) finish(false, "state " + st); return; }
+    if (!s.loaded) { if (cur === s.to && !ld && to === cur && heroAt(m)) s.loaded = true; else return; }
+    window.__rotkLookSnap = 1;   // the new place's light at once (indoors, underground), not eased in after the cover
+    const lum = luma();
+    if (lum > 6 && s.pl > 0 && Math.abs(lum - s.pl) <= Math.max(1, 0.02 * lum)) s.steady++; else s.steady = 0;
+    s.pl = lum;
+    if (s.steady >= 2) { s.wantB = true; H.holdT = 0; }
+  }
+
   // Runs after each game picture is handed to the screen.
   function after(fresh, drew) {
     if (!fresh) return;
@@ -326,7 +415,7 @@
       const inPlay = st === 1 && lastSt === 1 && hero && !busy();
       if (inPlay && to !== cur && cur && to && drew) {   // level 0 = leaving play for the story screens
         const view = viewNow(hero, cur), snap = view && grab(view);
-        if (view && snap) { start(m, cur, to, hero, snap, view); S.m = m; H.holdT = performance.now() + 1000; }
+        if (view && snap) { if (covered(cur, to)) startCover(m, cur, to, hero, snap, view); else start(m, cur, to, hero, snap, view); S.m = m; H.holdT = performance.now() + 1000; }
       } else if (inPlay && ld && good && performance.now() - good.at < 1500) {
         const view = viewNow(good.hero, good.lv, good.v), snap = view && grabGood(view);
         if (snap) { start(m, cur, cur, good.hero, snap, view); S.m = m; H.holdT = performance.now() + 1000; }
@@ -343,6 +432,7 @@
       lastSt = st;
       return;
     }
+    if (S.cover) { coverAfter(m, st, to, cur, ld, drew); return; }
     // A flight is on: the live picture stays still under it until the new screen has settled.
     const s = S;
     if (s.wantB) {
