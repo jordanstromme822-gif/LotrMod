@@ -4,6 +4,7 @@
  "tower_base": 55,
  "campsite": 50,
  "tunnel": 54,
+ "interiors": {"54": "cave", "57": "building"},
  "join_block": "Flooded Field + Tower Base",
  "join_TX": 58,
  "join_FY": 89,

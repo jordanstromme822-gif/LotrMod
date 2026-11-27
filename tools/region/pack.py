@@ -7,6 +7,9 @@ set; the engine (bm_frame, 'BMP2' table) loads the set of the zone the local her
 tile within "margin" cells above and below it, so the screen never shows a tile the set lacks. Every tile keeps one
 VRAM slot in all sets (slots are shared between tiles that never meet in one set), so one map works for all zones.
 
+PACK.json 'interiors' ({level: 'cave' | 'building'}) names the caves and buildings entered from the region; the page
+step (recomp/playroom/mountains-update.py) gives them covered doors.
+
 Objects: the joined Flooded Field + Tower Base block keeps what tools/join/level.py kept (Flooded Field's parts, Tower
 Base's orcs, enemies, ladders and door to the tower levels) plus Tower Base's tunnel door (to the Orthanc Tunnel); the
 Campsite block adds its own props and doors; PACK.json 'orc_bands' adds orc spawns along the roads.
@@ -300,5 +303,10 @@ info = dict(slot=SLOT, base=BASE, size=len(out), cells=[W, H], zones=ZONES, slot
             doors=[[i, struct.unpack('<HH', it[4:8]), it[0xB], it[0xA]] for i, part in enumerate(newparts[1:], 1) for g in split_part(part)[0] for it in g['items'] if it[0] == 3],
             triggers=[[i, struct.unpack('<HH', it[4:8])] for i, part in enumerate(newparts[1:], 1) for g in split_part(part)[0] for it in g['items'] if it[0] == 0x12],
             level_entry=[hex(x) for x in entry], object_entry=[hex(x) for x in obj])
+# caves and buildings entered from the region (PACK.json 'interiors': {level: 'cave' | 'building'}): the page covers
+# their doors (darkness closing in / the doorway's shade) instead of a black screen; any other door target is a
+# change of region (or the story screens, level 0)
+info['interiors'] = {str(k): v for k, v in P.get('interiors', {}).items()}
+for d in sorted({d[2] for d in info['doors']} - {0} - {int(k) for k in info['interiors']}): print('door to level', d, 'is not an interior: a change of region')
 json.dump(info, open(os.path.join(out_dir, 'region.json'), 'w'), indent=1)
 print(json.dumps({k: v for k, v in info.items() if k not in ('level_entry',)}))
