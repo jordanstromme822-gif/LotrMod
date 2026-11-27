@@ -340,7 +340,7 @@
     const lum = luma();
     if (good && good.lv === from && performance.now() - good.at < 1500 && lum >= 0 && lum < good.lum * 0.85) { const g = grabGood(view); if (g) snap = g; }
     const dir = heading(hero, from), css = view.css, k = css[2] / view.v.sw;
-    const hc = heroCss(view, hero, from), focus = [hc[0] + (dir[0] === 0 ? 18 * dir[1] * k : 0), hc[1] + (dir[0] === 1 ? 18 * dir[1] * k : 0)];   // the mouth, a step ahead
+    const hc = heroCss(view, hero, from), focus = [hc[0] + (dir[0] === 0 ? 6 * dir[1] * k : 0), hc[1] + (dir[0] === 1 ? 6 * dir[1] * k : 0)];   // the hero, leaning into the mouth
     place(snap, css); snap.style.transformOrigin = (focus[0] - css[0]).toFixed(1) + "px " + (focus[1] - css[1]).toFixed(1) + "px";
     const shade = document.createElement("div"); shade.style.cssText = "position:absolute;inset:0"; el.appendChild(shade);
     S = { cover: true, dark: CAVES.has(to) || CAVES.has(from), el, place, shade, snapA: snap, snapB: null, focus, from, to, view, m,
@@ -348,7 +348,7 @@
     if (!m.online) window.__seamTurbo = 1;
     coverDraw(); requestAnimationFrame(coverTick);
   }
-  // darkness: a soft-edged hole of radius r (CSS px) round point f, black outside it
+  // darkness: a soft-edged hole of radius r (CSS px) round point f, black outside it (the snapshot shows inside it)
   const hole = (sh, f, r, W, H) => {
     if (r <= 0.5) { sh.style.background = "#000"; return; }
     const R = Math.max(1, r);
@@ -356,16 +356,19 @@
   };
   const CLOSE = 0.55, OPEN = 0.65, FADE = 0.5;
   function coverDraw() {
-    const s = S, W = s.el.clientWidth || 800, H = s.el.clientHeight || 400, far = Math.hypot(W, H) * 1.15;
+    const s = S, W = s.el.clientWidth || 800, H = s.el.clientHeight || 400, far = Math.hypot(W, H) * 1.15, rMin = far * 0.085;   // the hero stays in a small pool of light while the cave loads, never a black screen
     if (s.phase === 0) {   // closing in (a cave) / holding the outside (a door)
       const u = smooth(s.t / CLOSE);
       s.snapA.style.transform = "scale(" + (1 + (s.dark ? 0.07 : 0.04) * u).toFixed(4) + ")";
-      if (s.dark) hole(s.shade, s.focus, far * (1 - u), W, H); else s.shade.style.background = "none";
+      if (s.dark) hole(s.shade, s.focus, rMin + (far - rMin) * (1 - u), W, H); else s.shade.style.background = "none";
     } else {               // opening on the far side
       const u = smooth(s.t / (s.dark ? OPEN : FADE));
       s.snapB.style.transform = "scale(" + (1.04 - 0.04 * u).toFixed(4) + ")";
-      if (s.dark) { s.snapA.style.opacity = "0"; hole(s.shade, s.focusB, far * u, W, H); }
-      else { s.snapB.style.opacity = u.toFixed(3); s.shade.style.background = "none"; }
+      if (s.dark) { s.snapA.style.opacity = "0"; hole(s.shade, s.focusB, rMin + (far - rMin) * u, W, H); }
+      else {   // through the doorway: the inside comes up as the outside goes, dipping into the doorway's shade on the way
+        s.snapB.style.opacity = u.toFixed(3); s.snapA.style.opacity = (1 - u).toFixed(3); s.snapA.style.transform = "scale(" + (1.04 + 0.03 * u).toFixed(4) + ")";
+        s.shade.style.background = "rgba(0,0,0," + (0.45 * Math.sin(Math.PI * u)).toFixed(3) + ")";
+      }
     }
   }
   function coverTick() {
