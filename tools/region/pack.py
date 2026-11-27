@@ -218,6 +218,15 @@ def shift(e, dx, dy):
     x, y = struct.unpack('<HH', e[:4]); return struct.pack('<HH', x + dx, y + dy) + e[4:]
 ents = [shift(e, FFX, FFY) for e in fents]                     # entry 0: Flooded Field's (both players)
 ents += [shift(e, TBX, TBY) for e in tents if e[4] == 1]       # entry 1: Tower Base's north entry
+# entry 2 (v274 campfire travel): beside the Campsite's campfire (its 0x11 record of kind 1), both players a step below
+# the fire facing it, where travelling to this campsite puts you
+fires = [struct.unpack('<HH', it[4:8]) for g in split_part(cparts[1])[0] for it in g['items'] if it[0] == 0x11 and it[8] == 1]
+assert fires, 'no campfire in the Campsite'
+FIREX, FIREY = fires[0][0] + CPX, fires[0][1] + CPY
+for pl, (dx, dy) in enumerate([(-20, 55), (20, 58)]):
+    x, y = FIREX + dx, FIREY + dy
+    assert GA[y // 8][x // 8][0] and not (GC[y // 8][x // 8] & 7) in (1, 2), ('campfire entry blocked', x, y)
+    ents.append(struct.pack('<HHBBBB', x, y, 2, pl, 2, 0xff))
 sub = bytes([fsub[0], 2, fsub[2], tsub[3]]) + bytes(fsub[3:8]) + b'\xff\xff\xff'    # as tools/join/level.py
 assert len(sub) == 0xC
 
@@ -297,7 +306,7 @@ tables = struct.pack('<I', LEVELS - 0x08000000 + 0x4C * SLOT) + struct.pack('<19
 open(os.path.join(out_dir, 'tables.bin'), 'wb').write(tables)
 info = dict(slot=SLOT, base=BASE, size=len(out), cells=[W, H], zones=ZONES, slotsA=nA, slotsB=nB, tilesA=len(ordA), tilesB=len(ordB),
             metasA=len(metaA), metasB=len(metaB), walk_defs=len(defs), defs_remapped=len(remap), spots_changed=changed,
-            tower_base_px=[TBX, TBY], flooded_field_px=[FFX, FFY], campsite_px=[CPX, CPY],
+            campfire_px=[FIREX, FIREY], tower_base_px=[TBX, TBY], flooded_field_px=[FFX, FFY], campsite_px=[CPX, CPY],
             entries=[struct.unpack('<HH', e[:4]) + (e[4:].hex(),) for e in ents], tb_items=len(tb_items),
             camp_items=sum(len(g['items']) for g in camp_groups), orc_bands=[list(struct.unpack('<HHB', b[4:9])) for b in orc_bands], wolves=[list(struct.unpack('<HHB', b[4:9])) for b in wolves], checks=[[hex(a), hex(v)] for a, v in checks],
             doors=[[i, struct.unpack('<HH', it[4:8]), it[0xB], it[0xA]] for i, part in enumerate(newparts[1:], 1) for g in split_part(part)[0] for it in g['items'] if it[0] == 3],
