@@ -4,7 +4,8 @@ python3 recomp/playroom/mountains-update.py IN.html PACK_DIR MTN_DIR OUT_DIR V [
 
 Swaps the region data for PACK_DIR's (region-v249.py), puts in the current recomp/playroom/mountain-layer.js with its
 config from MTN_DIR/mountains.json, bumps the layer's files and the 3D World picture (maps/x/R51.webp) to ?v=V and copies
-the layer's files into OUT_DIR/maps/x/. DROP_DIR (tools/region/drop.py, water.py) adds the far valley's pictures (M51p.png, M51f.png) and the flood water (M51w.png).
+the layer's files into OUT_DIR/maps/x/. The region's caves and buildings (region.json 'interiors') go to the page's
+covered doors (window.__caveLevels, __interiorLevels). DROP_DIR (tools/region/drop.py, water.py) adds the far valley's pictures (M51p.png, M51f.png) and the flood water (M51w.png).
 """
 import json, os, re, shutil, subprocess, sys
 src, pdir, mdir, odir, V = sys.argv[1:6]; V = int(V); ddir = sys.argv[6] if len(sys.argv) > 6 else None
@@ -28,6 +29,14 @@ html = html[:a] + js + html[b:]
 pat = re.compile(r'src: "maps/x/R51\.webp\?v=\d+"')
 assert len(pat.findall(html)) == 1
 html = pat.sub('src: "maps/x/R51.webp?v=%d"' % V, html, 1)
+# v272 (plan Phase 2 step 2): the region's caves and buildings from the pack (PACK.json 'interiors') get covered doors
+# (recomp/playroom/seamless.js reads these before it starts)
+inter = pinfo.get('interiors', {})
+tag = '<script id="regionDoors">window.__regionLevels = %s; window.__caveLevels = %s; window.__interiorLevels = %s;</script>\n' % (
+    json.dumps([pinfo['slot']]), json.dumps(sorted(int(k) for k, v in inter.items() if v == 'cave')), json.dumps(sorted(int(k) for k in inter)))
+html = re.sub(r'<script id="regionDoors">.*?</script>\n', '', html, flags=re.S)
+assert html.count('<script id="seamlessJs">') == 1
+html = html.replace('<script id="seamlessJs">', tag + '<script id="seamlessJs">', 1)
 open(os.path.join(odir, 'index.html'), 'w', encoding='utf-8').write(html)
 for a, b in (('mountains.bin', 'M51data.wasm'), ('mountains-rock.png', 'M51r.png'), ('mountains-ground.png', 'M51g.png')):
     shutil.copy(os.path.join(mdir, a), os.path.join(odir, 'maps', 'x', b))
