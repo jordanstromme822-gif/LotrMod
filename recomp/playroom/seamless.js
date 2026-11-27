@@ -323,6 +323,11 @@
   const REGIONS = new Set(window.__regionLevels || [51]);
   const CAVES = new Set(window.__caveLevels || [54]);
   const covered = (from, to) => from !== to && (REGIONS.has(from) || REGIONS.has(to));
+  // v273 (plan Phase 2 step 3): a door into another region is the one black screen left, and it says where you are
+  // going: the screen dims, the region's name comes up in the menus' gold letters, and it fades away as you arrive
+  const INTERIORS = new Set(window.__interiorLevels || [54, 57]);
+  const regionName = (l) => { try { const D = window.__smData; return (D && D.region && D.region(l)) || ""; } catch (e) { return ""; } };
+  const regionChange = (from, to) => !INTERIORS.has(to) && !INTERIORS.has(from) && regionName(from) !== regionName(to) && !!regionName(to);
   // The hero on screen (CSS px): the middle of the game's picture, ROW_Y down, a little up to the body (a big region's
   // camera is not the small maps' one, so this does not go through origin())
   const heroCss = (view, hero, lv) => {
@@ -343,7 +348,16 @@
     const hc = heroCss(view, hero, from), focus = [hc[0] + (dir[0] === 0 ? 6 * dir[1] * k : 0), hc[1] + (dir[0] === 1 ? 6 * dir[1] * k : 0)];   // the hero, leaning into the mouth
     place(snap, css); snap.style.transformOrigin = (focus[0] - css[0]).toFixed(1) + "px " + (focus[1] - css[1]).toFixed(1) + "px";
     const shade = document.createElement("div"); shade.style.cssText = "position:absolute;inset:0"; el.appendChild(shade);
-    S = { cover: true, dark: CAVES.has(to) || CAVES.has(from), el, place, shade, snapA: snap, snapB: null, focus, from, to, view, m,
+    let banner = null;
+    if (regionChange(from, to)) {
+      banner = document.createElement("div");
+      banner.style.cssText = "position:absolute;left:0;right:0;top:38%;transform:translateY(-50%);text-align:center;opacity:0;pointer-events:none;" +
+        "font-family:Cinzel,'Trajan Pro',Georgia,serif;font-weight:700;letter-spacing:.14em;color:#ffe08a;text-shadow:0 2px 6px #000,0 0 18px rgba(216,162,64,.35)";
+      const nm = document.createElement("div"); nm.textContent = regionName(to); nm.style.cssText = "font-size:clamp(22px,6vw,40px)";
+      const rule = document.createElement("div"); rule.style.cssText = "margin:8px auto 0;width:min(46%,260px);height:2px;background:linear-gradient(90deg,transparent,#c99a46,transparent)";
+      banner.appendChild(nm); banner.appendChild(rule); el.appendChild(banner);
+    }
+    S = { cover: true, dark: CAVES.has(to) || CAVES.has(from), region: !!banner, banner, el, place, shade, snapA: snap, snapB: null, focus, from, to, view, m,
       phase: 0, t: 0, last: performance.now(), born: performance.now(), loaded: false, pl: -1, steady: 0, wantB: false, online: m.online, paused: false };
     if (!m.online) window.__seamTurbo = 1;
     coverDraw(); requestAnimationFrame(coverTick);
@@ -354,9 +368,14 @@
     const R = Math.max(1, r);
     sh.style.background = "radial-gradient(circle at " + f[0].toFixed(1) + "px " + f[1].toFixed(1) + "px, rgba(0,0,0,0) " + (R * 0.55).toFixed(1) + "px, rgba(0,0,0,0.85) " + (R * 0.9).toFixed(1) + "px, #000 " + R.toFixed(1) + "px)";
   };
-  const CLOSE = 0.55, OPEN = 0.65, FADE = 0.5;
+  const CLOSE = 0.55, OPEN = 0.65, FADE = 0.5, REVEAL = 1.1, HOLD_NAME = 1.2;
   function coverDraw() {
     const s = S, W = s.el.clientWidth || 800, H = s.el.clientHeight || 400, far = Math.hypot(W, H) * 1.15, rMin = far * 0.085;   // the hero stays in a small pool of light while the cave loads, never a black screen
+    if (s.region) {   // another region: dim to black under its name, then open on the new place
+      if (s.phase === 0) { const u = smooth(s.t / CLOSE); s.shade.style.background = "rgba(0,0,0," + u.toFixed(3) + ")"; s.banner.style.opacity = smooth((s.t - 0.2) / 0.5).toFixed(3); }
+      else { const u = smooth(s.t / REVEAL); s.snapA.style.opacity = "0"; s.snapB.style.opacity = "1"; s.shade.style.background = "rgba(0,0,0," + (1 - u).toFixed(3) + ")"; s.banner.style.opacity = (1 - smooth((s.t / REVEAL - 0.25) / 0.6)).toFixed(3); }   // the name lingers as the place comes up
+      return;
+    }
     if (s.phase === 0) {   // closing in (a cave) / holding the outside (a door)
       const u = smooth(s.t / CLOSE);
       s.snapA.style.transform = "scale(" + (1 + (s.dark ? 0.07 : 0.04) * u).toFixed(4) + ")";
@@ -373,11 +392,11 @@
   }
   function coverTick() {
     const s = S; if (!s || !s.cover) return;
-    const now = performance.now(), dt = Math.min(0.05, (now - s.last) / 1000); s.last = now;
+    const now = performance.now(), dt = Math.min(0.25, (now - s.last) / 1000); s.last = now;   // real time: a slow phone still ends on time
     if (now - s.born > 6000) { finish(false, "time"); return; }
     if (pin === null) s.t += dt; else { s.t = pin * (s.phase ? OPEN : CLOSE); s.born = now; }
     coverDraw();
-    if (s.phase === 1 && s.t >= (s.dark ? OPEN : FADE) && pin === null) { finish(true); return; }
+    if (s.phase === 1 && s.t >= (s.region ? REVEAL : s.dark ? OPEN : FADE) && pin === null) { finish(true); return; }
     requestAnimationFrame(coverTick);
   }
   function coverAfter(m, st, to, cur, ld, drew) {
@@ -390,11 +409,12 @@
       const f = heroCss(view, hero, s.to);
       s.focusB = f; snap.style.transformOrigin = (f[0] - view.css[0]).toFixed(1) + "px " + (f[1] - view.css[1]).toFixed(1) + "px";
       if (!s.dark) snap.style.opacity = "0";
-      s.place(snap, view.css); s.el.appendChild(s.shade);
+      s.place(snap, view.css); s.el.appendChild(s.shade); if (s.banner) s.el.appendChild(s.banner);   // the name stays on top
       s.snapB = snap; s.wantB = false; window.__seamTurbo = 0;
       // wait for the darkness to have closed before opening (a quick load), else open now
       const go = () => { if (S !== s) return; s.phase = 1; s.t = 0; H.holdT = performance.now() + 2000; if (!s.online) { try { m.M._rotk_pause(1); s.paused = true; } catch (e) {} } };
-      if (s.t < CLOSE) { H.holdT = performance.now() + 2000; if (!s.online) { try { m.M._rotk_pause(1); s.paused = true; } catch (e) {} } setTimeout(go, (CLOSE - s.t) * 1000); } else go();
+      const need = s.region ? HOLD_NAME : CLOSE;   // the name stays up long enough to read
+      if (s.t < need) { H.holdT = performance.now() + 2000; if (!s.online) { try { m.M._rotk_pause(1); s.paused = true; } catch (e) {} } setTimeout(go, (need - s.t) * 1000); } else go();
       return;
     }
     H.holdT = performance.now() + 1000;
