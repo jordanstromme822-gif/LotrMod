@@ -39,7 +39,7 @@
     if (sz) { x = Math.max(-mx, Math.min(sz[0] - 240 - mx, x)); y = Math.max(-my, Math.min(sz[1] - 174 - my, y)); }
     return [x, y];
   };
-  let pin = null, trail = [], lay = null, layTried = false, S = null, good = null, pre = {}, lastSt = -1, lastLv = -1, hookT = 0;
+  let travel = null, pin = null, trail = [], lay = null, layTried = false, S = null, good = null, pre = {}, lastSt = -1, lastLv = -1, hookT = 0;
 
   const layout = () => {
     if (lay || layTried) return lay;
@@ -335,7 +335,8 @@
     if (!REGIONS.has(lv) && hero) return [c[0] + (hero[0] - cam[0]) / cam[2] * c[2], c[1] + (hero[1] - 10 - cam[1]) / cam[3] * c[3]];
     return [c[0] + (v.w / 2 - v.sx) / v.sw * c[2], c[1] + (v.h * ROW_Y - 10 - v.sy) / v.sh * c[3]];
   };
-  function startCover(m, from, to, hero, snap, view) {
+  // v274 campfire travel: tv = { name, sub } puts that name (and a smaller line under it) over the black, as a region change
+  function startCover(m, from, to, hero, snap, view, tv) {
     let el = document.getElementById("seam");
     if (!document.getElementById("seamCss")) { const st = document.createElement("style"); st.id = "seamCss"; st.textContent = CSS; document.head.appendChild(st); }
     if (el) el.remove();
@@ -349,15 +350,17 @@
     place(snap, css); snap.style.transformOrigin = (focus[0] - css[0]).toFixed(1) + "px " + (focus[1] - css[1]).toFixed(1) + "px";
     const shade = document.createElement("div"); shade.style.cssText = "position:absolute;inset:0"; el.appendChild(shade);
     let banner = null;
-    if (regionChange(from, to)) {
+    if (tv || regionChange(from, to)) {
       banner = document.createElement("div");
       banner.style.cssText = "position:absolute;left:0;right:0;top:38%;transform:translateY(-50%);text-align:center;opacity:0;pointer-events:none;" +
         "font-family:Cinzel,'Trajan Pro',Georgia,serif;font-weight:700;letter-spacing:.14em;color:#ffe08a;text-shadow:0 2px 6px #000,0 0 18px rgba(216,162,64,.35)";
-      const nm = document.createElement("div"); nm.textContent = regionName(to); nm.style.cssText = "font-size:clamp(22px,6vw,40px)";
+      const nm = document.createElement("div"); nm.textContent = tv ? tv.name : regionName(to); nm.style.cssText = "font-size:clamp(22px,6vw,40px)";
       const rule = document.createElement("div"); rule.style.cssText = "margin:8px auto 0;width:min(46%,260px);height:2px;background:linear-gradient(90deg,transparent,#c99a46,transparent)";
-      banner.appendChild(nm); banner.appendChild(rule); el.appendChild(banner);
+      banner.appendChild(nm); banner.appendChild(rule);
+      if (tv && tv.sub) { const sb = document.createElement("div"); sb.textContent = tv.sub; sb.style.cssText = "margin-top:8px;font-size:clamp(12px,3.2vw,18px);font-weight:600;letter-spacing:.2em;color:#e6c27a"; banner.appendChild(sb); }
+      el.appendChild(banner);
     }
-    S = { cover: true, dark: CAVES.has(to) || CAVES.has(from), region: !!banner, banner, el, place, shade, snapA: snap, snapB: null, focus, from, to, view, m,
+    S = { cover: true, travel: !!tv, dark: CAVES.has(to) || CAVES.has(from), region: !!banner, banner, el, place, shade, snapA: snap, snapB: null, focus, from, to, view, m,
       phase: 0, t: 0, last: performance.now(), born: performance.now(), loaded: false, pl: -1, steady: 0, wantB: false, online: m.online, paused: false };
     if (!m.online) window.__seamTurbo = 1;
     coverDraw(); requestAnimationFrame(coverTick);
@@ -418,7 +421,7 @@
       return;
     }
     H.holdT = performance.now() + 1000;
-    if (st !== 1) { if (performance.now() - s.born > 400) finish(false, "state " + st); return; }
+    if (st !== 1) { if (!s.travel && performance.now() - s.born > 400) finish(false, "state " + st); return; }   // a campfire warp passes through the load states
     if (!s.loaded) { if (cur === s.to && !ld && to === cur && heroAt(m)) s.loaded = true; else return; }
     window.__rotkLookSnap = 1;   // the new place's light at once (indoors, underground), not eased in after the cover
     const lum = luma();
@@ -433,6 +436,14 @@
     const m = mem(); if (!m) return;
     const st = m.r8(0x030041B0), to = m.r8(0x030041F8), cur = m.r8(0x03004174), ld = m.r8(0x0203FFF1);
     const H = window.GbrHost;
+    if (!S && travel && drew) {   // v274 campfire travel: hold this picture under the black first, then the game is sent on
+      const tv = travel; travel = null;
+      const hero = heroAt(m), view = hero && viewNow(hero, cur), snap = view && grab(view);
+      if (view && snap) { startCover(m, cur, tv.to, hero, snap, view, tv); S.m = m; H.holdT = performance.now() + 1000; }
+      try { tv.go(); } catch (e) { finish(false, "travel"); }
+      return;
+    }
+    if (travel && performance.now() - travel.at > 1500) { const tv = travel; travel = null; try { tv.go(); } catch (e) {} }   // no picture came: go anyway
     if (!S) {
       const hero = st === 1 ? heroAt(m) : null, lum = drew ? luma() : -1;
       const inPlay = st === 1 && lastSt === 1 && hero && !busy();
@@ -497,5 +508,8 @@
   };
   if (!hook()) hookT = setInterval(() => { if (hook()) clearInterval(hookT); }, 250);
   // pin(u) holds the camera at u (0..1) for screenshots and tests; pin(null) lets it go on.
-  window.__seam = { get on() { return !!S; }, get ready() { return !!(S && S.haveB); }, pin: (u) => { pin = u === null || u === undefined ? null : +u; }, finish, layout };
+  window.__seam = { get on() { return !!S; }, get ready() { return !!(S && S.haveB); }, pin: (u) => { pin = u === null || u === undefined ? null : +u; }, finish, layout,
+    // v274: travel({ to, name, sub, go }) covers the screen with name (and sub) over black, runs go() (the game's level
+    // change) and opens on the new place once it is in
+    travel: (tv) => { travel = Object.assign({ at: performance.now() }, tv); } };
 })();
