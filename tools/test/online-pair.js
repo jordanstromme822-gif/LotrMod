@@ -94,7 +94,11 @@ const STUB = ([who, save]) => {
   if (process.env.HOOK) for (const p of [A, B]) console.log('hook', await p.evaluate(fs.readFileSync(process.env.HOOK, 'utf8')).catch(e => 'err ' + e.message));
   if (process.env.PROBE) console.log('probe A', JSON.stringify(await A.evaluate(fs.readFileSync(process.env.PROBE, 'utf8')).catch(e => 'err ' + e.message)));
   if (process.env.GPROBE) console.log('probe B', JSON.stringify(await B.evaluate(fs.readFileSync(process.env.GPROBE, 'utf8')).catch(e => 'err ' + e.message)));
-  for (let k = 0; k < 6; k++) { await A.waitForTimeout(+(process.env.WAIT || 30000) / 6); await A.screenshot({ path: SHOT + '-A' + (k + 1) + '.jpg', type: 'jpeg', quality: 60 }); await B.screenshot({ path: SHOT + '-B' + (k + 1) + '.jpg', type: 'jpeg', quality: 60 }); console.log('t' + k, JSON.stringify([await st(A), await st(B)])); }
+  // WALK="<ms before>:<key>:<ms held>;..." holds keys on both pages (as both players), in the background of the pictures
+  if (process.env.WALK) (async () => { for (const st of process.env.WALK.split(';')) { const [pre, key, ms] = st.split(':'); await A.waitForTimeout(+pre); await Promise.all([A.keyboard.down(key), B.keyboard.down(key)]); await A.waitForTimeout(+ms); await Promise.all([A.keyboard.up(key), B.keyboard.up(key)]); } })().catch(() => {});
+  // TICKS pictures over WAIT ms; TPROBE (a JS file) is evaluated in the host page at each and logged
+  const TICKS = +(process.env.TICKS || 6), tp = process.env.TPROBE ? fs.readFileSync(process.env.TPROBE, 'utf8') : null;
+  for (let k = 0; k < TICKS; k++) { await A.waitForTimeout(+(process.env.WAIT || 30000) / TICKS); await A.screenshot({ path: SHOT + '-A' + (k + 1) + '.jpg', type: 'jpeg', quality: 60 }); await B.screenshot({ path: SHOT + '-B' + (k + 1) + '.jpg', type: 'jpeg', quality: 60 }); console.log('t' + k, JSON.stringify([await st(A), await st(B)]), tp ? JSON.stringify(await A.evaluate(tp).catch(e => 'err ' + e.message)) : ''); }
   console.log('sync after', JSON.stringify(await sync(A)), JSON.stringify(await sync(B)));
   if (process.env.HOOK) for (const [w, p] of [['A', A], ['B', B]]) console.log(w, 'starts', JSON.stringify(await p.evaluate(() => window.__startLog).catch(() => null)));
   for (const [w, p] of [['A', A], ['B', B]]) console.log(w, 'log', JSON.stringify(await p.evaluate(() => (window.__wideLog || []).slice(-8)).catch(() => null)));
