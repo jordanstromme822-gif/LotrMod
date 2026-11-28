@@ -224,6 +224,7 @@ or `0x08` (ROM as the CPU sees it).
 - 0x9E820-0x9E877: save slot lock (tools/nodupe.py).
 - 0x9EA00-0x9EC47: skill point refund (tools/skillrefund.py).
 - 0x89400-0x8946F: Frodo's Crossbow skill text (tools/orcslots.py, v125); the Orc Head code before it now runs to about 0x83E00.
+- 0x93000-0x933FF: save on exit (tools/autosave, Play Room v278, put in by the page). EWRAM 0x0203F3E0-0x0203F3E5 are its bytes.
 - 0x9F000-0x9FFFF: free again (the Orc Head code moved to the French bank in v120). 0x7F000-0x844EB: Orc Head slots and tiers code (v126; Frodo's skill code included), picture and palettes (tools/orcslots.py); the French bank runs to 0x89863. The "Spanish" bank the tools use is really the Italian one (language table 0x289A10: En 0x7500C, Fr 0x7EE28, De 0x89864, Es 0x93C6C, It 0x9E330); French, German and Spanish are free as well.
 
 ## Arrows and quivers (Jordan, 2026-11-08)
@@ -409,3 +410,23 @@ Built by `tools/siege/build.py ROM OUT --base 0x1500000`, put in the page by `re
 - Water-mode levels keep BG1 water at char 0 slots 944-1007, so layer A tile sets must stay under 944 and B under 512. A joined map bigger than that swaps tile sets by hero y: bm_frame (hooked at 0x08031ED4, 0x08031ED2 belongs to orcslots) reads the 'BMAP' table at 0x09700000 and reloads both lists with 0x080324C8 when a check halfword in VRAM is not the expected one. Tile lists must be in ascending tileset order.
 - Flooded Field (51) + Tower Base (55) = level slot 51, 83x129 cells, data at ROM 0x1700000 (tools/join: fill.py -> level.py -> recomp/playroom/join-v244.py). Ground between maps: gravel8.py (8 px tiles chosen from the pairs seen in the maps), shore8.py (water closes in a curved shore), objects cut by the old edges cleared, Flooded Field's wall gets the end it has at its own gap. 8 px drawing makes most cells unique (about 10,000 layer A metatiles); that is fine from ROM.
 - Headless test runs about 3 fps, so walking tests barely move. Check walking data by comparing collision classes (land/water/shore) of the new ground with the original maps instead.
+
+## Save on exit (Play Room v278, 2026-11-28)
+
+- `tools/autosave/autosave.c` at 0x08093000 saves the hero into the session's slot the way the pause menu's Save Game
+  does (0x08030F08(1): 0x0804711C, packer 0x0803C6CC(HDRS + 0x70 slot, [0x03004174]), the slot write (orcslots
+  save_wrap), 0x0803CD6C, 0x08047128) without the slot screen. The session's slot is the nodupe lock (0x0203FFF0 =
+  slot + 1, set by Load Game and Save), its page SESSPG. A new game that was never saved has no slot.
+- The state dispatcher 0x0803322C calls table[state].update (table 0x0806C828, 12 bytes per state: init, update,
+  exit) through the bx-r0 veneer 0x0804E090. Pointing state 1 (0x6C838) and state 0x0A (0x6C8A4) at interpreted
+  hooks works in the 1-player Wide engine with no engine rebuild and no slowdown. State 0x10's update (0x6C8EC) is
+  never called through the table in the Wide engine, so the pause save happens in the gameplay update that ends with
+  0x90 pending (pause asked for). The 2-player engine in link mode stops on these hooks ("dispatch miss"), so the page
+  gives link games the original table entries (window.__linkRom).
+- Pending state byte 0x030041F0: 0x81 level change, 0x8A Backpack, 0x90 pause menu, then the bare state number once
+  it is running.
+- The Wide engine writes the save chip to /data/saves/rotk-modded.sav a few seconds (wall clock) after the game
+  writes it; ticks alone don't flush it. On leaving, the page builds the file itself from the same memory (EEPROM
+  blocks of 8 bytes stored reversed: header 0-7, slot 8 + 14 slot or page 2 65 + 14 slot with heads 121 + slot,
+  arrows 125 + 4 page + slot, stash 133 + 3 (4 page + slot)); checked byte for byte against the engine's file.
+
