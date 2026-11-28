@@ -175,15 +175,15 @@
   }
   function close() { if (!menu || menu.hidden) return; menu.hidden = true; menu.innerHTML = ""; if (paused) pause(false); }
   window.addEventListener("keydown", (e) => { if (menu && !menu.hidden && menu.__keys) menu.__keys(e); }, true);
-  // The game's own level change to the campfire, as a door makes it (0x08014D40 -> 0x08033170(1, 0, level)): entry and
-  // level at IWRAM 0x03003F68, then state 1 pending (0x81), mode 0, the level (mode 5, a save's load, stops a link game)
+  // The game's own level change to the campfire, as a door makes it (0x08014D40 -> 0x08033170(1, 0, level)): each player's
+  // arrival entry at IWRAM 0x03003F68 + player (0x0803C634), then state 1 pending (0x81), mode 0, the level (mode 5, a save's load, stops a link game)
   // Online both games go, on the same frame: the engine takes the page's writes back out and sends them with the
   // buttons, and both pages write them before that frame (v180 ops)
   const warp = (m, c) => {
     const bases = m.online && m.M._rotk_link_iwram ? [0, 1].map((g) => m.M._rotk_link_iwram(g)) : [m.iw];
     for (const iw of bases) {
       const w32 = (o, v) => { for (let i = 0; i < 4; i++) m.H8[iw + o + i] = (v >>> (8 * i)) & 255; };
-      m.H8[iw + 0x3F68] = c[5]; m.H8[iw + 0x3F69] = c[4];
+      m.H8[iw + 0x3F68] = c[5]; m.H8[iw + 0x3F69] = c[5];
       w32(0x41F8, c[4]); w32(0x41F4, 0); w32(0x41FC, 0); w32(0x4200, 0); w32(0x4204, 0); w32(0x41F0, 0x81);
     }
   };
@@ -229,7 +229,7 @@
       const k = heroKey(m), c = k && last[k] && CAMPS.find((x) => x[0] === last[k]);
       if (!c) return;
       const bases = m.online && m.M._rotk_link_iwram ? [0, 1].map((g) => m.M._rotk_link_iwram(g)) : [m.iw];
-      for (const iw of bases) { m.H8[iw + 0x3F68] = c[5]; m.H8[iw + 0x3F69] = c[4]; m.H8[iw + 0x41F8] = c[4]; }
+      for (const iw of bases) { m.H8[iw + 0x3F68] = c[5]; m.H8[iw + 0x3F69] = c[5]; m.H8[iw + 0x41F8] = c[4]; }
       if (m.linkOn && !m.online) arrive = { lv: c[4], t: performance.now() };
       try { (window.__wideLog || (window.__wideLog = [])).push("campfire: fell, waking at " + c[0] + " (level " + c[4] + ")"); } catch (e) {}
     } catch (e) {}
