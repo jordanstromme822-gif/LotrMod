@@ -6,7 +6,8 @@
 // so, and it is kept for that saved hero (this device and the account). Standing by any lit campfire shows a Travel
 // button; it opens the list of the hero's lit campfires, and picking one dims the screen under that place's name while
 // the game's own level change takes the hero (and P2) there, to the fireside (in a region, the region's campfire entry:
-// tools/region/pack.py entry 2). Page only.
+// tools/region/pack.py entry 2). Page only. v275: online too (both games change level on the same frame, as through a
+// door); the 2-player online test is tools/test/online-pair.js.
 (() => {
   // [id, level the fire is in, fire x, fire y, level to travel to, its entry]  (fires from the levels' 0x11 records)
   const CAMPS = [
@@ -55,13 +56,14 @@
   const p2Key = () => { try { const j = JSON.parse(sessionStorage.getItem("rotk-p2") || "null"); return j && j.p2 >= 0 && j.p2 < 4 ? "p" + (j.p2pg | 0) + "s" + j.p2 : null; } catch (e) { return null; } };
 
   // ---- lit campfires, per saved hero (this device + the account; lighting only adds, so copies merge) ---------------
-  let lit = {}, at = 0, cloud = null;
+  // last[hero] = the campfire that hero last came to: where they wake after falling (plan Phase 2 QoL)
+  let lit = {}, last = {}, at = 0, cloud = null;
   const merge = (o) => { if (!o) return false; let ch = false; for (const k in o) for (const id of o[k] || []) { const a = lit[k] || (lit[k] = []); if (!a.includes(id)) { a.push(id); ch = true; } } return ch; };
-  try { const j = JSON.parse(localStorage.getItem(KEY) || "null"); if (j && j.lit) { merge(j.lit); at = j.at || 0; } } catch (e) {}
+  try { const j = JSON.parse(localStorage.getItem(KEY) || "null"); if (j && j.lit) { merge(j.lit); at = j.at || 0; if (j.last) last = j.last; } } catch (e) {}
   const keep = () => {
     at = Date.now();
-    try { localStorage.setItem(KEY, JSON.stringify({ lit, at })); } catch (e) {}
-    try { if (cloud) cloud.set({ lit: JSON.stringify(lit), at }).catch(() => {}); } catch (e) {}
+    try { localStorage.setItem(KEY, JSON.stringify({ lit, last, at })); } catch (e) {}
+    try { if (cloud) cloud.set({ lit: JSON.stringify(lit), last: JSON.stringify(last), at }).catch(() => {}); } catch (e) {}
   };
   (async () => {
     try {
@@ -73,7 +75,9 @@
           const snap = await Promise.race([doc.get(), new Promise((_, r) => setTimeout(() => r(new Error("timeout")), 10000))]);
           const d = snap && snap.exists ? snap.data() : null;
           cloud = doc;
-          if (merge(d && d.lit ? JSON.parse(d.lit) : null) || !d) keep();
+          let ch = merge(d && d.lit ? JSON.parse(d.lit) : null) || !d;
+          if (d && d.last && (d.at || 0) > at) { try { last = Object.assign({}, last, JSON.parse(d.last)); ch = true; } catch (e) {} }   // the newer copy's
+          if (ch) keep();
           return;
         } catch (e) { await new Promise((r) => setTimeout(r, 3000)); }
       }
@@ -147,11 +151,11 @@
     list.sort((a, b) => (b[0] === here[0]) - (a[0] === here[0]));   // where you are first
     menu.innerHTML = '<div class="bx"><div class="hd">Campfires</div><div class="rl"></div><div class="ls"></div><div class="nt"></div><button type="button" class="x">Stay</button></div>';
     const ls = menu.querySelector(".ls"), nt = menu.querySelector(".nt");
-    const others = m.online ? [] : list.filter((c) => c[0] !== here[0]);
-    nt.textContent = m.online ? "Travelling between campfires comes to online games soon. Campfires you light here are kept." : others.length ? "Travel to a campfire you have lit." : "Light more campfires on your journey to travel between them.";
+    const others = list.filter((c) => c[0] !== here[0]);
+    nt.textContent = !others.length ? "Light more campfires on your journey to travel between them." : m.linkOn ? "Travel to a campfire you have lit. Your companion comes with you." : "Travel to a campfire you have lit.";
     sel = 0;
     list.forEach((c) => {
-      const b = document.createElement("div"); const isHere = c[0] === here[0] || m.online;
+      const b = document.createElement("div"); const isHere = c[0] === here[0];
       b.className = "pl" + (isHere ? " here" : ""); b.innerHTML = FLAME + "<span><b>" + esc(title(c)) + "</b>" + (c[0] === here[0] ? "You are here" : esc(placeName(c[1]))) + "</span>";
       if (!isHere) b.addEventListener("pointerdown", (e) => { e.preventDefault(); e.stopPropagation(); go(c); });
       ls.appendChild(b);
@@ -171,11 +175,17 @@
   }
   function close() { if (!menu || menu.hidden) return; menu.hidden = true; menu.innerHTML = ""; if (paused) pause(false); }
   window.addEventListener("keydown", (e) => { if (menu && !menu.hidden && menu.__keys) menu.__keys(e); }, true);
-  // The game's own level change to the campfire: entry (IWRAM 0x03003F68, as a door sets it), level, mode 5, pending 1
+  // The game's own level change to the campfire, as a door makes it (0x08014D40 -> 0x08033170(1, 0, level)): entry and
+  // level at IWRAM 0x03003F68, then state 1 pending (0x81), mode 0, the level (mode 5, a save's load, stops a link game)
+  // Online both games go, on the same frame: the engine takes the page's writes back out and sends them with the
+  // buttons, and both pages write them before that frame (v180 ops)
   const warp = (m, c) => {
-    const w32 = (o, v) => { for (let i = 0; i < 4; i++) m.H8[m.iw + o + i] = (v >>> (8 * i)) & 255; };
-    m.H8[m.iw + 0x3F68] = c[5]; m.H8[m.iw + 0x3F69] = c[4];
-    w32(0x41F8, c[4]); w32(0x41F4, 5); w32(0x41F0, 0x81);
+    const bases = m.online && m.M._rotk_link_iwram ? [0, 1].map((g) => m.M._rotk_link_iwram(g)) : [m.iw];
+    for (const iw of bases) {
+      const w32 = (o, v) => { for (let i = 0; i < 4; i++) m.H8[iw + o + i] = (v >>> (8 * i)) & 255; };
+      m.H8[iw + 0x3F68] = c[5]; m.H8[iw + 0x3F69] = c[4];
+      w32(0x41F8, c[4]); w32(0x41F4, 0); w32(0x41FC, 0); w32(0x4200, 0); w32(0x4204, 0); w32(0x41F0, 0x81);
+    }
   };
   // With P2 (one game: P2 is player 1 in it) the level change places only the hero being played at the campfire; P2 is
   // left where its old map had it, so once the new place is in P2 is put by your side (the AI then steps it off you)
@@ -192,12 +202,64 @@
   function go(c) {
     close();
     const m = mem(); if (!m) return;
-    if (m.online) return;
     const tv = { to: c[4], name: title(c), sub: placeName(c[1]).toUpperCase(), go: () => { const m2 = mem(); if (m2) warp(m2, c); } };
     try { (window.__wideLog || (window.__wideLog = [])).push("campfire: travel to " + c[0] + " (level " + c[4] + ")"); } catch (e) {}
     if (window.__seam && window.__seam.travel) window.__seam.travel(tv); else tv.go();
-    arrive = m.linkOn ? { lv: c[4], t: performance.now() } : null;
+    arrive = m.linkOn && !m.online ? { lv: c[4], t: performance.now() } : null;   // online each game places its own player
   }
+
+  // ---- falling: wake at the last campfire ---------------------------------------------------------------------------
+  // When the hero falls the game reloads the level they fell in (0x08033170(1, 0, level): 0x030041F0 = 0x81 pending,
+  // mode 0, the same level, arrival 0x03003F68 = 0, the level's start). While that is pending (the fade out, about half
+  // a second) its level and arrival are changed to the hero's last campfire, so they wake by its fire instead of at
+  // the start of the level or region. Online only the host's page does it (its hero's campfire), into both games.
+  let wakeSeen = 0;
+  const wakeWatch = () => {
+    requestAnimationFrame(wakeWatch);
+    const m = mem(); if (!m) return;
+    try {
+      const r32 = (o) => m.r32(0x03000000 + o);
+      if (r32(0x41F0) !== 0x81 || r32(0x41F4) !== 0) { wakeSeen = 0; return; }
+      const cur = m.r8(0x03004174), to = r32(0x41F8);
+      if (to !== cur || wakeSeen) return;
+      wakeSeen = 1;
+      if (m.online && m.me !== 0) return;
+      const P = 0x03003C00 + 0x1AC * (m.r8(0x03003F59) & 1);
+      if (((m.r16(P + 0x17C) << 16) >> 16) > 0) return;   // not a fall (a level that restarts itself); a fallen hero's hit points can be below 0
+      const k = heroKey(m), c = k && last[k] && CAMPS.find((x) => x[0] === last[k]);
+      if (!c) return;
+      const bases = m.online && m.M._rotk_link_iwram ? [0, 1].map((g) => m.M._rotk_link_iwram(g)) : [m.iw];
+      for (const iw of bases) { m.H8[iw + 0x3F68] = c[5]; m.H8[iw + 0x3F69] = c[4]; m.H8[iw + 0x41F8] = c[4]; }
+      if (m.linkOn && !m.online) arrive = { lv: c[4], t: performance.now() };
+      try { (window.__wideLog || (window.__wideLog = [])).push("campfire: fell, waking at " + c[0] + " (level " + c[4] + ")"); } catch (e) {}
+    } catch (e) {}
+  };
+  requestAnimationFrame(wakeWatch);
+  // With two heroes (P2, online) a fallen hero comes back alone at the level's start while the other plays on, so there
+  // is no reload to change: once they are back on their feet, if their last campfire is in this same level (a region's
+  // campsite) they are moved to its fireside. Online each page moves its own hero, in both games (the writes travel as
+  // ops, so both pages stay alike).
+  let downAt = 0;
+  const wakeTwo = (m, lv) => {
+    const me = m.r8(0x03003F59) & 1, P = 0x03003C00 + 0x1AC * me, hp = (m.r16(P + 0x17C) << 16) >> 16;
+    if (hp <= 0) { downAt = performance.now(); return; }
+    if (!downAt) return;
+    if (performance.now() - downAt > 15000) { downAt = 0; return; }
+    const k = heroKey(m), c = k && last[k] && CAMPS.find((x) => x[0] === last[k]);
+    if (!c || c[4] !== lv || !REGIONS.has(lv)) { downAt = 0; return; }
+    const h = heroAt(m); if (!h) return;
+    downAt = 0;
+    if (Math.hypot(h[0] - c[2], h[1] - c[3]) < 300) return;
+    const x = c[2] + (me ? 20 : -20), y = c[3] + (me ? 58 : 55);
+    const games = m.online && m.M._rotk_link_ewram ? [0, 1].map((g) => [m.M._rotk_link_iwram(g), m.M._rotk_link_ewram(g)]) : [[m.iw, m.M._rotk_link_on ? m.M._rotk_link_ewram(0) : m.M._rotk_ewram()]];
+    for (const [iw, ew] of games) {
+      const o = (m.H8[iw + 0x3C00 + 0x1AC * me] | m.H8[iw + 0x3C01 + 0x1AC * me] << 8 | m.H8[iw + 0x3C02 + 0x1AC * me] << 16 | m.H8[iw + 0x3C03 + 0x1AC * me] << 24) >>> 0;
+      if (o >>> 24 !== 2) continue;
+      const e = ew + (o & 0x3ffff);
+      for (const b of [0xAC, 0xB4, 0xCC]) { m.H8[e + b + 2] = x & 255; m.H8[e + b + 3] = x >> 8; m.H8[e + b + 6] = y & 255; m.H8[e + b + 7] = y >> 8; }
+    }
+    try { (window.__wideLog || (window.__wideLog = [])).push("campfire: back up, moved to " + c[0]); } catch (e) {}
+  };
 
   // ---- watch: which campfire is near, light new ones ----------------------------------------------------------------
   setInterval(() => {
@@ -212,6 +274,7 @@
     try {
       const st = m ? m.r8(0x030041B0) : 0, lv = m ? m.r8(0x03004174) : 0, hero = m && st === 1 && lv === m.r8(0x030041F8) ? heroAt(m) : null;
       const covering = !!(window.__seam && window.__seam.on);
+      if (m && m.linkOn && st === 1) wakeTwo(m, lv);
       if (hero && !covering) {
         for (const c of CAMPS) {
           if (c[1] !== lv) continue;
@@ -219,7 +282,9 @@
           if (d <= FOUND || !REGIONS.has(lv)) {
             const ks = [heroKey(m)]; if (m.linkOn && !m.online) ks.push(p2Key());
             let nw = false; for (const k of ks) nw = light(k, c[0]) || nw;
-            if (nw) { keep(); showLit(c); }
+            let mv = false; for (const k of ks) if (k && last[k] !== c[0]) { last[k] = c[0]; mv = true; }
+            if (nw) showLit(c);
+            if (nw || mv) keep();
           }
           if (d <= NEAR) near = c;
         }
@@ -230,5 +295,5 @@
     if (btn.hidden !== !near) btn.hidden = !near;
   }, 250);
   window.__campfire = { lit: () => JSON.parse(JSON.stringify(lit)), camps: CAMPS, open: () => open(), go: (id) => { const c = campOf(id); if (c) go(c); },
-    light: (id) => { const m = mem(), k = m && heroKey(m); if (k && light(k, id)) keep(); } };   // tests: light a campfire for the hero being played
+    light: (id) => { const m = mem(), k = m && heroKey(m); if (k && light(k, id)) keep(); }, last: () => Object.assign({}, last) };   // tests: light a campfire for the hero being played
 })();
